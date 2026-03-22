@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Vector DB (large, rebuild with ingest.py)
+chroma_db/
+
+# 3D models (use Git LFS instead)
+assets/avatar/*.glb
+assets/avatar/*.vrm
+assets/avatar/*.fbx
+
+# Whisper model cache (downloads automatically)
+~/.cache/huggingface/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
