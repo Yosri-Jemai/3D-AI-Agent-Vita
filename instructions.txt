@@ -1,3 +1,13 @@
+terminal 1 : 
 venv\Scripts\activate
 python scripts/ingest.py
+
+
+terminal 2 : 
+venv\Scripts\activate
 python backend/main.py
+
+terminal 3 : 
+serve . --config serve.json
+
+
