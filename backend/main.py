@@ -19,6 +19,8 @@ load_dotenv()
 
 from backend.api.routes_chat  import router as chat_router
 from backend.api.routes_voice import router as voice_router
+from backend.api.routes_tts import router as tts_router
+
 
 app = FastAPI(
     title="VitalAgent API",
@@ -36,6 +38,7 @@ app.add_middleware(
 # Register routers
 app.include_router(chat_router,  prefix="/chat",  tags=["Chat"])
 app.include_router(voice_router, prefix="/voice", tags=["Voice"])
+app.include_router(tts_router, prefix="/tts", tags=["TTS"])
 
 @app.get("/health")
 def health():
