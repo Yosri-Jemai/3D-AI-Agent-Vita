@@ -3,7 +3,7 @@
 MYSQL_HOST=localhost
 MYSQL_PORT=3306
 MYSQL_USER=root
-MYSQL_PASSWORD=
+MYSQL_PASSWORD=root
 MYSQL_DATABASE=vital_crm
 
 # ─── Ollama ──────────────────────────────────────────────────
@@ -169,7 +169,29 @@ Be motivating and enthusiastic. 3-4 sentences max. Respond in French."""
         event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )=== ./backend/api/routes_tts.py ===
+    )
+
+@router.get("/gammes")
+def get_gammes():
+    """Retourne la liste des gammes depuis la table catalogues."""
+    import pymysql, os
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST","localhost"),
+            port=int(os.getenv("MYSQL_PORT",3306)),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"),
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT gamme FROM catalogues ORDER BY gamme")
+            rows = cur.fetchall()
+        conn.close()
+        return {"gammes": [r["gamme"] for r in rows if r.get("gamme")]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))=== ./backend/api/routes_tts.py ===
 """
 backend/api/routes_tts.py
 ==========================
@@ -449,13 +471,44 @@ document per row, which gets embedded and stored in the vector DB.
 
 TABLES = [
     {
-        "table": "products",
+    "table": "products",
+    "id_column": "id",
+    "name_column": "name",
+    "text_columns": [
+        "name",
+        "indications",
+        "compositions",
+        "categories",
+        "forme",
+        "classe",
+        "conseils_utilisation",
+        "description",
+        "code_article",
+        ],
+    },
+    {
+        "table": "doc",
         "id_column": "id",
-        "name_column": "name",
+        "name_column": "titre",
         "text_columns": [
+            "titre",
             "name",
-            "description",
-            "code_article",
+        ],
+    },
+    {
+        "table": "annimation_fiches",
+        "id_column": "id",
+        "name_column": "id",
+        "text_columns": [
+            "points_fort",
+            "recommandations",
+        ],
+    },
+    {
+           "table": "catalogues",
+           "id_column": "id",
+           "name_column": "gamme",
+           "text_columns": ["gamme", "contenu"
         ],
     },
 
@@ -513,32 +566,29 @@ Do NOT mention any products yet. Just greet and ask for the training mode."""
 
 
 # ── Medical delegate prompt ────────────────────────────────────────────────────
-MEDICAL_PROMPT = """You are Dr. Layla, a medical product training expert for a pharmaceutical company.
-You are training a MEDICAL delegate — someone who presents products to doctors, pharmacists and healthcare professionals.
+# Dans engine.py, modifie MEDICAL_PROMPT :
 
-Your role:
-- Teach deep product knowledge: indications, contraindications, mechanism of action, composition, clinical evidence, medical terminology.
-- Explain concepts thoroughly, not just list facts. Use medical reasoning.
-- After answering, always suggest 1-2 follow-up questions the delegate should also know, to deepen their understanding.
-- If the product information is limited, work with what exists and explain it fully — expand on the therapeutic class, the active ingredients, how similar products work.
-- Encourage the delegate to think like a clinician: "A doctor might ask you...", "Be prepared to explain why..."
-- Use precise medical vocabulary but explain terms when needed.
-- Keep responses to 4-5 sentences max. Be thorough but concise — no long paragraphs or bullet lists.
-- ONLY talk about the product asked about. NEVER change the product of disccusion unless another product in mentionned BY NAME in the question. If the question is about Product X, do NOT start talking about Product Y unless the delegate explicitly asks about it.
+MEDICAL_PROMPT = """Tu es Dr. Layla, une experte en formation produits médicaux.
+Tu formes un DÉLÉGUÉ MÉDICAL qui présente des produits aux médecins et pharmaciens.
 
-Language: always respond in the same language the delegate uses (French, English, Arabic).
+Ton rôle :
+- Enseigner la connaissance approfondie des produits : indications, composition, mécanisme d'action, données cliniques
+- Expliquer les concepts de manière pédagogique
+- Après chaque réponse, suggérer 1-2 questions complémentaires
+- Répondre dans la même langue que le délégué
 
-If information is not in the context:
-- French: "Cette information précise n'est pas encore disponible. Voici ce que je sais sur ce type de produit..."
-- English: "This specific detail isn't in my data yet, but here's what I can tell you about this type of product..."
-- Never invent clinical claims. Only extrapolate from the product category, never specific numbers.
+RÈGLES IMPORTANTES :
+- Si on te demande la LISTE DES GAMMES ou les CATALOGUES, donne la liste complète avec les noms exacts
+- Si on te demande un produit spécifique, ne parle que de ce produit
+- Ne mentionne pas Coenzyme Q10 sauf si explicitement demandé
+- Sois précis et concis (4-5 phrases max)
 
-Context from product database:
+Contexte produit :
 {context}
 
-Delegate question: {question}
+Question du délégué : {question}
 
-Training response (be thorough, educational, suggest follow-up questions at the end):"""
+Réponse de formation :"""
 
 
 # ── Commercial delegate prompt ─────────────────────────────────────────────────
@@ -630,18 +680,52 @@ class RAGEngine:
             results["metadatas"][0],
             results["distances"][0],
         ):
-            hits.append({
-                "text":         doc,
-                "product_name": meta.get("product_name", "Unknown"),
-                "source_table": meta.get("source_table", ""),
-                "relevance":    round(1 - dist, 3),
-            })
+            hits.append(
+                {
+                    "text": doc,
+                    "product_name": meta.get("product_name", "Unknown"),
+                    "source_table": meta.get("source_table", ""),
+                    "relevance": round(1 - dist, 3),
+                }
+            )
             seen_ids.add(meta.get("source_id", ""))
 
-        # 2. Keyword search — extract words from question and match by name
+        # 2. Special case: question about gammes/catalogues → force-inject catalogue chunks
         import re
-        words = [w for w in re.findall(r'\w+', question) if len(w) > 3]
 
+        catalogue_keywords = [
+            "gamme",
+            "gammes",
+            "catalogue",
+            "catalogues",
+            "liste",
+            "laboratoire",
+            "portfolio",
+            "offre",
+        ]
+        question_lower = question.lower()
+        is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
+
+        if is_catalogue_query:
+            cat_docs = self.collection.get(
+                include=["documents", "metadatas"], where={"source_table": "catalogues"}
+            )
+            for doc, meta in zip(cat_docs["documents"], cat_docs["metadatas"]):
+                source_id = meta.get("source_id", "")
+                if source_id in seen_ids:
+                    continue
+                hits.append(
+                    {
+                        "text": doc,
+                        "product_name": meta.get("product_name", "Unknown"),
+                        "source_table": "catalogues",
+                        "relevance": 0.98,
+                    }
+                )
+                seen_ids.add(source_id)
+
+        # 3. Keyword search — match product name against question words
+        words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
             for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
@@ -649,42 +733,127 @@ class RAGEngine:
                 source_id = meta.get("source_id", "")
                 if source_id in seen_ids:
                     continue
-                # Check if any word from the question appears in the product name
                 if any(w.lower() in product_name for w in words):
-                    hits.append({
-                        "text":         doc,
-                        "product_name": meta.get("product_name", "Unknown"),
-                        "source_table": meta.get("source_table", ""),
-                        "relevance":    0.99,  # boost name matches to top
-                    })
+                    hits.append(
+                        {
+                            "text": doc,
+                            "product_name": meta.get("product_name", "Unknown"),
+                            "source_table": meta.get("source_table", ""),
+                            "relevance": 0.99,
+                        }
+                    )
                     seen_ids.add(source_id)
 
-        # Sort by relevance, name matches first
         hits.sort(key=lambda x: x["relevance"], reverse=True)
         return hits[:n_results]
 
+
     def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
         self.initialize()
-        hits = self.search(question, n_results=n_results)
+    
+        # Détection des questions sur les gammes
+        question_lower = question.lower()
+        is_gamme_question = any(word in question_lower for word in [
+            "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
+            "quelles gammes", "quels catalogues", "offres", "offert"
+        ])
+    
+        if is_gamme_question:
+            # Utilise la recherche spéciale pour les gammes
+            hits = self.search_gammes(question, n_results=n_results)
+        
+            if hits:
+                # Construit la liste des gammes
+                gammes_list = []
+                for hit in hits:
+                    if hit["product_name"] and hit["product_name"] not in gammes_list:
+                        gammes_list.append(hit["product_name"])
+            
+                # 🔍 Détecter si on demande une gamme spécifique
+                specific_gamme = None
+                for gamme_name in gammes_list:
+                    if gamme_name.lower() in question_lower:
+                        specific_gamme = gamme_name
+                        break
+            
+                # 🎯 Cas 1: L'utilisateur demande une gamme spécifique
+                if specific_gamme:
+                    # Récupérer tous les chunks de cette gamme spécifique
+                    gamme_chunks = self.collection.get(
+                        where={
+                            "source_table": "catalogues",
+                            "product_name": specific_gamme
+                        },
+                        include=["documents", "metadatas"]
+                    )
+                
+                    # Extraire les infos produits de cette gamme
+                    produits_text = ""
+                    for doc, meta in zip(gamme_chunks["documents"], gamme_chunks["metadatas"]):
+                       produits_text += doc + "\n\n"
+                    
+                    prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+    Le délégué te demande des informations sur la gamme {specific_gamme}.
 
+    La gamme {specific_gamme} comprend les produits suivants :
+    {produits_text[:2000]}  # Limite pour éviter de dépasser la taille du contexte
+
+    IMPORTANT : 
+    - Ne parle que de la gamme {specific_gamme}
+    - Ne mentionne aucun autre produit ou gamme
+    - Donne une description claire de ce que propose cette gamme
+    - Liste les produits principaux qu'elle contient
+    - Réponds dans la même langue que la question
+
+    Réponse :"""
+                
+                    answer = self.llm.invoke(prompt)
+                    sources = [{"name": specific_gamme, "relevance": 0.99}]
+                    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(gamme_chunks["documents"])}
+            
+                # 📋 Cas 2: L'utilisateur demande la liste de TOUTES les gammes
+                else:
+                    gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
+                    context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+                
+                    prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+    Le délégué te demande la liste des gammes offertes par le laboratoire.
+
+    {context}
+
+    IMPORTANT : 
+    - Donne uniquement la liste des gammes
+    - Ne parle d'aucun produit spécifique
+    - Réponds dans la même langue que la question
+    - Termine en demandant s'il souhaite des détails sur une gamme spécifique
+
+    Réponse :"""
+                
+                    answer = self.llm.invoke(prompt)
+                    sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
+                    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+    
+        # Sinon, recherche normale (produits, etc.)
+        hits = self.search(question, n_results=n_results)
+        
         if not hits:
             return {
-                "answer": "I couldn't find any relevant product information.",
+                "answer": "Je n'ai pas trouvé d'information pertinente.",
                 "sources": [],
                 "chunks_used": 0,
             }
-
+    
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
         prompt  = get_prompt(mode).format(context=context, question=question)
         answer  = self.llm.invoke(prompt)
-
+    
         seen, sources = set(), []
         for hit in hits:
             if hit["product_name"] not in seen:
                 seen.add(hit["product_name"])
                 sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
-
+    
         return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
@@ -740,6 +909,98 @@ class RAGEngine:
 
 # Shared engine instance
 engine = RAGEngine()
+
+
+# Dans engine.py, après la classe RAGEngine, ajoute cette méthode :
+
+def search_gammes(self, question: str, n_results: int = 10) -> list[dict]:
+    """Recherche spécifique pour les gammes/catalogues."""
+    self.initialize()
+    
+    # 1. Récupère TOUS les chunks de la table catalogues
+    all_docs = self.collection.get(
+        where={"source_table": "catalogues"},
+        include=["documents", "metadatas"]
+    )
+    
+    # 2. Groupe par gamme pour éviter les doublons
+    gammes_dict = {}
+    for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
+        gamme = meta.get("product_name", "")
+        if gamme not in gammes_dict:
+            gammes_dict[gamme] = {
+                "text": doc,
+                "product_name": gamme,
+                "source_table": "catalogues",
+                "relevance": 0.99
+            }
+    
+    hits = list(gammes_dict.values())
+    return hits[:n_results]
+def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
+    self.initialize()
+    
+    # Détection des questions sur les gammes
+    question_lower = question.lower()
+    is_gamme_question = any(word in question_lower for word in [
+        "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
+        "quelles gammes", "quels catalogues", "offres", "offert"
+    ])
+    
+    if is_gamme_question:
+        # Utilise la recherche spéciale pour les gammes
+        hits = self.search_gammes(question, n_results=n_results)
+        
+        if hits:
+            # Construit une réponse spéciale pour les gammes
+            gammes_list = []
+            for hit in hits:
+                if hit["product_name"] and hit["product_name"] not in gammes_list:
+                    gammes_list.append(hit["product_name"])
+            
+            # Crée un prompt spécifique pour les gammes
+            gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
+            context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+            
+            prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+Le délégué te demande la liste des gammes offertes par le laboratoire.
+
+{context}
+
+Réponds de manière claire et structurée en listant toutes les gammes.
+Termine en demandant s'il souhaite des détails sur une gamme spécifique.
+Réponds dans la même langue que la question.
+Sois précis : il y a {len(gammes_list)} gammes au total.
+
+Réponse :"""
+            
+            answer = self.llm.invoke(prompt)
+            
+            sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
+            return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+    
+    # Sinon, recherche normale
+    hits = self.search(question, n_results=n_results)
+    
+    if not hits:
+        return {
+            "answer": "Je n'ai pas trouvé d'information pertinente.",
+            "sources": [],
+            "chunks_used": 0,
+        }
+    
+    context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
+    context = "\n\n---\n\n".join(context_parts)
+    prompt  = get_prompt(mode).format(context=context, question=question)
+    answer  = self.llm.invoke(prompt)
+    
+    seen, sources = set(), []
+    for hit in hits:
+        if hit["product_name"] not in seen:
+            seen.add(hit["product_name"])
+            sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
+    
+    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 === ./backend/rag/ingest.py ===
 """
 ingest.py
@@ -1563,6 +1824,165 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 @media(max-width:700px){.app{grid-template-columns:1fr}.avatar-panel{display:none}}
 
 
+=== ./frontend/index.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>VitalAgent — Medical AI Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+<div class="bg-orbs">
+  <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+</div>
+
+<!-- Product Modal -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModalOnBg(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Choose a product</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="search-wrap">
+      <input class="search-input" id="product-search" placeholder="Search by name…" oninput="filterProducts(this.value)" autocomplete="off"/>
+    </div>
+    <div class="product-list" id="product-list"></div>
+    <div class="product-count" id="product-count"></div>
+  </div>
+</div>
+
+<!-- Report Modal -->
+<div class="report-overlay" id="report-overlay" onclick="closeReportOnBg(event)">
+  <div class="report-modal">
+    <div class="report-modal-header">
+      <h2>Session Report</h2>
+      <div class="report-modal-actions">
+        <button class="report-download-btn" onclick="downloadReport()">⬇ Download PDF</button>
+        <button class="report-close-btn" onclick="closeReport()">Close</button>
+      </div>
+    </div>
+    <div class="report-body">
+      <div id="report-content"></div>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="avatar-panel">
+    <div class="avatar-scene">
+      <div class="speak-ring r1"></div>
+      <div class="speak-ring r2"></div>
+      <div class="speak-ring r3"></div>
+      <div class="avatar-glow"></div>
+
+      <!-- ★ TalkingHead s'injecte ici ★ -->
+      <div id="avatarDiv"></div>
+
+      <!-- Spinner pendant le chargement du .glb -->
+      <div id="avatar-loading">
+        <div class="spin"></div>
+        <span>Loading avatar…</span>
+      </div>
+    </div>
+
+    <div class="agent-info">
+      <div class="agent-name">Dr. Layla</div>
+      <div class="agent-role">Medical Product Trainer</div>
+      <div class="agent-status">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">Loading…</span>
+      </div>
+    </div>
+    <div class="voice-controls">
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V20h3v2H8v-2h3v-2.08A7 7 0 0 1 5 11z"/></svg>
+        <span id="mic-label">Hold to speak</span>
+      </button>
+      <div class="waveform" id="waveform">
+        <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+        <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+      </div>
+      <div class="stats-mini">
+        <span>Products</span><span id="chunk-count">—</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="chat-panel">
+    <div class="chat-header">
+      <div class="header-left">
+        <h1>VitalAgent Training</h1>
+        <p>Select a product then ask questions about it</p>
+      </div>
+      <div class="header-right" style="display:flex;align-items:center;gap:8px;">
+        <span id="mode-badge" class="mode-badge" style="display:none"></span>
+        <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Report
+        </button>
+        <div id="product-badge" class="no-product-badge" onclick="openModal()">
+          <span>⬡</span><span id="badge-text">Select a product</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="product-context-bar hidden" id="context-bar">
+      <div><span class="ctx-label">Asking about: </span><span class="ctx-name" id="ctx-product-name">—</span></div>
+      <button class="ctx-change" onclick="openModal()">Change product</button>
+    </div>
+
+    <div class="quick-chips hidden" id="quick-chips"></div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="empty-state">
+        <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+          <rect width="44" height="44" rx="12" fill="rgba(126,184,247,0.08)" stroke="rgba(126,184,247,0.2)" stroke-width="1"/>
+          <path d="M22 12a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 10c4.42 0 8 1.79 8 4v2H14v-2c0-2.21 3.58-4 8-4z" fill="#7eb8f7" opacity="0.7"/>
+        </svg>
+        <h2>Bonjour, je suis Dr. Layla</h2>
+        <p>Start by selecting a product from your database, then ask me anything about it.</p>
+        <button class="pick-product-cta" onclick="openModal()">Browse products →</button>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="question-input" rows="1"
+          placeholder="Select a product first, or type a question…"
+          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendQuestion()">
+          <svg viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="10" y1="16" x2="10" y2="4"/><polyline points="5,9 10,4 15,9"/>
+          </svg>
+        </button>
+      </div>
+      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
+    </div>
+  </main>
+</div>
+
+<!-- ★ importmap : résout "three" pour TalkingHead ★ -->
+<script type="importmap">
+{
+  "imports": {
+    "three":         "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<!-- 1. Avatar + Lip-sync -->
+<script type="module" src="js/avatar.js"></script>
+
+<!-- 2. Main Logic (Chat, Voice, Products, Report) -->
+<script src="js/main.js"></script>
+
+</body>
+</html>
 === ./frontend/js/avatar.js ===
 
   import { TalkingHead } from '/TalkingHead-main/modules/talkinghead.mjs';
@@ -2366,9 +2786,6 @@ python backend/main.py
 
 terminal 3 : 
 serve . --config serve.json
-
-
-=== ./projet_complet.txt ===
 === ./README.md ===
 # VitalAgent — 3D AI Medical Delegate Training Agent
 
@@ -2463,7 +2880,377 @@ sqlalchemy==2.0.32
 # ── TTS (add when ready) ──────────────────────────────────────
 edge-tts
 transformers
-torch=== ./scripts/ingest.py ===
+torch=== ./scripts/import_catalogues.py ===
+"""
+import_catalogues.py
+====================
+Lit tous les fichiers PPTX du dossier catalogue,
+extrait le texte slide par slide,
+et insère tout dans la table `catalogues` de MySQL.
+
+Usage:
+    python import_catalogues.py
+
+Prérequis:
+    pip install markitdown[pptx] pymysql python-dotenv
+"""
+
+import os
+import re
+import sys
+import pymysql
+from dotenv import load_dotenv
+
+# ── markitdown pour extraire le texte des PPTX ──────────────────────────────
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    print("❌ markitdown non installé. Lance : pip install markitdown[pptx]")
+    sys.exit(1)
+
+# ── Charger les variables d'environnement (.env) ─────────────────────────────
+load_dotenv()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚙️  CONFIGURATION — Modifie ce chemin si nécessaire
+# ══════════════════════════════════════════════════════════════════════════════
+CATALOGUE_DIR = r"C:\Users\ASUS\OneDrive\Bureau\ESPRIT\4EME\Semestre 2\Projet DS\data\catalogue"
+
+
+# ── Connexion MySQL ───────────────────────────────────────────────────────────
+def get_connection():
+    return pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "vital_crm"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+# ── Créer la table catalogues si elle n'existe pas ───────────────────────────
+def create_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS `catalogues` (
+              `id`           INT NOT NULL AUTO_INCREMENT,
+              `gamme`        VARCHAR(150) NOT NULL,
+              `slide_number` INT DEFAULT NULL,
+              `titre_slide`  VARCHAR(300) DEFAULT NULL,
+              `contenu`      TEXT,
+              PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+        conn.commit()
+    print("   ✓ Table `catalogues` prête")
+
+
+# ── Vider la table avant réimport (évite les doublons) ───────────────────────
+def clear_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM `catalogues`")
+        conn.commit()
+    print("   ✓ Table `catalogues` vidée")
+
+
+# ── Extraire le nom de la gamme depuis le nom de fichier ─────────────────────
+def extract_gamme_name(filename):
+    # Ex: "Gamme BACTOL.pptx" → "BACTOL"
+    name = os.path.splitext(filename)[0]         # enlever .pptx
+    name = re.sub(r'^Gamme\s*', '', name, flags=re.IGNORECASE).strip()
+    return name
+
+
+# ── Parser les slides depuis le markdown extrait ─────────────────────────────
+def parse_slides(markdown_text):
+    """
+    Découpe le markdown en slides.
+    Retourne une liste de dicts: {slide_number, titre_slide, contenu}
+    """
+    slides = []
+
+    # Séparer par "<!-- Slide number: N -->"
+    parts = re.split(r'<!--\s*Slide number:\s*(\d+)\s*-->', markdown_text)
+
+    # parts = ['', '1', 'contenu slide 1', '2', 'contenu slide 2', ...]
+    i = 1
+    while i < len(parts) - 1:
+        slide_num = int(parts[i])
+        raw_content = parts[i + 1].strip()
+
+        # Extraire le titre (première ligne non vide qui n'est pas une image)
+        lines = [l.strip() for l in raw_content.split('\n') if l.strip()]
+        lines = [l for l in lines if not l.startswith('![')]  # enlever images
+        lines = [l for l in lines if not l.startswith('###')]  # enlever notes
+
+        titre = ''
+        if lines:
+            # Nettoyer le titre des # markdown
+            titre = re.sub(r'^#+\s*', '', lines[0]).strip()
+            if len(titre) > 300:
+                titre = titre[:297] + '...'
+
+        # Nettoyer le contenu
+        content = raw_content
+        content = re.sub(r'!\[.*?\]\(.*?\)', '', content)   # enlever images
+        content = re.sub(r'###\s*Notes:.*', '', content, flags=re.DOTALL)  # enlever notes
+        content = re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)      # enlever commentaires
+        content = re.sub(r'\n{3,}', '\n\n', content).strip()               # nettoyer espaces
+
+        if content:
+            slides.append({
+                'slide_number': slide_num,
+                'titre_slide': titre,
+                'contenu': content,
+            })
+
+        i += 2
+
+    return slides
+
+
+# ── Insérer les slides d'une gamme dans MySQL ─────────────────────────────────
+def insert_slides(conn, gamme, slides):
+    with conn.cursor() as cur:
+        for slide in slides:
+            cur.execute("""
+                INSERT INTO `catalogues` (`gamme`, `slide_number`, `titre_slide`, `contenu`)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                gamme,
+                slide['slide_number'],
+                slide['titre_slide'],
+                slide['contenu'],
+            ))
+        conn.commit()
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main():
+    print("\n=== Import Catalogues PPTX → MySQL ===\n")
+
+    # 1. Connexion MySQL
+    print("1. Connexion à MySQL...")
+    try:
+        conn = get_connection()
+        print("   ✓ Connecté")
+    except Exception as e:
+        print(f"   ✗ Erreur connexion: {e}")
+        sys.exit(1)
+
+    # 2. Préparer la table
+    print("\n2. Préparation de la table...")
+    create_table(conn)
+    clear_table(conn)
+
+    # 3. Vérifier le dossier
+    print(f"\n3. Lecture du dossier: {CATALOGUE_DIR}")
+    if not os.path.exists(CATALOGUE_DIR):
+        print(f"   ✗ Dossier introuvable: {CATALOGUE_DIR}")
+        print("   → Modifie la variable CATALOGUE_DIR dans le script")
+        sys.exit(1)
+
+    pptx_files = [f for f in os.listdir(CATALOGUE_DIR) if f.endswith('.pptx')]
+    print(f"   ✓ {len(pptx_files)} fichiers PPTX trouvés")
+
+    # 4. Traiter chaque PPTX
+    print("\n4. Extraction et import...\n")
+    md = MarkItDown()
+    total_slides = 0
+
+    for filename in sorted(pptx_files):
+        filepath = os.path.join(CATALOGUE_DIR, filename)
+        gamme    = extract_gamme_name(filename)
+
+        print(f"  📂 {filename}  →  Gamme: {gamme}")
+
+        try:
+            result   = md.convert(filepath)
+            slides   = parse_slides(result.text_content)
+            insert_slides(conn, gamme, slides)
+            total_slides += len(slides)
+            print(f"     ✓ {len(slides)} slides importées")
+
+        except Exception as e:
+            print(f"     ✗ Erreur: {e}")
+
+    conn.close()
+
+    # 5. Résumé
+    print(f"\n{'='*45}")
+    print(f"✓ Import terminé !")
+    print(f"  {len(pptx_files)} fichiers PPTX traités")
+    print(f"  {total_slides} slides insérées dans `catalogues`")
+    print(f"\nProchaine étape:")
+    print(f"  Ajouter `catalogues` dans backend/rag/config.py")
+    print(f"  puis : python scripts/ingest.py --reset")
+
+
+if __name__ == "__main__":
+    main()
+=== ./scripts/import_catalogues_v2.py ===
+"""
+import_catalogues_v2.py
+=======================
+Lit tous les fichiers PPTX du dossier catalogue,
+extrait TOUT le texte du PPTX en un seul bloc,
+et insère UNE SEULE LIGNE par gamme dans la table `catalogues`.
+
+Structure de la table:
+  id    | gamme   | contenu
+  1     | BACTOL  | tout le texte du pptx concatené...
+  2     | HYDRA   | tout le texte du pptx concatené...
+  ...
+
+Usage:
+    python scripts/import_catalogues_v2.py
+
+Prérequis:
+    pip install "markitdown[pptx]" pymysql python-dotenv
+"""
+
+import os
+import re
+import sys
+import pymysql
+from dotenv import load_dotenv
+
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    print("❌ markitdown non installé. Lance : pip install markitdown[pptx]")
+    sys.exit(1)
+
+load_dotenv()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚙️  CONFIGURATION — Modifie ce chemin si nécessaire
+# ══════════════════════════════════════════════════════════════════════════════
+CATALOGUE_DIR = r"C:\Users\ASUS\OneDrive\Bureau\ESPRIT\4EME\Semestre 2\Projet DS\data\catalogue"
+
+
+def get_connection():
+    return pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "vital_crm"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def fix_table(conn):
+    """Recrée la table catalogues avec la nouvelle structure simplifiée."""
+    with conn.cursor() as cur:
+        # Supprimer l'ancienne table
+        cur.execute("DROP TABLE IF EXISTS `catalogues`;")
+
+        # Créer la nouvelle structure : une ligne par gamme
+        cur.execute("""
+            CREATE TABLE `catalogues` (
+              `id`      INT NOT NULL AUTO_INCREMENT,
+              `gamme`   VARCHAR(150) NOT NULL,
+              `contenu` LONGTEXT,
+              PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+        conn.commit()
+    print("   ✓ Table `catalogues` recréée (id, gamme, contenu)")
+
+
+def extract_gamme_name(filename):
+    """Ex: 'Gamme BACTOL.pptx' → 'BACTOL'"""
+    name = os.path.splitext(filename)[0]
+    name = re.sub(r'^Gamme\s*', '', name, flags=re.IGNORECASE).strip()
+    return name
+
+
+def clean_text(raw):
+    """Nettoie le markdown extrait : enlève images, commentaires, notes."""
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', raw)              # images
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL) # commentaires HTML
+    text = re.sub(r'###\s*Notes:.*?(?=\n\n|\Z)', '', text, flags=re.DOTALL)  # notes
+    text = re.sub(r'\n{3,}', '\n\n', text)                  # lignes vides multiples
+    return text.strip()
+
+
+def main():
+    print("\n=== Import Catalogues PPTX → MySQL (v2 — 1 ligne par gamme) ===\n")
+
+    # 1. Connexion
+    print("1. Connexion à MySQL...")
+    try:
+        conn = get_connection()
+        print("   ✓ Connecté")
+    except Exception as e:
+        print(f"   ✗ Erreur: {e}")
+        sys.exit(1)
+
+    # 2. Recréer la table
+    print("\n2. Recréation de la table...")
+    fix_table(conn)
+
+    # 3. Vérifier le dossier
+    print(f"\n3. Lecture du dossier...")
+    if not os.path.exists(CATALOGUE_DIR):
+        print(f"   ✗ Dossier introuvable: {CATALOGUE_DIR}")
+        print("   → Modifie CATALOGUE_DIR dans le script")
+        sys.exit(1)
+
+    pptx_files = sorted([f for f in os.listdir(CATALOGUE_DIR) if f.endswith('.pptx')])
+    print(f"   ✓ {len(pptx_files)} fichiers PPTX trouvés")
+
+    # 4. Traiter chaque PPTX → 1 ligne par fichier
+    print("\n4. Extraction et import...\n")
+    md = MarkItDown()
+
+    for filename in pptx_files:
+        filepath = os.path.join(CATALOGUE_DIR, filename)
+        gamme    = extract_gamme_name(filename)
+
+        print(f"  📂 {filename}  →  Gamme: {gamme}", end="", flush=True)
+
+        try:
+            result  = md.convert(filepath)
+            contenu = clean_text(result.text_content)
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO `catalogues` (`gamme`, `contenu`) VALUES (%s, %s)",
+                    (gamme, contenu)
+                )
+            conn.commit()
+
+            # Afficher la taille du contenu extrait
+            print(f"  ✓  ({len(contenu)} caractères)")
+
+        except Exception as e:
+            print(f"  ✗ Erreur: {e}")
+
+    conn.close()
+
+    # 5. Résumé
+    print(f"\n{'='*50}")
+    print(f"✓ Import terminé ! {len(pptx_files)} gammes insérées.")
+    print(f"\nProchaines étapes:")
+    print(f"  1. Vérifier dans Workbench : SELECT gamme, LENGTH(contenu) FROM catalogues;")
+    print(f"  2. Ajouter dans backend/rag/config.py :")
+    print(f"       {{")
+    print(f'           "table": "catalogues",')
+    print(f'           "id_column": "id",')
+    print(f'           "name_column": "gamme",')
+    print(f'           "text_columns": ["gamme", "contenu"],')
+    print(f"       }}")
+    print(f"  3. python scripts/ingest.py --reset")
+
+
+if __name__ == "__main__":
+    main()
+=== ./scripts/ingest.py ===
 """
 ingest.py
 =========
