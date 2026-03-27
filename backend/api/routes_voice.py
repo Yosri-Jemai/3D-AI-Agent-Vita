@@ -41,6 +41,7 @@ async def voice_ask(
     audio: UploadFile = File(...),
     language: str = Form(default=None),
     n_results: int = Form(default=10),
+    mode: str = Form(default="medical"),
 ):
     """
     Full voice pipeline:
@@ -61,7 +62,7 @@ async def voice_ask(
         raise HTTPException(status_code=400, detail="Could not transcribe audio")
 
     # Step 2: RAG
-    rag_result = engine.ask(question, n_results=n_results)
+    rag_result = engine.ask(question, n_results=n_results, mode=mode)
 
     return {
         "question": question,
@@ -75,6 +76,7 @@ async def voice_ask_stream(
     audio: UploadFile = File(...),
     language: str = Form(default=None),
     n_results: int = Form(default=10),
+    mode: str = Form(default="medical"),
 ):
     """
     Full voice pipeline with streamed answer.
@@ -98,7 +100,7 @@ async def voice_ask_stream(
         yield f"data: {json.dumps({'type': 'transcript', 'text': question, 'language': stt_result['language']})}\n\n"
 
         try:
-            for chunk in engine.stream_ask(question, n_results=n_results):
+            for chunk in engine.stream_ask(question, n_results=n_results, mode=mode):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"

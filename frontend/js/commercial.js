@@ -1,0 +1,564 @@
+const API = 'http://localhost:8000';
+window._API = API;
+
+let isLoading = false;
+let isRecording = false;
+let mediaRecorder = null;
+let audioChunks = [];
+
+const MODE = 'vita_commercial';
+let visitStarted = false;
+
+// ── Init ──────────────────────────────────────────────────────
+async function init() {
+  setStatus('loading', 'Loading avatar…');
+
+  await new Promise(resolve => {
+    const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
+    setTimeout(() => { clearInterval(t); resolve(); }, 5000);
+  });
+
+  try {
+    const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
+    const d = await res.json();
+    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? '—';
+  } catch {
+    document.getElementById('chunk-count').textContent = 'offline';
+  }
+
+  await window.initAvatar();
+  // No auto‑start – wait for user to click the button
+}
+
+function setStatus(state, text) {
+  document.getElementById('status-dot').className = 'status-dot ' + state;
+  document.getElementById('status-text').textContent = text;
+  const scene = document.querySelector('.avatar-scene');
+  state === 'speaking' ? scene.classList.add('speaking') : scene.classList.remove('speaking');
+}
+window.setStatus = setStatus;
+
+// ── Start Visit (called by button) ──────────────────────────
+window.startVisit = async function() {
+  if (visitStarted) return;
+  visitStarted = true;
+
+  // Resume audio context (user gesture)
+  if (window._head?.audioCtx?.state !== 'running') {
+    await window._head.audioCtx.resume();
+  }
+
+  // Enable mic button
+  const micBtn = document.getElementById('mic-btn');
+  if (micBtn) micBtn.disabled = false;
+
+  await loadGreeting();
+};
+
+// ── Load and speak greeting ──────────────────────────────────
+async function loadGreeting() {
+  hideEmpty();
+  addTyping();
+  setStatus('speaking', 'Greeting…');
+
+  try {
+    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, {
+      signal: AbortSignal.timeout(60000)
+    });
+    if (!res.ok) throw new Error();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let msgEl = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch { continue; }
+        if (data.type === 'token') {
+          if (!msgEl) {
+            removeTyping();
+            msgEl = addAIBubble(null);
+          }
+          fullText += data.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = fullText;
+          scrollBottom();
+        } else if (data.type === 'done') break;
+      }
+    }
+
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(fullText, []);
+
+    if (fullText) {
+      setStatus('speaking', 'Speaking…');
+      await window.speakWithAvatar(fullText);
+    }
+    setStatus('', 'Ready');
+  } catch (err) {
+    console.error('Error loading greeting:', err);
+    removeTyping();
+    const fallback = "Bonjour Docteur, je suis Vita de VITAL SA. Je suis votre déléguée pharmaceutique. Je suis prête à discuter de nos produits avec vous. Quel produit souhaitez-vous aborder aujourd'hui ?";
+    addAIBubble(null);
+    const textSpan = document.getElementById('streaming-text');
+    if (textSpan) textSpan.textContent = fallback;
+    finalizeBubble(fallback, []);
+    await window.speakWithAvatar(fallback);
+    setStatus('', 'Ready');
+  }
+}
+
+// ── Send Question (doctor input) ────────────────────────────
+window.sendQuestion = async function() {
+  if (!visitStarted) {
+    await window.startVisit(); // ensure visit started before sending
+  }
+
+  const input = document.getElementById('question-input');
+  const userText = input.value.trim();
+  if (!userText || isLoading) return;
+
+  isLoading = true;
+  setSend(true);
+  input.value = '';
+  input.style.height = 'auto';
+
+  addUserMsg(userText);
+  addTyping();
+  setStatus('thinking', 'Thinking…');
+
+  try {
+    const res = await fetch(`${API}/chat/ask/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+    });
+    if (!res.ok) throw new Error();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let sources = [];
+    let msgEl = null;
+    setStatus('speaking', 'Responding…');
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch { continue; }
+        if (data.type === 'token') {
+          if (!msgEl) {
+            removeTyping();
+            msgEl = addAIBubble(null);
+          }
+          fullText += data.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = fullText;
+          scrollBottom();
+        } else if (data.type === 'sources') {
+          sources = data.sources;
+        }
+      }
+    }
+
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(fullText, sources);
+
+    if (fullText) {
+      await window.speakWithAvatar(fullText);
+    }
+    setStatus('', 'Ready');
+  } catch {
+    removeTyping();
+    showError('Cannot reach the API. Run: python backend/main.py');
+    setStatus('', 'Ready');
+  } finally {
+    isLoading = false;
+    setSend(false);
+    document.getElementById('question-input').focus();
+  }
+};
+
+// ── Voice ─────────────────────────────────────────────────────
+window.toggleMic = async function() {
+  if (!visitStarted) {
+    await window.startVisit(); // ensure audio enabled
+  }
+  isRecording ? stopRecording() : startRecording();
+};
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = sendAudio;
+    mediaRecorder.start();
+    isRecording = true;
+    document.getElementById('mic-btn').classList.add('recording');
+    document.getElementById('mic-label').textContent = 'Recording… click to stop';
+    document.getElementById('waveform').classList.add('recording-active');
+    setStatus('listening', 'Listening…');
+    if (window._avatarReady && window._head?.audioCtx?.state !== 'running') {
+      await window._head.audioCtx.resume();
+    }
+  } catch {
+    showError('Microphone access denied.');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    isRecording = false;
+    document.getElementById('mic-btn').classList.remove('recording');
+    document.getElementById('mic-label').textContent = 'Hold to speak';
+    document.getElementById('waveform').classList.remove('recording-active');
+    setStatus('thinking', 'Processing…');
+  }
+}
+
+async function sendAudio() {
+  if (!audioChunks.length) return;
+  console.log("Sending audio...");
+  isLoading = true;
+  setSend(true);
+  addTyping();
+  const blob = new Blob(audioChunks, { type: 'audio/webm' });
+  const form = new FormData();
+  form.append('audio', blob, 'rec.webm');
+  form.append('mode', MODE);
+
+  try {
+    const res = await fetch(`${API}/voice/ask/stream`, { method: 'POST', body: form });
+    console.log("Voice response status:", res.status);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let sources = [];
+    let msgEl = null;
+    let transcript = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch (e) {
+          console.warn("Failed to parse SSE data:", line, e);
+          continue;
+        }
+        if (data.type === 'transcript') {
+          transcript = data.text;
+          addUserMsg(`🎤 ${transcript}`, true);
+          removeTyping();
+          addTyping();
+        } else if (data.type === 'token') {
+          if (!msgEl) {
+            removeTyping();
+            msgEl = addAIBubble(null);
+          }
+          fullText += data.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = fullText;
+          scrollBottom();
+        } else if (data.type === 'sources') {
+          sources = data.sources;
+        } else if (data.type === 'error') {
+          console.error("Backend error:", data.content);
+        }
+      }
+    }
+
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(fullText, sources);
+    if (fullText) {
+      await window.speakWithAvatar(fullText);
+    }
+    setStatus('', 'Ready');
+  } catch (err) {
+    console.error("Voice processing error:", err);
+    removeTyping();
+    showError('Voice processing failed.');
+    setStatus('', 'Ready');
+  } finally {
+    isLoading = false;
+    setSend(false);
+  }
+}
+
+// ── Message UI Helpers (identical to main.js) ────────────────
+function hideEmpty() { document.getElementById('empty-state')?.remove(); }
+function addSystemMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'system-msg';
+  el.innerHTML = `<span>${esc(text)}</span>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+function addUserMsg(text, isVoice) {
+  hideEmpty();
+  logUser(text, isVoice);
+  const el = document.createElement('div');
+  el.className = 'message user';
+  const msgId = 'msg-' + Date.now();
+  el.id = msgId;
+  el.innerHTML = `<div class="edit-wrap">
+    <div class="bubble" data-text="${esc(text)}">${esc(text)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>
+  </div><div class="avatar-sm user">You</div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  return msgId;
+}
+function addTyping() {
+  const el = document.createElement('div');
+  el.className = 'message ai';
+  el.id = 'typing-indicator';
+  el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+function removeTyping() {
+  const t = document.getElementById('typing-indicator');
+  if (t) t.remove();
+}
+function addAIBubble(transcriptText) {
+  removeTyping();
+  const el = document.createElement('div');
+  el.className = 'message ai';
+  const tb = transcriptText ? `<div class="transcript-badge">Heard: "${esc(transcriptText)}"</div>` : '';
+  el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  return el;
+}
+function finalizeBubble(fullText, sources) {
+  logAI(fullText, sources);
+  const textEl = document.getElementById('streaming-text');
+  if (textEl) {
+    const html = fullText.split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    textEl.outerHTML = html || '<p></p>';
+  }
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble && sources?.length) {
+    bubble.removeAttribute('id');
+    const tags = sources.map(s => `<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance * 100)}%</span></span>`).join('');
+    bubble.insertAdjacentHTML('beforeend', `<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+  }
+  scrollBottom();
+}
+
+// ── Edit & Resend (copied from main.js) ──────────────────────
+window.startEdit = function(msgId, btn) {
+  const msgEl = document.getElementById(msgId);
+  const wrap = msgEl.querySelector('.edit-wrap');
+  const originalText = msgEl.querySelector('.bubble').getAttribute('data-text') || msgEl.querySelector('.bubble').textContent;
+  wrap.innerHTML = `<textarea class="edit-textarea" id="edit-input-${msgId}" rows="2">${originalText}</textarea>
+    <div class="edit-actions">
+      <button class="edit-cancel" onclick="cancelEdit('${msgId}','${esc(originalText)}')">Cancel</button>
+      <button class="edit-save"   onclick="saveEdit('${msgId}')">Send</button>
+    </div>`;
+  const ta = document.getElementById(`edit-input-${msgId}`);
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msgId); }
+    if (e.key === 'Escape') cancelEdit(msgId, originalText);
+  });
+};
+window.cancelEdit = function(msgId, originalText) {
+  const wrap = document.getElementById(msgId).querySelector('.edit-wrap');
+  wrap.innerHTML = `<div class="bubble" data-text="${esc(originalText)}">${esc(originalText)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
+};
+window.saveEdit = function(msgId) {
+  const ta = document.getElementById(`edit-input-${msgId}`);
+  const newText = ta.value.trim();
+  if (!newText) return;
+  const wrap = document.getElementById(msgId).querySelector('.edit-wrap');
+  wrap.innerHTML = `<div class="bubble" data-text="${esc(newText)}">${esc(newText)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
+  let next = document.getElementById(msgId).nextElementSibling;
+  while (next) { const rm = next; next = next.nextElementSibling; rm.remove(); }
+  resendQuestion(newText);
+};
+
+async function resendQuestion(userText) {
+  if (!visitStarted) await window.startVisit();
+  isLoading = true;
+  setSend(true);
+  addTyping();
+  setStatus('thinking', 'Thinking…');
+  try {
+    const res = await fetch(`${API}/chat/ask/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+    });
+    if (!res.ok) throw new Error();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', full = '', sources = [], msgEl = null;
+    setStatus('speaking', 'Responding…');
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let c;
+        try { c = JSON.parse(line.slice(6)); } catch { continue; }
+        if (c.type === 'token') {
+          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
+          full += c.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = full;
+          scrollBottom();
+        } else if (c.type === 'sources') sources = c.sources;
+      }
+    }
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(full, sources);
+    if (full) { await window.speakWithAvatar(full); }
+    setStatus('', 'Ready');
+  } catch {
+    removeTyping();
+    showError('Cannot reach the API.');
+    setStatus('', 'Ready');
+  } finally {
+    isLoading = false;
+    setSend(false);
+  }
+}
+
+// ── Log + Report (copied from main.js, adapted to commercial) ──
+const conversationLog = [];
+function logUser(text, isVoice) {
+  conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
+  document.getElementById('report-btn').disabled = false;
+}
+function logAI(text, sources) {
+  conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() });
+}
+window.openReport = function() {
+  if (!conversationLog.length) return;
+  buildReportContent();
+  document.getElementById('report-overlay').classList.add('open');
+};
+window.closeReport = function() {
+  document.getElementById('report-overlay').classList.remove('open');
+};
+window.closeReportOnBg = function(e) {
+  if (e.target === document.getElementById('report-overlay')) closeReport();
+};
+function buildReportContent() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const products = [...new Set(conversationLog.flatMap(e => (e.sources || []).map(s => s.name)))].filter(Boolean);
+  const userCount = conversationLog.filter(e => e.role === 'user').length;
+  const aiCount = conversationLog.filter(e => e.role === 'ai').length;
+  const exchangesHtml = conversationLog.map(entry => {
+    if (entry.role === 'user') {
+      return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
+    } else {
+      const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
+      return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
+    }
+  }).join('');
+  const prodHtml = products.length ? `<div class="r-section-title">Products discussed</div><div class="r-products">${products.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('')}</div>` : '';
+  document.getElementById('report-content').innerHTML = `
+    <div class="r-header">
+      <div class="r-logo">VITAL Commercial Visit</div>
+      <div class="r-subtitle">Session with Vita — Delegate</div>
+      <div class="r-meta">
+        <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
+        <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
+        <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
+      </div>
+    </div>
+    ${prodHtml}
+    <div class="r-section-title">Full conversation</div>
+    ${exchangesHtml}
+    <div class="r-footer"><span>Generated by VitalAgent · VITAL SA</span><span>${dateStr}</span></div>`;
+}
+window.downloadReport = function() {
+  const content = document.getElementById('report-content');
+  if (!content) return;
+  const now = new Date();
+  const win = window.open('', '_blank', 'width=800,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>vital-commercial-${now.toISOString().slice(0,10)}.pdf</title>
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Georgia,serif;color:#111;background:#fff}
+    #report-content{padding:32px 40px;font-size:13px;line-height:1.7}
+    .r-header{border-bottom:2px solid #c084fc;padding-bottom:18px;margin-bottom:24px}
+    .r-logo{font-size:26px;color:#c084fc}.r-subtitle{font-size:11px;color:#6b7280;margin-top:3px;font-family:system-ui}
+    .r-meta{display:flex;gap:20px;margin-top:14px;flex-wrap:wrap}.r-meta-item{font-size:11px;font-family:system-ui}
+    .r-meta-item strong{display:block;font-size:9px;text-transform:uppercase;color:#374151;margin-bottom:1px}
+    .r-section-title{font-size:10px;text-transform:uppercase;color:#6b7280;font-family:system-ui;font-weight:600;margin:24px 0 10px;border-bottom:1px solid #e5e7eb;padding-bottom:5px}
+    .r-exchange{margin-bottom:16px;padding:12px 16px;border-radius:6px;border-left:3px solid #e5e7eb;page-break-inside:avoid}
+    .r-exchange.user-ex{background:#f8f5ff;border-left-color:#c084fc}.r-exchange.ai-ex{background:#fafafa;border-left-color:#6b7280}
+    .r-role{font-size:9px;text-transform:uppercase;font-family:system-ui;font-weight:600;margin-bottom:5px}
+    .r-role.user-role{color:#c084fc}.r-role.ai-role{color:#374151}
+    .r-text{font-size:12px;line-height:1.6;color:#1f2937}
+    .r-products{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+    .r-product-tag{padding:2px 8px;border-radius:10px;font-size:10px;background:#f3e8ff;color:#c084fc;border:1px solid #e9d5ff;font-family:system-ui}
+    .r-footer{margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;font-family:system-ui;display:flex;justify-content:space-between}
+    @page{margin:1.5cm}</style></head><body>${content.outerHTML}
+    <script>window.onload=function(){window.print();setTimeout(()=>window.close(),1000)}<\/script></body></html>`);
+  win.document.close();
+};
+function escHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// ── Helpers ───────────────────────────────────────────────────
+function showError(msg) {
+  removeTyping();
+  const el = document.createElement('div');
+  el.className = 'message ai';
+  el.innerHTML = `<div class="avatar-sm ai" style="background:#7f1d1d">!</div><div class="bubble" style="border-color:rgba(239,68,68,0.2);background:rgba(239,68,68,0.05)"><p style="color:#fca5a5">${esc(msg)}</p></div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+window.handleKey = function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window.sendQuestion(); } };
+window.autoResize = function(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 100) + 'px'; };
+function setSend(d) { document.getElementById('send-btn').disabled = d; }
+function scrollBottom() { const el = document.getElementById('messages'); el.scrollTop = el.scrollHeight; }
+function esc(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// Start
+init();
