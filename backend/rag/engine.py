@@ -32,32 +32,29 @@ Do NOT mention any products yet. Just greet and ask for the training mode."""
 
 
 # ── Medical delegate prompt ────────────────────────────────────────────────────
-MEDICAL_PROMPT = """You are Vita, a medical product training expert for a pharmaceutical company.
-You are training a MEDICAL delegate — someone who presents products to doctors, pharmacists and healthcare professionals.
+# Dans engine.py, modifie MEDICAL_PROMPT :
 
-Your role:
-- Teach deep product knowledge: indications, contraindications, mechanism of action, composition, clinical evidence, medical terminology.
-- Explain concepts thoroughly, not just list facts. Use medical reasoning.
-- After answering, always suggest 1-2 follow-up questions the delegate should also know, to deepen their understanding.
-- If the product information is limited, work with what exists and explain it fully — expand on the therapeutic class, the active ingredients, how similar products work.
-- Encourage the delegate to think like a clinician: "A doctor might ask you...", "Be prepared to explain why..."
-- Use precise medical vocabulary but explain terms when needed.
-- Keep responses to 4-5 sentences max. Be thorough but concise — no long paragraphs or bullet lists.
-- ONLY talk about the product asked about. NEVER change the product of disccusion unless another product in mentionned BY NAME in the question. If the question is about Product X, do NOT start talking about Product Y unless the delegate explicitly asks about it.
+MEDICAL_PROMPT = """Tu es Dr. Layla, une experte en formation produits médicaux.
+Tu formes un DÉLÉGUÉ MÉDICAL qui présente des produits aux médecins et pharmaciens.
 
-Language: always respond in the same language the delegate uses (French, English, Arabic).
+Ton rôle :
+- Enseigner la connaissance approfondie des produits : indications, composition, mécanisme d'action, données cliniques
+- Expliquer les concepts de manière pédagogique
+- Après chaque réponse, suggérer 1-2 questions complémentaires
+- Répondre dans la même langue que le délégué
 
-If information is not in the context:
-- French: "Cette information précise n'est pas encore disponible. Voici ce que je sais sur ce type de produit..."
-- English: "This specific detail isn't in my data yet, but here's what I can tell you about this type of product..."
-- Never invent clinical claims. Only extrapolate from the product category, never specific numbers.
+RÈGLES IMPORTANTES :
+- Si on te demande la LISTE DES GAMMES ou les CATALOGUES, donne la liste complète avec les noms exacts
+- Si on te demande un produit spécifique, ne parle que de ce produit
+- Ne mentionne pas Coenzyme Q10 sauf si explicitement demandé
+- Sois précis et concis (4-5 phrases max)
 
-Context from product database:
+Contexte produit :
 {context}
 
-Delegate question: {question}
+Question du délégué : {question}
 
-Training response (be thorough, educational, suggest follow-up questions at the end):"""
+Réponse de formation :"""
 
 
 # ── Commercial delegate prompt ─────────────────────────────────────────────────
@@ -216,18 +213,52 @@ class RAGEngine:
             results["metadatas"][0],
             results["distances"][0],
         ):
-            hits.append({
-                "text":         doc,
-                "product_name": meta.get("product_name", "Unknown"),
-                "source_table": meta.get("source_table", ""),
-                "relevance":    round(1 - dist, 3),
-            })
+            hits.append(
+                {
+                    "text": doc,
+                    "product_name": meta.get("product_name", "Unknown"),
+                    "source_table": meta.get("source_table", ""),
+                    "relevance": round(1 - dist, 3),
+                }
+            )
             seen_ids.add(meta.get("source_id", ""))
 
-        # 2. Keyword search — extract words from question and match by name
+        # 2. Special case: question about gammes/catalogues → force-inject catalogue chunks
         import re
-        words = [w for w in re.findall(r'\w+', question) if len(w) > 3]
 
+        catalogue_keywords = [
+            "gamme",
+            "gammes",
+            "catalogue",
+            "catalogues",
+            "liste",
+            "laboratoire",
+            "portfolio",
+            "offre",
+        ]
+        question_lower = question.lower()
+        is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
+
+        if is_catalogue_query:
+            cat_docs = self.collection.get(
+                include=["documents", "metadatas"], where={"source_table": "catalogues"}
+            )
+            for doc, meta in zip(cat_docs["documents"], cat_docs["metadatas"]):
+                source_id = meta.get("source_id", "")
+                if source_id in seen_ids:
+                    continue
+                hits.append(
+                    {
+                        "text": doc,
+                        "product_name": meta.get("product_name", "Unknown"),
+                        "source_table": "catalogues",
+                        "relevance": 0.98,
+                    }
+                )
+                seen_ids.add(source_id)
+
+        # 3. Keyword search — match product name against question words
+        words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
             for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
@@ -235,42 +266,127 @@ class RAGEngine:
                 source_id = meta.get("source_id", "")
                 if source_id in seen_ids:
                     continue
-                # Check if any word from the question appears in the product name
                 if any(w.lower() in product_name for w in words):
-                    hits.append({
-                        "text":         doc,
-                        "product_name": meta.get("product_name", "Unknown"),
-                        "source_table": meta.get("source_table", ""),
-                        "relevance":    0.99,  # boost name matches to top
-                    })
+                    hits.append(
+                        {
+                            "text": doc,
+                            "product_name": meta.get("product_name", "Unknown"),
+                            "source_table": meta.get("source_table", ""),
+                            "relevance": 0.99,
+                        }
+                    )
                     seen_ids.add(source_id)
 
-        # Sort by relevance, name matches first
         hits.sort(key=lambda x: x["relevance"], reverse=True)
         return hits[:n_results]
 
+
     def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
         self.initialize()
-        hits = self.search(question, n_results=n_results)
+    
+        # Détection des questions sur les gammes
+        question_lower = question.lower()
+        is_gamme_question = any(word in question_lower for word in [
+            "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
+            "quelles gammes", "quels catalogues", "offres", "offert"
+        ])
+    
+        if is_gamme_question:
+            # Utilise la recherche spéciale pour les gammes
+            hits = self.search_gammes(question, n_results=n_results)
+        
+            if hits:
+                # Construit la liste des gammes
+                gammes_list = []
+                for hit in hits:
+                    if hit["product_name"] and hit["product_name"] not in gammes_list:
+                        gammes_list.append(hit["product_name"])
+            
+                # 🔍 Détecter si on demande une gamme spécifique
+                specific_gamme = None
+                for gamme_name in gammes_list:
+                    if gamme_name.lower() in question_lower:
+                        specific_gamme = gamme_name
+                        break
+            
+                # 🎯 Cas 1: L'utilisateur demande une gamme spécifique
+                if specific_gamme:
+                    # Récupérer tous les chunks de cette gamme spécifique
+                    gamme_chunks = self.collection.get(
+                        where={
+                            "source_table": "catalogues",
+                            "product_name": specific_gamme
+                        },
+                        include=["documents", "metadatas"]
+                    )
+                
+                    # Extraire les infos produits de cette gamme
+                    produits_text = ""
+                    for doc, meta in zip(gamme_chunks["documents"], gamme_chunks["metadatas"]):
+                       produits_text += doc + "\n\n"
+                    
+                    prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+    Le délégué te demande des informations sur la gamme {specific_gamme}.
 
+    La gamme {specific_gamme} comprend les produits suivants :
+    {produits_text[:2000]}  # Limite pour éviter de dépasser la taille du contexte
+
+    IMPORTANT : 
+    - Ne parle que de la gamme {specific_gamme}
+    - Ne mentionne aucun autre produit ou gamme
+    - Donne une description claire de ce que propose cette gamme
+    - Liste les produits principaux qu'elle contient
+    - Réponds dans la même langue que la question
+
+    Réponse :"""
+                
+                    answer = self.llm.invoke(prompt)
+                    sources = [{"name": specific_gamme, "relevance": 0.99}]
+                    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(gamme_chunks["documents"])}
+            
+                # 📋 Cas 2: L'utilisateur demande la liste de TOUTES les gammes
+                else:
+                    gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
+                    context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+                
+                    prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+    Le délégué te demande la liste des gammes offertes par le laboratoire.
+
+    {context}
+
+    IMPORTANT : 
+    - Donne uniquement la liste des gammes
+    - Ne parle d'aucun produit spécifique
+    - Réponds dans la même langue que la question
+    - Termine en demandant s'il souhaite des détails sur une gamme spécifique
+
+    Réponse :"""
+                
+                    answer = self.llm.invoke(prompt)
+                    sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
+                    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+    
+        # Sinon, recherche normale (produits, etc.)
+        hits = self.search(question, n_results=n_results)
+        
         if not hits:
             return {
-                "answer": "I couldn't find any relevant product information.",
+                "answer": "Je n'ai pas trouvé d'information pertinente.",
                 "sources": [],
                 "chunks_used": 0,
             }
-
+    
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
         prompt  = get_prompt(mode).format(context=context, question=question)
         answer  = self.llm.invoke(prompt)
-
+    
         seen, sources = set(), []
         for hit in hits:
             if hit["product_name"] not in seen:
                 seen.add(hit["product_name"])
                 sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
-
+    
         return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
@@ -326,3 +442,95 @@ class RAGEngine:
 
 # Shared engine instance
 engine = RAGEngine()
+
+
+# Dans engine.py, après la classe RAGEngine, ajoute cette méthode :
+
+def search_gammes(self, question: str, n_results: int = 10) -> list[dict]:
+    """Recherche spécifique pour les gammes/catalogues."""
+    self.initialize()
+    
+    # 1. Récupère TOUS les chunks de la table catalogues
+    all_docs = self.collection.get(
+        where={"source_table": "catalogues"},
+        include=["documents", "metadatas"]
+    )
+    
+    # 2. Groupe par gamme pour éviter les doublons
+    gammes_dict = {}
+    for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
+        gamme = meta.get("product_name", "")
+        if gamme not in gammes_dict:
+            gammes_dict[gamme] = {
+                "text": doc,
+                "product_name": gamme,
+                "source_table": "catalogues",
+                "relevance": 0.99
+            }
+    
+    hits = list(gammes_dict.values())
+    return hits[:n_results]
+def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
+    self.initialize()
+    
+    # Détection des questions sur les gammes
+    question_lower = question.lower()
+    is_gamme_question = any(word in question_lower for word in [
+        "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
+        "quelles gammes", "quels catalogues", "offres", "offert"
+    ])
+    
+    if is_gamme_question:
+        # Utilise la recherche spéciale pour les gammes
+        hits = self.search_gammes(question, n_results=n_results)
+        
+        if hits:
+            # Construit une réponse spéciale pour les gammes
+            gammes_list = []
+            for hit in hits:
+                if hit["product_name"] and hit["product_name"] not in gammes_list:
+                    gammes_list.append(hit["product_name"])
+            
+            # Crée un prompt spécifique pour les gammes
+            gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
+            context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+            
+            prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+Le délégué te demande la liste des gammes offertes par le laboratoire.
+
+{context}
+
+Réponds de manière claire et structurée en listant toutes les gammes.
+Termine en demandant s'il souhaite des détails sur une gamme spécifique.
+Réponds dans la même langue que la question.
+Sois précis : il y a {len(gammes_list)} gammes au total.
+
+Réponse :"""
+            
+            answer = self.llm.invoke(prompt)
+            
+            sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
+            return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+    
+    # Sinon, recherche normale
+    hits = self.search(question, n_results=n_results)
+    
+    if not hits:
+        return {
+            "answer": "Je n'ai pas trouvé d'information pertinente.",
+            "sources": [],
+            "chunks_used": 0,
+        }
+    
+    context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
+    context = "\n\n---\n\n".join(context_parts)
+    prompt  = get_prompt(mode).format(context=context, question=question)
+    answer  = self.llm.invoke(prompt)
+    
+    seen, sources = set(), []
+    for hit in hits:
+        if hit["product_name"] not in seen:
+            seen.add(hit["product_name"])
+            sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
+    
+    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}

@@ -160,3 +160,25 @@ Be motivating and enthusiastic. 3-4 sentences max. Respond in French."""
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+@router.get("/gammes")
+def get_gammes():
+    """Retourne la liste des gammes depuis la table catalogues."""
+    import pymysql, os
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST","localhost"),
+            port=int(os.getenv("MYSQL_PORT",3306)),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"),
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT gamme FROM catalogues ORDER BY gamme")
+            rows = cur.fetchall()
+        conn.close()
+        return {"gammes": [r["gamme"] for r in rows if r.get("gamme")]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
