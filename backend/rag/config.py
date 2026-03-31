@@ -24,13 +24,44 @@ document per row, which gets embedded and stored in the vector DB.
 
 TABLES = [
     {
-        "table": "products",
+    "table": "products",
+    "id_column": "id",
+    "name_column": "name",
+    "text_columns": [
+        "name",
+        "indications",
+        "compositions",
+        "categories",
+        "forme",
+        "classe",
+        "conseils_utilisation",
+        "description",
+        "code_article",
+        ],
+    },
+    {
+        "table": "doc",
         "id_column": "id",
-        "name_column": "name",
+        "name_column": "titre",
         "text_columns": [
+            "titre",
             "name",
-            "description",
-            "code_article",
+        ],
+    },
+    {
+        "table": "annimation_fiches",
+        "id_column": "id",
+        "name_column": "id",
+        "text_columns": [
+            "points_fort",
+            "recommandations",
+        ],
+    },
+    {
+           "table": "catalogues",
+           "id_column": "id",
+           "name_column": "gamme",
+           "text_columns": ["gamme", "contenu"
         ],
     },
 

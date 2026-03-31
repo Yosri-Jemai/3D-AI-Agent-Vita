@@ -1,0 +1,3639 @@
+=== ./.env ===
+# ─── MySQL ───────────────────────────────────────────────────
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=root
+MYSQL_DATABASE=vital_crm
+
+# ─── Ollama ──────────────────────────────────────────────────
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_LLM_MODEL=llama3.1
+OLLAMA_EMBED_MODEL=nomic-embed-text
+
+# ─── ChromaDB ────────────────────────────────────────────────
+CHROMA_PERSIST_DIR=./chroma_db
+CHROMA_COLLECTION_NAME=medical_products
+
+# ─── API ─────────────────────────────────────────────────────
+API_HOST=0.0.0.0
+API_PORT=8000
+=== ./backend/api/routes_chat.py ===
+"""
+backend/api/routes_chat.py
+===========================
+Chat endpoints:
+  GET  /chat/health
+  GET  /chat/stats
+  GET  /chat/greeting/stream   — opening greeting, streams token by token
+  POST /chat/ask
+  POST /chat/ask/stream
+"""
+
+import json
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+router = APIRouter()
+
+
+class QuestionRequest(BaseModel):
+    question:  str
+    n_results: int = 10
+    mode:      str = "medical"   # "medical" or "commercial"
+
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@router.get("/stats")
+def stats():
+    from backend.rag.engine import engine
+    try:
+        return engine.get_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/greeting/stream")
+def greeting_stream():
+    """Stream the opening greeting from Dr. Layla."""
+    from backend.rag.engine import engine
+
+    def event_generator():
+        try:
+            for chunk in engine.stream_greeting():
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        finally:
+            yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/ask")
+def ask(req: QuestionRequest):
+    from backend.rag.engine import engine
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+    try:
+        return engine.ask(req.question, n_results=req.n_results, mode=req.mode)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ask/stream")
+async def ask_stream(req: QuestionRequest):
+    from backend.rag.engine import engine
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    def event_generator():
+        try:
+            for chunk in engine.stream_ask(req.question, n_results=req.n_results, mode=req.mode):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        finally:
+            yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/products")
+def get_products():
+    import pymysql, os
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST","localhost"),
+            port=int(os.getenv("MYSQL_PORT",3306)),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"),
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM products ORDER BY name")
+            rows = cur.fetchall()
+        conn.close()
+        return {"products": [r["name"] for r in rows if r.get("name")]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/mode-intro/stream")
+def mode_intro_stream(mode: str = "medical"):
+    """Stream a mode-specific intro message from Vita."""
+    from backend.rag.engine import engine
+
+    if mode == "medical":
+        prompt = """You are Vita, a medical product training coach for a pharmaceutical company.
+A delegate just chose medical training mode. 
+Introduce yourself warmly as Vita, explain briefly what you will help them with (product indications, composition, clinical use, medical terminology, what to say to doctors and pharmacists).
+End by asking them to select a product to get started.
+Be professional and warm. 3-4 sentences max. Respond in French."""
+    else:
+        prompt = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
+A delegate just chose commercial training mode.
+Introduce yourself with energy as Vita, explain briefly what you will help them with (sales pitches, objection handling, convincing pharmacies and clinics, competitive positioning).
+End by asking them to select a product to get started.
+Be motivating and enthusiastic. 3-4 sentences max. Respond in French."""
+
+    def event_generator():
+        try:
+            engine.initialize()
+            for token in engine.llm.stream(prompt):
+                import json
+                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+        except Exception as e:
+            import json
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        finally:
+            import json
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+@router.get("/gammes")
+def get_gammes():
+    """Retourne la liste des gammes depuis la table catalogues."""
+    import pymysql, os
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST","localhost"),
+            port=int(os.getenv("MYSQL_PORT",3306)),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"),
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT gamme FROM catalogues ORDER BY gamme")
+            rows = cur.fetchall()
+        conn.close()
+        return {"gammes": [r["gamme"] for r in rows if r.get("gamme")]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))=== ./backend/api/routes_tts.py ===
+"""
+backend/api/routes_tts.py
+==========================
+TTS endpoint:
+  POST /tts/speak   — text → MP3 audio (base64) via Edge TTS
+
+lang="auto" (défaut) → détection automatique de la langue du texte.
+lang="fr/en/ar"      → forcer une langue spécifique.
+"""
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+router = APIRouter()
+
+
+class SpeakRequest(BaseModel):
+    text: str
+    lang: str = "auto"   # "auto", "fr", "en", "ar"
+
+
+@router.post("/speak")
+async def speak(req: SpeakRequest):
+    """
+    Convert text to speech.
+    Détecte automatiquement la langue si lang="auto".
+    Gère les textes mixtes (arabe + français + anglais).
+    Returns JSON: { audio_b64, voice, lang, format, segments }
+    """
+    from backend.tts.synthesizer import synthesize_async
+
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    try:
+        result = await synthesize_async(req.text, lang=req.lang)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
+=== ./backend/api/routes_voice.py ===
+"""
+backend/api/routes_voice.py
+============================
+Voice endpoints:
+  POST /voice/transcribe   — audio file → text (Whisper large-v3)
+  POST /voice/ask          — audio file → transcribe → RAG → text answer
+  POST /voice/ask/stream   — audio file → transcribe → RAG → streamed answer
+"""
+
+import json
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi.responses import StreamingResponse
+
+router = APIRouter()
+
+
+@router.post("/transcribe")
+async def transcribe(
+    audio: UploadFile = File(...),
+    language: str = Form(default=None),
+):
+    """
+    Upload an audio file, get back the transcribed text.
+    Accepts: WAV, MP3, WebM, OGG
+    """
+    from backend.stt.transcriber import transcribe_audio_file
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    try:
+        result = transcribe_audio_file(audio_bytes, language=language)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ask")
+async def voice_ask(
+    audio: UploadFile = File(...),
+    language: str = Form(default=None),
+    n_results: int = Form(default=10),
+):
+    """
+    Full voice pipeline:
+      audio → STT (Whisper) → RAG (ChromaDB + LLM) → text answer
+    """
+    from backend.stt.transcriber import transcribe_audio_file
+    from backend.rag.engine import engine
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    # Step 1: transcribe
+    stt_result = transcribe_audio_file(audio_bytes, language=language)
+    question   = stt_result["text"]
+
+    if not question.strip():
+        raise HTTPException(status_code=400, detail="Could not transcribe audio")
+
+    # Step 2: RAG
+    rag_result = engine.ask(question, n_results=n_results)
+
+    return {
+        "question": question,
+        "language": stt_result["language"],
+        **rag_result,
+    }
+
+
+@router.post("/ask/stream")
+async def voice_ask_stream(
+    audio: UploadFile = File(...),
+    language: str = Form(default=None),
+    n_results: int = Form(default=10),
+):
+    """
+    Full voice pipeline with streamed answer.
+    First SSE event contains the transcribed question.
+    """
+    from backend.stt.transcriber import transcribe_audio_file
+    from backend.rag.engine import engine
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    stt_result = transcribe_audio_file(audio_bytes, language=language)
+    question   = stt_result["text"]
+
+    if not question.strip():
+        raise HTTPException(status_code=400, detail="Could not transcribe audio")
+
+    def event_generator():
+        # Send transcription first so UI can show what was heard
+        yield f"data: {json.dumps({'type': 'transcript', 'text': question, 'language': stt_result['language']})}\n\n"
+
+        try:
+            for chunk in engine.stream_ask(question, n_results=n_results):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        finally:
+            yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+=== ./backend/api/__init__.py ===
+# api package
+=== ./backend/main.py ===
+"""
+backend/main.py
+===============
+FastAPI entry point. Registers all routers.
+
+Run with:
+    python backend/main.py
+"""
+
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from backend.api.routes_chat  import router as chat_router
+from backend.api.routes_voice import router as voice_router
+from backend.api.routes_tts import router as tts_router
+
+
+app = FastAPI(
+    title="VitalAgent API",
+    description="3D AI Medical Delegate Training Agent",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register routers
+app.include_router(chat_router,  prefix="/chat",  tags=["Chat"])
+app.include_router(voice_router, prefix="/voice", tags=["Voice"])
+app.include_router(tts_router, prefix="/tts", tags=["TTS"])
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "VitalAgent"}
+
+if __name__ == "__main__":
+    import uvicorn
+    host = os.getenv("API_HOST", "0.0.0.0")
+    port = int(os.getenv("API_PORT", 8000))
+    print(f"\n VitalAgent API starting on http://localhost:{port}\n")
+    uvicorn.run("backend.main:app", host=host, port=port, reload=False)
+
+# Direct /products route for frontend product selector
+from fastapi.responses import JSONResponse
+@app.get("/products")
+def products():
+    import pymysql, os
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST","localhost"),
+            port=int(os.getenv("MYSQL_PORT",3306)),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"),
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM products ORDER BY name")
+            rows = cur.fetchall()
+        conn.close()
+        return {"products": [r["name"] for r in rows if r.get("name")]}
+    except Exception as e:
+        return {"products": [], "error": str(e)}
+
+@app.get("/products/{name}")
+def product_detail(name: str):
+    import pymysql, os
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST","localhost"),
+            port=int(os.getenv("MYSQL_PORT",3306)),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            database=os.getenv("MYSQL_DATABASE"),
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM products WHERE name = %s LIMIT 1", (name,))
+            row = cur.fetchone()
+        conn.close()
+        if not row:
+            return {"name": name, "description": ""}
+        return {k: (str(v) if v is not None else "") for k, v in row.items()}
+    except Exception as e:
+        return {"name": name, "description": "", "error": str(e)}
+=== ./backend/rag/config.py ===
+"""
+mysql_columns.py
+================
+EDIT THIS FILE to match your MySQL database schema.
+
+Tell the system:
+  1. Which tables to read from
+  2. Which columns contain useful text for the AI
+  3. How to label/identify each product (for source citations)
+
+The system will concatenate the columns you specify into a single text
+document per row, which gets embedded and stored in the vector DB.
+"""
+
+# ─── TABLE DEFINITIONS ──────────────────────────────────────────────────────
+# Each entry in this list defines one MySQL table to ingest.
+#
+# Fields:
+#   table       : exact table name in MySQL
+#   id_column   : primary key column (used to track updates)
+#   name_column : human-readable name shown in source citations
+#   text_columns: list of columns whose text will be fed to the AI
+#                 Order matters — put the most important columns first.
+
+TABLES = [
+    {
+    "table": "products",
+    "id_column": "id",
+    "name_column": "name",
+    "text_columns": [
+        "name",
+        "indications",
+        "compositions",
+        "categories",
+        "forme",
+        "classe",
+        "conseils_utilisation",
+        "description",
+        "code_article",
+        ],
+    },
+    {
+        "table": "doc",
+        "id_column": "id",
+        "name_column": "titre",
+        "text_columns": [
+            "titre",
+            "name",
+        ],
+    },
+    {
+        "table": "annimation_fiches",
+        "id_column": "id",
+        "name_column": "id",
+        "text_columns": [
+            "points_fort",
+            "recommandations",
+        ],
+    },
+    {
+           "table": "catalogues",
+           "id_column": "id",
+           "name_column": "gamme",
+           "text_columns": ["gamme", "contenu"
+        ],
+    },
+
+    # ── Add more tables below if needed ──────────────────────────────────
+    # {
+    #     "table": "clinical_studies",
+    #     "id_column": "study_id",
+    #     "name_column": "study_title",
+    #     "text_columns": [
+    #         "study_title",
+    #         "objective",
+    #         "results",
+    #         "conclusions",
+    #     ],
+    # },
+]
+
+# ─── CHUNKING SETTINGS ──────────────────────────────────────────────────────
+# How to split long text into pieces for the vector DB.
+# Each "chunk" is one searchable unit.
+CHUNK_SIZE    = 800   # characters per chunk (800 works well for medical text)
+CHUNK_OVERLAP = 150   # overlap between chunks (keeps context at boundaries)
+=== ./backend/rag/engine.py ===
+"""
+rag_engine.py
+=============
+Core RAG logic. Called by the API.
+
+Given a user question:
+  1. Embeds the question using Ollama
+  2. Searches ChromaDB for the most relevant product chunks
+  3. Builds a prompt with context + question
+  4. Streams the answer from the LLM
+"""
+
+import os
+from dotenv import load_dotenv
+from langchain_ollama import OllamaEmbeddings, OllamaLLM
+import chromadb
+
+load_dotenv()
+
+
+# ── Greeting prompt — sent on first load, no product context needed ───────────
+GREETING_PROMPT = """You are Dr. Layla, a professional training assistant for a pharmaceutical company.
+
+A delegate has just opened the training platform. Greet them warmly and ask them which training mode they want:
+
+1. Medical delegate training — deep product knowledge: indications, composition, mechanism, clinical use, medical terminology. For delegates who speak with doctors and pharmacists.
+2. Commercial delegate training — sales skills: how to present the product convincingly, handle objections, highlight benefits over competitors, build trust with clients. For delegates who sell to pharmacies and clinics.
+
+Keep the greeting short, friendly and professional. Ask clearly which mode they prefer. 
+Respond in French by default. If the delegate responds in another language, immediately switch to that language.
+Do NOT mention any products yet. Just greet and ask for the training mode."""
+
+
+# ── Medical delegate prompt ────────────────────────────────────────────────────
+# Dans engine.py, modifie MEDICAL_PROMPT :
+
+MEDICAL_PROMPT = """Tu es Dr. Layla, une experte en formation produits médicaux.
+Tu formes un DÉLÉGUÉ MÉDICAL qui présente des produits aux médecins et pharmaciens.
+
+Ton rôle :
+- Enseigner la connaissance approfondie des produits : indications, composition, mécanisme d'action, données cliniques
+- Expliquer les concepts de manière pédagogique
+- Après chaque réponse, suggérer 1-2 questions complémentaires
+- Répondre dans la même langue que le délégué
+
+RÈGLES IMPORTANTES :
+- Si on te demande la LISTE DES GAMMES ou les CATALOGUES, donne la liste complète avec les noms exacts
+- Si on te demande un produit spécifique, ne parle que de ce produit
+- Ne mentionne pas Coenzyme Q10 sauf si explicitement demandé
+- Sois précis et concis (4-5 phrases max)
+
+Contexte produit :
+{context}
+
+Question du délégué : {question}
+
+Réponse de formation :"""
+
+
+# ── Commercial delegate prompt ─────────────────────────────────────────────────
+COMMERCIAL_PROMPT = """You are Dr. Layla, a pharmaceutical sales training coach for a pharmaceutical company.
+You are training a COMMERCIAL delegate — someone who sells products to pharmacies, clinics and healthcare buyers.
+
+Your role:
+- Train sales skills: how to present the product's value, handle objections, differentiate from competitors, close a sale.
+- Translate product features into customer benefits. Example: "Contains 3x more bioavailable iron" becomes "Your clients will see results faster and come back to buy again."
+- Roleplay selling scenarios when relevant: "Here's how you would introduce this product to a pharmacy owner..."
+- After answering, suggest 1-2 sales challenges the delegate should practice: objections, comparison questions, pricing discussions.
+- Keep energy positive and motivating — a good sales coach is enthusiastic.
+- Focus on: unique selling points, target customer profile, shelf placement tips, seasonal opportunities, loyalty arguments.
+- Keep responses to 4-5 sentences max. Be punchy and direct — no long paragraphs or bullet lists.
+
+CRITICAL LANGUAGE RULE: Detect the language of the delegate's question and respond ONLY in that exact language. If they write/speak in French → respond in French. If English → respond in English. If Arabic → respond in Arabic. Never switch languages mid-response. Never respond in a different language than the one used in the question. This rule overrides everything else.
+
+If information is not in the context:
+- French: "Je n'ai pas tous les détails commerciaux de ce produit, mais voici comment je le présenterais..."
+- English: "I don't have all the commercial details yet, but here's how I'd position this product..."
+- Always reframe limited info into a sales opportunity, never just say "I don't know."
+
+Context from product database:
+{context}
+
+Delegate question: {question}
+
+Sales training response (be motivating, practical, suggest objection handling at the end):"""
+
+
+def get_prompt(mode: str) -> str:
+    if mode == "commercial":
+        return COMMERCIAL_PROMPT
+    return MEDICAL_PROMPT
+
+
+class RAGEngine:
+    """Singleton-style RAG engine. Initialize once and reuse."""
+
+    def __init__(self):
+        self.embeddings   = None
+        self.llm          = None
+        self.collection   = None
+        self._initialized = False
+
+    def initialize(self):
+        if self._initialized:
+            return
+
+        base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+        llm_model   = os.getenv("OLLAMA_LLM_MODEL", "llama3.1")
+        persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+        coll_name   = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
+
+        self.embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
+
+        self.llm = OllamaLLM(
+            model=llm_model,
+            base_url=base_url,
+            temperature=0.1,      # Low temperature = more factual, less creative
+            num_predict=400,     # Max tokens in the answer
+        )
+
+        client = chromadb.PersistentClient(path=persist_dir)
+        self.collection = client.get_or_create_collection(
+            name=coll_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+        self._initialized = True
+
+    def search(self, question: str, n_results: int = 10) -> list[dict]:
+        self.initialize()
+
+        # 1. Semantic search (meaning-based)
+        question_vector = self.embeddings.embed_query(question)
+        results = self.collection.query(
+            query_embeddings=[question_vector],
+            n_results=min(n_results, self.collection.count() or 1),
+            include=["documents", "metadatas", "distances"],
+        )
+
+        hits = []
+        seen_ids = set()
+
+        for doc, meta, dist in zip(
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        ):
+            hits.append(
+                {
+                    "text": doc,
+                    "product_name": meta.get("product_name", "Unknown"),
+                    "source_table": meta.get("source_table", ""),
+                    "relevance": round(1 - dist, 3),
+                }
+            )
+            seen_ids.add(meta.get("source_id", ""))
+
+        # 2. Special case: question about gammes/catalogues → force-inject catalogue chunks
+        import re
+
+        catalogue_keywords = [
+            "gamme",
+            "gammes",
+            "catalogue",
+            "catalogues",
+            "liste",
+            "laboratoire",
+            "portfolio",
+            "offre",
+        ]
+        question_lower = question.lower()
+        is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
+
+        if is_catalogue_query:
+            cat_docs = self.collection.get(
+                include=["documents", "metadatas"], where={"source_table": "catalogues"}
+            )
+            for doc, meta in zip(cat_docs["documents"], cat_docs["metadatas"]):
+                source_id = meta.get("source_id", "")
+                if source_id in seen_ids:
+                    continue
+                hits.append(
+                    {
+                        "text": doc,
+                        "product_name": meta.get("product_name", "Unknown"),
+                        "source_table": "catalogues",
+                        "relevance": 0.98,
+                    }
+                )
+                seen_ids.add(source_id)
+
+        # 3. Keyword search — match product name against question words
+        words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
+        if words:
+            all_docs = self.collection.get(include=["documents", "metadatas"])
+            for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
+                product_name = meta.get("product_name", "").lower()
+                source_id = meta.get("source_id", "")
+                if source_id in seen_ids:
+                    continue
+                if any(w.lower() in product_name for w in words):
+                    hits.append(
+                        {
+                            "text": doc,
+                            "product_name": meta.get("product_name", "Unknown"),
+                            "source_table": meta.get("source_table", ""),
+                            "relevance": 0.99,
+                        }
+                    )
+                    seen_ids.add(source_id)
+
+        hits.sort(key=lambda x: x["relevance"], reverse=True)
+        return hits[:n_results]
+
+
+    def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
+        self.initialize()
+    
+        # Détection des questions sur les gammes
+        question_lower = question.lower()
+        is_gamme_question = any(word in question_lower for word in [
+            "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
+            "quelles gammes", "quels catalogues", "offres", "offert"
+        ])
+    
+        if is_gamme_question:
+            # Utilise la recherche spéciale pour les gammes
+            hits = self.search_gammes(question, n_results=n_results)
+        
+            if hits:
+                # Construit la liste des gammes
+                gammes_list = []
+                for hit in hits:
+                    if hit["product_name"] and hit["product_name"] not in gammes_list:
+                        gammes_list.append(hit["product_name"])
+            
+                # 🔍 Détecter si on demande une gamme spécifique
+                specific_gamme = None
+                for gamme_name in gammes_list:
+                    if gamme_name.lower() in question_lower:
+                        specific_gamme = gamme_name
+                        break
+            
+                # 🎯 Cas 1: L'utilisateur demande une gamme spécifique
+                if specific_gamme:
+                    # Récupérer tous les chunks de cette gamme spécifique
+                    gamme_chunks = self.collection.get(
+                        where={
+                            "source_table": "catalogues",
+                            "product_name": specific_gamme
+                        },
+                        include=["documents", "metadatas"]
+                    )
+                
+                    # Extraire les infos produits de cette gamme
+                    produits_text = ""
+                    for doc, meta in zip(gamme_chunks["documents"], gamme_chunks["metadatas"]):
+                       produits_text += doc + "\n\n"
+                    
+                    prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+    Le délégué te demande des informations sur la gamme {specific_gamme}.
+
+    La gamme {specific_gamme} comprend les produits suivants :
+    {produits_text[:2000]}  # Limite pour éviter de dépasser la taille du contexte
+
+    IMPORTANT : 
+    - Ne parle que de la gamme {specific_gamme}
+    - Ne mentionne aucun autre produit ou gamme
+    - Donne une description claire de ce que propose cette gamme
+    - Liste les produits principaux qu'elle contient
+    - Réponds dans la même langue que la question
+
+    Réponse :"""
+                
+                    answer = self.llm.invoke(prompt)
+                    sources = [{"name": specific_gamme, "relevance": 0.99}]
+                    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(gamme_chunks["documents"])}
+            
+                # 📋 Cas 2: L'utilisateur demande la liste de TOUTES les gammes
+                else:
+                    gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
+                    context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+                
+                    prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+    Le délégué te demande la liste des gammes offertes par le laboratoire.
+
+    {context}
+
+    IMPORTANT : 
+    - Donne uniquement la liste des gammes
+    - Ne parle d'aucun produit spécifique
+    - Réponds dans la même langue que la question
+    - Termine en demandant s'il souhaite des détails sur une gamme spécifique
+
+    Réponse :"""
+                
+                    answer = self.llm.invoke(prompt)
+                    sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
+                    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+    
+        # Sinon, recherche normale (produits, etc.)
+        hits = self.search(question, n_results=n_results)
+        
+        if not hits:
+            return {
+                "answer": "Je n'ai pas trouvé d'information pertinente.",
+                "sources": [],
+                "chunks_used": 0,
+            }
+    
+        context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
+        context = "\n\n---\n\n".join(context_parts)
+        prompt  = get_prompt(mode).format(context=context, question=question)
+        answer  = self.llm.invoke(prompt)
+    
+        seen, sources = set(), []
+        for hit in hits:
+            if hit["product_name"] not in seen:
+                seen.add(hit["product_name"])
+                sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
+    
+        return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+
+    def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
+        self.initialize()
+        hits = self.search(question, n_results=n_results)
+
+        if not hits:
+            yield {"type": "token", "content": "I couldn't find relevant product information."}
+            yield {"type": "sources", "sources": []}
+            return
+
+        context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
+        context = "\n\n---\n\n".join(context_parts)
+        prompt  = get_prompt(mode).format(context=context, question=question)
+
+        for token in self.llm.stream(prompt):
+            yield {"type": "token", "content": token}
+
+        # Send sources at the end
+        seen    = set()
+        sources = []
+        for hit in hits:
+            name = hit["product_name"]
+            if name not in seen:
+                seen.add(name)
+                sources.append({"name": name, "relevance": hit["relevance"]})
+
+        yield {"type": "sources", "sources": sources}
+
+    def get_stats(self) -> dict:
+        self.initialize()
+        count = self.collection.count()
+        return {
+            "total_chunks":   count,
+            "collection":     os.getenv("CHROMA_COLLECTION_NAME", "medical_products"),
+            "llm_model":      os.getenv("OLLAMA_LLM_MODEL", "llama3.1"),
+            "embed_model":    os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+            "ready":          count > 0,
+        }
+
+    def greeting(self) -> str:
+        """Generate opening greeting asking which training mode the delegate wants."""
+        self.initialize()
+        return self.llm.invoke(GREETING_PROMPT).strip()
+
+    def stream_greeting(self):
+        """Stream the opening greeting token by token."""
+        self.initialize()
+        for token in self.llm.stream(GREETING_PROMPT):
+            yield {"type": "token", "content": token}
+        yield {"type": "done"}
+
+
+# Shared engine instance
+engine = RAGEngine()
+
+
+# Dans engine.py, après la classe RAGEngine, ajoute cette méthode :
+
+def search_gammes(self, question: str, n_results: int = 10) -> list[dict]:
+    """Recherche spécifique pour les gammes/catalogues."""
+    self.initialize()
+    
+    # 1. Récupère TOUS les chunks de la table catalogues
+    all_docs = self.collection.get(
+        where={"source_table": "catalogues"},
+        include=["documents", "metadatas"]
+    )
+    
+    # 2. Groupe par gamme pour éviter les doublons
+    gammes_dict = {}
+    for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
+        gamme = meta.get("product_name", "")
+        if gamme not in gammes_dict:
+            gammes_dict[gamme] = {
+                "text": doc,
+                "product_name": gamme,
+                "source_table": "catalogues",
+                "relevance": 0.99
+            }
+    
+    hits = list(gammes_dict.values())
+    return hits[:n_results]
+def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
+    self.initialize()
+    
+    # Détection des questions sur les gammes
+    question_lower = question.lower()
+    is_gamme_question = any(word in question_lower for word in [
+        "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
+        "quelles gammes", "quels catalogues", "offres", "offert"
+    ])
+    
+    if is_gamme_question:
+        # Utilise la recherche spéciale pour les gammes
+        hits = self.search_gammes(question, n_results=n_results)
+        
+        if hits:
+            # Construit une réponse spéciale pour les gammes
+            gammes_list = []
+            for hit in hits:
+                if hit["product_name"] and hit["product_name"] not in gammes_list:
+                    gammes_list.append(hit["product_name"])
+            
+            # Crée un prompt spécifique pour les gammes
+            gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
+            context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+            
+            prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
+Le délégué te demande la liste des gammes offertes par le laboratoire.
+
+{context}
+
+Réponds de manière claire et structurée en listant toutes les gammes.
+Termine en demandant s'il souhaite des détails sur une gamme spécifique.
+Réponds dans la même langue que la question.
+Sois précis : il y a {len(gammes_list)} gammes au total.
+
+Réponse :"""
+            
+            answer = self.llm.invoke(prompt)
+            
+            sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
+            return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+    
+    # Sinon, recherche normale
+    hits = self.search(question, n_results=n_results)
+    
+    if not hits:
+        return {
+            "answer": "Je n'ai pas trouvé d'information pertinente.",
+            "sources": [],
+            "chunks_used": 0,
+        }
+    
+    context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
+    context = "\n\n---\n\n".join(context_parts)
+    prompt  = get_prompt(mode).format(context=context, question=question)
+    answer  = self.llm.invoke(prompt)
+    
+    seen, sources = set(), []
+    for hit in hits:
+        if hit["product_name"] not in seen:
+            seen.add(hit["product_name"])
+            sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
+    
+    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
+=== ./backend/rag/ingest.py ===
+"""
+ingest.py
+=========
+Step 1 of the pipeline.
+
+Reads product data from MySQL → splits into chunks → embeds with Ollama →
+stores in ChromaDB vector database.
+
+Run once to set up, then re-run whenever your MySQL data changes.
+
+Usage:
+    python scripts/ingest.py
+    python scripts/ingest.py --reset   (wipe the vector DB and rebuild)
+"""
+
+import os
+import sys
+import argparse
+import pymysql
+from dotenv import load_dotenv
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings
+import chromadb
+from chromadb.config import Settings
+
+# ── Load .env ────────────────────────────────────────────────────────────────
+load_dotenv()
+
+# ── Import your table config ─────────────────────────────────────────────────
+sys.path.insert(0, os.path.dirname(__file__))
+from mysql_columns import TABLES, CHUNK_SIZE, CHUNK_OVERLAP
+
+
+def get_mysql_connection():
+    """Create and return a MySQL connection using .env credentials."""
+    return pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER"),
+        password=os.getenv("MYSQL_PASSWORD"),
+        database=os.getenv("MYSQL_DATABASE"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def fetch_rows_from_mysql(conn, table_config: dict) -> list[dict]:
+    """
+    Fetch all rows from one table and return as list of dicts.
+    Each dict has: id, name, text (concatenated columns)
+    """
+    table   = table_config["table"]
+    id_col  = table_config["id_column"]
+    name_col = table_config["name_column"]
+    text_cols = table_config["text_columns"]
+
+    # Build a SELECT for the columns we need
+    cols_to_fetch = list(dict.fromkeys([id_col, name_col] + text_cols))
+    col_list = ", ".join(f"`{c}`" for c in cols_to_fetch)
+
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {col_list} FROM `{table}`")
+        rows = cur.fetchall()
+
+    print(f"  → Fetched {len(rows)} rows from `{table}`")
+    return rows
+
+
+def row_to_document(row: dict, table_config: dict) -> tuple[str, dict]:
+    """
+    Convert a MySQL row to a (text, metadata) pair.
+    Text is built by concatenating column_name: value pairs.
+    """
+    text_cols = table_config["text_columns"]
+    id_col    = table_config["id_column"]
+    name_col  = table_config["name_column"]
+    table     = table_config["table"]
+
+    parts = []
+    for col in text_cols:
+        val = row.get(col)
+        if val and str(val).strip():
+            # Clean up the pipe-separated format
+            cleaned = str(val).strip()
+            cleaned = cleaned.replace(" | ", "\n")
+            cleaned = cleaned.replace("• ", "\n- ")
+            cleaned = cleaned.replace("– ", "\n- ")
+            label = col.replace("_", " ").title()
+            parts.append(f"{label}: {cleaned}")
+
+    text = "\n\n".join(parts)
+
+    metadata = {
+        "source_table": table,
+        "source_id":    str(row.get(id_col, "")),
+        "product_name": str(row.get(name_col, "Unknown Product")),
+    }
+
+    return text, metadata
+
+
+def chunk_document(text: str, metadata: dict, chunk_idx: int) -> list[tuple]:
+    """Split a document into chunks, preserving metadata."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    chunks = splitter.split_text(text)
+    result = []
+    for i, chunk in enumerate(chunks):
+        chunk_meta = {**metadata, "chunk_index": i}
+        chunk_id   = f"{metadata['source_table']}_{metadata['source_id']}_chunk{i}"
+        result.append((chunk_id, chunk, chunk_meta))
+    return result
+
+
+def main(reset: bool = False):
+    print("\n=== MedRAG Ingestion Pipeline ===\n")
+
+    # ── 1. Connect to MySQL ──────────────────────────────────────────────────
+    print("1. Connecting to MySQL...")
+    try:
+        conn = get_mysql_connection()
+        print("   ✓ Connected to MySQL")
+    except Exception as e:
+        print(f"   ✗ MySQL connection failed: {e}")
+        print("   Check your .env file credentials.")
+        sys.exit(1)
+
+    # ── 2. Load embedding model ──────────────────────────────────────────────
+    print("\n2. Loading embedding model from Ollama...")
+    embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
+        # Quick test
+        _ = embeddings.embed_query("test")
+        print(f"   ✓ Embedding model '{embed_model}' ready")
+    except Exception as e:
+        print(f"   ✗ Ollama not reachable: {e}")
+        print("   Make sure Ollama is running: open a terminal and type 'ollama serve'")
+        sys.exit(1)
+
+    # ── 3. Set up ChromaDB ───────────────────────────────────────────────────
+    print("\n3. Setting up ChromaDB...")
+    persist_dir     = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+    collection_name = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
+
+    os.makedirs(persist_dir, exist_ok=True)
+    chroma_client = chromadb.PersistentClient(path=persist_dir)
+
+    if reset:
+        print("   ! --reset flag: deleting existing collection...")
+        try:
+            chroma_client.delete_collection(collection_name)
+        except Exception:
+            pass
+
+    collection = chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+    print(f"   ✓ Collection '{collection_name}' ready")
+
+    # ── 4. Process each table ────────────────────────────────────────────────
+    print("\n4. Reading MySQL data and ingesting into vector DB...\n")
+
+    total_chunks = 0
+
+    for table_config in TABLES:
+        table_name = table_config["table"]
+        print(f"  Processing table: {table_name}")
+
+        rows = fetch_rows_from_mysql(conn, table_config)
+
+        all_ids, all_docs, all_metas = [], [], []
+
+        for i, row in enumerate(rows):
+            text, metadata = row_to_document(row, table_config)
+            if not text.strip():
+                continue
+
+            chunks = chunk_document(text, metadata, i)
+            for chunk_id, chunk_text, chunk_meta in chunks:
+                all_ids.append(chunk_id)
+                all_docs.append(chunk_text)
+                all_metas.append(chunk_meta)
+
+        if not all_docs:
+            print(f"  ! No text found in table '{table_name}' — check your column names")
+            continue
+
+        # Embed in batches of 50 (avoids memory issues)
+        BATCH = 50
+        for batch_start in range(0, len(all_docs), BATCH):
+            batch_ids   = all_ids[batch_start:batch_start + BATCH]
+            batch_docs  = all_docs[batch_start:batch_start + BATCH]
+            batch_metas = all_metas[batch_start:batch_start + BATCH]
+
+            print(f"    Embedding batch {batch_start // BATCH + 1} "
+                  f"({len(batch_docs)} chunks)...", end="", flush=True)
+
+            vectors = embeddings.embed_documents(batch_docs)
+
+            # Upsert (add or update) into ChromaDB
+            collection.upsert(
+                ids=batch_ids,
+                documents=batch_docs,
+                embeddings=vectors,
+                metadatas=batch_metas,
+            )
+            print(" ✓")
+
+        total_chunks += len(all_docs)
+        print(f"  ✓ {table_name}: {len(rows)} rows → {len(all_docs)} chunks stored\n")
+
+    conn.close()
+
+    # ── 5. Summary ───────────────────────────────────────────────────────────
+    final_count = collection.count()
+    print("=" * 40)
+    print(f"✓ Ingestion complete!")
+    print(f"  Total chunks in vector DB: {final_count}")
+    print(f"  Database stored at: {persist_dir}")
+    print("\nNext step: run the API with:")
+    print("  python backend/api.py")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Wipe the existing vector DB and rebuild from scratch",
+    )
+    args = parser.parse_args()
+    main(reset=args.reset)
+=== ./backend/rag/__init__.py ===
+# rag package
+=== ./backend/stt/transcriber.py ===
+"""
+backend/stt/transcriber.py
+==========================
+Speech-to-Text using OpenAI Whisper large-v3 (free, runs locally).
+Uses faster-whisper for efficient CPU/GPU inference.
+
+Install:
+    pip install faster-whisper pyaudio
+"""
+
+import os
+import io
+import tempfile
+
+_model = None
+
+def get_model():
+    global _model
+    if _model is None:
+        from faster_whisper import WhisperModel
+        print("Loading Whisper small...")
+        _model = WhisperModel(
+            "small",
+            device="cpu",       # GPU if available, else CPU
+            compute_type="int8", # float16 on GPU, int8 on CPU
+        )
+        print("Whisper ready.")
+    return _model
+
+
+def transcribe_audio_file(audio_bytes: bytes, language: str = None) -> dict:
+    """
+    Transcribe audio bytes (WAV, MP3, WebM, OGG).
+    language: "fr", "en", "ar" or None for auto-detect.
+    Returns: { text, language, segments }
+    """
+    model = get_model()
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
+    try:
+        segments, info = model.transcribe(
+        tmp_path,
+        language=language,
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=500),
+        initial_prompt="Produits médicaux Vital Healthcare: LV PSOCALM, LV Psolcalm, FerBiotic Lipo, Pulmax Kids, Pulmax Anti-Tussif, Pédiakids, Pédiakids trio, Pédiakids Varispray, Pédiakids Apigrip, Pédiakids APITOU, Pédiakids COLIGAZ, Pédiakids Immunovit, Pédiakids Oméga 3, PHYTOFANE, PHYTOFANE Anti Chute, PHYTOFANE Antipelliculaire, PHYTOFANE Fortifiant Phanères, FONGIDERM, FONGIDERM Antifongique, VASELINE Urée, VITONIC, VITONIC Grossesse, OLIGOVIT, OLIGOVIT Trio, Oligovit magnésium, Vitosine Eosine, VITAL HEALTHCARE FERTICARE, VITAL HEALTHCARE SKINCARE, LV GINKO Extra, LV PHYTOVEINE, LV CYSPROTECT, LV Arthroforce, LV Fersang, LV Hemostop, LV Spasvit, LV Vitamine A, LV Vitamine D3, LV Tetra B, LV Sesa, LV Diabemin, LV Phytocalm, LV Mélatonuit, LV Migrainal, LV Normaprost, LV Tabastop, LV Lanorose, LV Crème Dalibour, HYDRAscreen, HYDRAfine, HYDRAVERA, HYDRA GEL, Hydra eau micellaire, Planthérapie Allergiplant, Planthérapie Planthiol, Planthérapie Plantexil, Plantex, Plantalgic, Plantyl, Angiplant, Rhinoplant, MULTIBON SOMMEIL, MULTIBON VITAMINE C Acérola, MULTIBON CALCIUM, MULTIBON OMEGA 3, MULTIBON APIGORGE, MULTIBON IMMUNITÉ, SWEET slim, SWEET health fer, SWEET bronzage, Minciligne, Minciligne Postnatale, Minciligne Homme, Mincivit, Mincivit Detox, Mincicare, Omevie Omega 3, Omevie Articulation, Omevie Cardio, Omevie Grossesse, Dermacné, Dermagyn, DermaGyn, Dermalo, DERMADOUCE, Dermasoufre, ARGIDERM, Uniderme, Uniderm, Grossivit, Grossivit vitaminé, Gelée Royale, Spiruline, Millepertuis, Guarana, Coenzyme Q10, Phytofibres, Phytodraine, LiftCaféine, TC 2000, CALMO dent, Ventre Plat, Ventre Ultra Plat, Levure de Riz Rouge, Levure de bière, Pectine de pomme, Lécithine de Soja, Vinaigre de cidre, Pollen d'abeilles, Stimul plus",
+        )
+
+        full_text    = []
+        segment_list = []
+        for seg in segments:
+            full_text.append(seg.text.strip())
+            segment_list.append({
+                "start": round(seg.start, 2),
+                "end":   round(seg.end, 2),
+                "text":  seg.text.strip(),
+            })
+
+        return {
+            "text":     " ".join(full_text),
+            "language": info.language,
+            "segments": segment_list,
+        }
+    finally:
+        os.unlink(tmp_path)
+
+
+def transcribe_microphone(duration_seconds: int = 5, language: str = None) -> dict:
+    """
+    Record from microphone and transcribe.
+    Requires: pip install pyaudio
+    """
+    try:
+        import pyaudio
+        import wave
+    except ImportError:
+        raise ImportError("Run: pip install pyaudio")
+
+    CHUNK    = 1024
+    FORMAT   = pyaudio.paInt16
+    CHANNELS = 1
+    RATE     = 16000
+
+    audio  = pyaudio.PyAudio()
+    stream = audio.open(format=FORMAT, channels=CHANNELS,
+                        rate=RATE, input=True, frames_per_buffer=CHUNK)
+
+    print(f"Recording {duration_seconds}s...")
+    frames = [stream.read(CHUNK) for _ in range(int(RATE / CHUNK * duration_seconds))]
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(audio.get_sample_size(FORMAT))
+        wf.setframerate(RATE)
+        wf.writeframes(b''.join(frames))
+
+    return transcribe_audio_file(buf.getvalue(), language=language)
+
+
+if __name__ == "__main__":
+    result = transcribe_microphone(duration_seconds=5)
+    print(f"Transcribed: {result['text']}")
+    print(f"Language:    {result['language']}")
+=== ./backend/stt/__init__.py ===
+# stt package
+=== ./backend/tts/synthesizer.py ===
+"""
+backend/tts/synthesizer.py
+==========================
+TTS intelligent : segmentation contextuelle 100% naturelle
+Supports : Français (Denise), Anglais (Jenny), Arabe (Zariyah)
+Prononciation fluide comme Google Translate
+"""
+
+import asyncio
+import base64
+import os
+import re
+import tempfile
+from transformers import pipeline
+
+# =====================================
+# Chargement du modèle de détection de langue
+# =====================================
+print("Chargement du modèle de détection de langue...")
+lang_classifier = pipeline(
+    "text-classification",
+    model="papluca/xlm-roberta-base-language-detection",
+    top_k=None,
+    device=-1  # CPU
+)
+
+# =====================================
+# Voix TTS
+# =====================================
+VOICES = {
+    "fr": "fr-FR-DeniseNeural",
+    "en": "en-US-JennyNeural",
+    "ar": "ar-SA-ZariyahNeural",
+}
+
+# =====================================
+# Fonction : détection langue avec fallback et score
+# =====================================
+def get_lang_from_model(text_chunk: str, fallback_lang="fr") -> str:
+    if not text_chunk.strip():
+        return fallback_lang
+
+    # Détection arabe par script (très fiable)
+    if re.search(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]', text_chunk):
+        return 'ar'
+
+    try:
+        results = lang_classifier(text_chunk[:200])
+        top = results[0][0]
+        lang = top['label']
+        score = top['score']
+
+        # Si confiance faible, on utilise fallback
+        if score < 0.90:
+            return fallback_lang
+
+        if lang in ["fr", "en", "ar"]:
+            return lang
+
+        return fallback_lang
+
+    except:
+        return fallback_lang
+
+# =====================================
+# Fonction : segmentation intelligente
+# =====================================
+def smart_segment(text: str) -> list[tuple[str, str]]:
+    segments = []
+
+    # Découpage en phrases
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    for sentence in sentences:
+        if not sentence.strip():
+            continue
+
+        # langue globale de la phrase
+        sentence_lang = get_lang_from_model(sentence)
+
+        words = sentence.split()
+
+        # phrases courtes → direct
+        if len(words) <= 6:
+            segments.append((sentence, sentence_lang))
+            continue
+
+        current_chunk = []
+        current_lang = sentence_lang
+        i = 0
+
+        while i < len(words):
+            # analyser petit groupe de mots (contextuel)
+            chunk_test = " ".join(words[i:i+3])
+            detected_lang = get_lang_from_model(chunk_test, fallback_lang=sentence_lang)
+
+            # si changement réel
+            if detected_lang != current_lang:
+                if current_chunk:
+                    segments.append((" ".join(current_chunk), current_lang))
+                current_chunk = [words[i]]
+                current_lang = detected_lang
+            else:
+                current_chunk.append(words[i])
+
+            i += 1
+
+        if current_chunk:
+            segments.append((" ".join(current_chunk), current_lang))
+
+    return segments
+
+# =====================================
+# Fonction : synthèse d’un segment en mp3
+# =====================================
+async def synthesize_segment_async(text: str, lang: str) -> bytes:
+    import edge_tts
+    voice = VOICES.get(lang, VOICES["fr"])
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        out_path = f.name
+
+    try:
+        communicate = edge_tts.Communicate(text.strip(), voice, rate="+10%")
+        await communicate.save(out_path)
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        if os.path.exists(out_path):
+            os.unlink(out_path)
+
+# =====================================
+# Fonction : TTS asynchrone multi-segments
+# =====================================
+async def synthesize_async(text: str, lang: str = "auto") -> dict:
+    if lang != "auto" and lang in VOICES:
+        return await _single_tts(text, lang)
+
+    segments_info = smart_segment(text)
+
+    print(f"🎙️ TTS intelligent → {len(segments_info)} segment(s)")
+    for seg_text, seg_lang in segments_info:
+        print(f"   [{seg_lang}] {seg_text[:80].strip()}...")
+
+    if len(segments_info) == 1:
+        seg_text, seg_lang = segments_info[0]
+        return await _single_tts(seg_text, seg_lang)
+
+    audio_parts = []
+    segments_meta = []
+
+    for seg_text, seg_lang in segments_info:
+        if not seg_text.strip():
+            continue
+        mp3_bytes = await synthesize_segment_async(seg_text, seg_lang)
+        audio_parts.append(mp3_bytes)
+        segments_meta.append({"text": seg_text, "lang": seg_lang})
+
+    if not audio_parts:
+        return await _single_tts(text, "fr")
+
+    # ajouter pause naturelle entre segments
+    silence = b'\x00' * 2000
+    combined = silence.join(audio_parts)
+    audio_b64 = base64.b64encode(combined).decode("utf-8")
+
+    # Création des timings pour le frontend
+    all_words = []
+    all_wtimes = []
+    all_wdurations = []
+    time_offset = 0
+    total_duration_est = max(len(combined) / 16000 * 1000, 1000)
+
+    for seg in segments_meta:
+        units = seg["text"].strip().split()
+        if not units:
+            units = [" "]
+        seg_dur = total_duration_est * (len(seg["text"]) / max(len(text), 1))
+        unit_dur = seg_dur / len(units)
+
+        for w in units:
+            all_words.append(w)
+            all_wtimes.append(time_offset)
+            all_wdurations.append(unit_dur)
+            time_offset += unit_dur
+
+    dominant_lang = max(
+        set(s["lang"] for s in segments_meta),
+        key=lambda l: sum(len(s["text"]) for s in segments_meta if s["lang"] == l)
+    )
+
+    return {
+        "audio_b64": audio_b64,
+        "voice": VOICES.get(dominant_lang, VOICES["fr"]),
+        "lang": dominant_lang,
+        "format": "mp3",
+        "segments": [{"text": s["text"], "lang": s["lang"]} for s in segments_meta],
+        "words": all_words,
+        "wtimes": all_wtimes,
+        "wdurations": all_wdurations
+    }
+
+# =====================================
+# Fonction : TTS d’un texte entier (simple)
+# =====================================
+async def _single_tts(text: str, lang: str) -> dict:
+    import edge_tts
+    voice = VOICES.get(lang, VOICES["fr"])
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        out_path = f.name
+    try:
+        communicate = edge_tts.Communicate(text, voice, rate="+10%")
+        await communicate.save(out_path)
+        with open(out_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        words = text.strip().split()
+        duration_est = max(len(audio_b64) / 200, 1000)
+        unit_dur = duration_est / max(len(words), 1)
+
+        return {
+            "audio_b64": audio_b64,
+            "voice": voice,
+            "lang": lang,
+            "format": "mp3",
+            "segments": [{"text": text, "lang": lang}],
+            "words": words,
+            "wtimes": [i * unit_dur for i in range(len(words))],
+            "wdurations": [unit_dur] * len(words)
+        }
+    finally:
+        if os.path.exists(out_path):
+            os.unlink(out_path)
+
+# =====================================
+# Fonction synchrone pour appeler l’async
+# =====================================
+def synthesize(text: str, lang: str = "auto") -> dict:
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, synthesize_async(text, lang))
+        return future.result()=== ./backend/tts/__init__.py ===
+# tts package
+=== ./backend/__init__.py ===
+# backend package
+=== ./docker-compose.yml ===
+=== ./frontend/css/style.css ===
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#06080f;--surface:#0d1120;--surface2:#131828;
+  --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);
+  --accent:#7eb8f7;--gold:#c9a96e;
+  --text:#e8eaf0;--text-dim:#5a6178;--text-mid:#8892a4;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --sans:'Jost',system-ui,sans-serif;--r:14px;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.6;overflow:hidden}
+.bg-orbs{position:fixed;inset:0;pointer-events:none;z-index:0}
+.orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:0.07}
+.orb1{width:600px;height:600px;background:#3b6bca;top:-100px;left:-100px}
+.orb2{width:400px;height:400px;background:#7c3aed;bottom:-50px;right:200px}
+.orb3{width:300px;height:300px;background:#0ea5e9;top:40%;right:-50px}
+.app{position:relative;z-index:1;display:grid;grid-template-columns:300px 1fr;height:100vh;overflow:hidden}
+
+/* Avatar panel */
+.avatar-panel{display:flex;flex-direction:column;background:linear-gradient(180deg,#0a0e1a 0%,#060810 100%);border-right:1px solid var(--border);position:relative;overflow:hidden;}
+.avatar-panel::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(126,184,247,0.06) 0%,transparent 70%);pointer-events:none;}
+.avatar-scene{flex:1;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;overflow:hidden;}
+
+/* ── TalkingHead div ── */
+#avatarDiv{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+#avatarDiv canvas{
+  width:100% !important;
+  height:100% !important;
+  display:block;
+}
+
+/* Loading overlay */
+#avatar-loading{
+  position:absolute;inset:0;z-index:2;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:10px;font-size:11px;color:var(--text-dim);
+  pointer-events:none;
+}
+#avatar-loading .spin{
+  width:26px;height:26px;border-radius:50%;
+  border:2px solid var(--border2);
+  border-top-color:var(--accent);
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+#avatar-loading.hidden{display:none}
+
+.avatar-glow{position:absolute;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(126,184,247,0.15) 0%,transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);animation:glowPulse 3s ease-in-out infinite;pointer-events:none;z-index:1;}
+@keyframes glowPulse{0%,100%{opacity:0.6;transform:translate(-50%,-50%) scale(1)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}}
+.speak-ring{position:absolute;border-radius:50%;border:1px solid rgba(126,184,247,0.3);top:50%;left:50%;transform:translate(-50%,-50%);opacity:0;transition:opacity 0.3s;pointer-events:none;z-index:3;}
+.speak-ring.r1{width:220px;height:220px}.speak-ring.r2{width:260px;height:260px}.speak-ring.r3{width:300px;height:300px}
+.speaking .speak-ring.r1{opacity:1;animation:ringExpand 1.5s ease-out infinite}
+.speaking .speak-ring.r2{opacity:1;animation:ringExpand 1.5s ease-out 0.3s infinite}
+.speaking .speak-ring.r3{opacity:1;animation:ringExpand 1.5s ease-out 0.6s infinite}
+@keyframes ringExpand{0%{transform:translate(-50%,-50%) scale(0.9);opacity:0.6}100%{transform:translate(-50%,-50%) scale(1.1);opacity:0}}
+.agent-info{padding:12px 20px 16px;border-top:1px solid var(--border);text-align:center;}
+.agent-name{font-family:var(--serif);font-size:20px;font-weight:300;color:var(--text);letter-spacing:0.5px}
+.agent-role{font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:2px;margin-top:2px;font-weight:500}
+.agent-status{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text-dim);}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e}
+.status-dot.thinking{background:var(--gold);box-shadow:0 0 6px var(--gold);animation:blink 1s ease-in-out infinite}
+.status-dot.speaking{background:var(--accent);box-shadow:0 0 6px var(--accent);animation:blink 0.6s ease-in-out infinite}
+.status-dot.listening{background:#a78bfa;box-shadow:0 0 6px #a78bfa;animation:blink 0.8s ease-in-out infinite}
+.status-dot.loading{background:var(--text-dim);animation:blink 1.2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+.voice-controls{padding:0 16px 16px;display:flex;flex-direction:column;gap:8px;}
+.mic-btn{width:100%;padding:11px;border-radius:10px;background:linear-gradient(135deg,rgba(126,184,247,0.12),rgba(167,139,250,0.12));border:1px solid rgba(126,184,247,0.25);color:var(--accent);font-family:var(--sans);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.2s;display:flex;align-items:center;justify-content:center;gap:8px;}
+.mic-btn:hover{background:linear-gradient(135deg,rgba(126,184,247,0.2),rgba(167,139,250,0.2))}
+.mic-btn:disabled{opacity:0.4;cursor:not-allowed}
+.mic-btn.recording{background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.4);color:#f87171;animation:recordPulse 1s ease-in-out infinite}
+@keyframes recordPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.3)}50%{box-shadow:0 0 0 8px rgba(239,68,68,0)}}
+.waveform{display:flex;align-items:center;gap:2px;height:16px;justify-content:center;}
+.wave-bar{width:3px;background:var(--accent);border-radius:2px;animation:wave 1s ease-in-out infinite;opacity:0;transition:opacity 0.3s;}
+.wave-bar:nth-child(1){animation-delay:0s;height:4px}.wave-bar:nth-child(2){animation-delay:0.1s;height:8px}
+.wave-bar:nth-child(3){animation-delay:0.2s;height:12px}.wave-bar:nth-child(4){animation-delay:0.3s;height:16px}
+.wave-bar:nth-child(5){animation-delay:0.4s;height:12px}.wave-bar:nth-child(6){animation-delay:0.5s;height:8px}
+.wave-bar:nth-child(7){animation-delay:0.6s;height:4px}
+@keyframes wave{0%,100%{transform:scaleY(0.5)}50%{transform:scaleY(1)}}
+.recording-active .wave-bar{opacity:1}
+.stats-mini{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);}
+.stats-mini span{color:var(--text-mid)}
+.mode-badge{padding:3px 10px;border-radius:12px;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.8px;border:1px solid var(--border2);color:var(--text-dim);}
+.mode-badge.medical{border-color:rgba(126,184,247,0.4);color:var(--accent);background:rgba(126,184,247,0.08)}
+.mode-badge.commercial{border-color:rgba(201,169,110,0.4);color:var(--gold);background:rgba(201,169,110,0.08)}
+.mode-select-btns{display:flex;gap:8px;justify-content:center;margin-top:10px;}
+.mode-btn{padding:10px 20px;border-radius:10px;font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.2s;border:1px solid var(--border2);background:var(--surface2);color:var(--text-mid);}
+.mode-btn:hover{color:var(--text);border-color:var(--border2)}
+.mode-btn.medical:hover{border-color:rgba(126,184,247,0.4);color:var(--accent);background:rgba(126,184,247,0.08)}
+.mode-btn.commercial:hover{border-color:rgba(201,169,110,0.4);color:var(--gold);background:rgba(201,169,110,0.08)}
+.report-btn{padding:5px 12px;border-radius:8px;font-family:var(--sans);font-size:11px;font-weight:500;cursor:pointer;transition:all 0.2s;border:1px solid rgba(34,197,94,0.3);background:rgba(34,197,94,0.08);color:#22c55e;display:flex;align-items:center;gap:5px;}
+.report-btn:hover{background:rgba(34,197,94,0.15);border-color:rgba(34,197,94,0.5)}
+.report-btn:disabled{opacity:0.3;cursor:not-allowed}
+.report-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.2s;}
+.report-overlay.open{opacity:1;pointer-events:all}
+.report-modal{background:#fff;border-radius:16px;width:700px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;}
+.report-modal-header{padding:20px 24px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;background:#f9fafb;}
+.report-modal-header h2{font-family:Georgia,serif;font-size:20px;color:#111;font-weight:400}
+.report-modal-actions{display:flex;gap:8px;align-items:center;}
+.report-download-btn{padding:8px 16px;border-radius:8px;background:#1d4ed8;border:none;color:#fff;font-size:13px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+.report-download-btn:hover{background:#1e40af}
+.report-close-btn{background:none;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px;color:#6b7280;cursor:pointer;}
+.report-close-btn:hover{background:#f3f4f6}
+.report-body{overflow-y:auto;flex:1;}
+#report-content{padding:40px 48px;font-family:Georgia,serif;color:#111;line-height:1.7;font-size:14px;}
+#report-content .r-header{border-bottom:2px solid #1d4ed8;padding-bottom:20px;margin-bottom:28px;}
+#report-content .r-logo{font-family:Georgia,serif;font-size:28px;color:#1d4ed8;font-weight:400;letter-spacing:-0.5px}
+#report-content .r-subtitle{font-size:12px;color:#6b7280;margin-top:4px;font-family:system-ui,sans-serif}
+#report-content .r-meta{display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;}
+#report-content .r-meta-item{font-size:12px;font-family:system-ui,sans-serif;}
+#report-content .r-meta-item strong{color:#374151;display:block;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px}
+#report-content .r-meta-item span{color:#111;font-size:13px}
+#report-content .r-section-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;font-family:system-ui,sans-serif;font-weight:600;margin:28px 0 12px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;}
+#report-content .r-exchange{margin-bottom:20px;padding:14px 18px;border-radius:8px;border-left:3px solid #e5e7eb;}
+#report-content .r-exchange.user-ex{background:#f8faff;border-left-color:#1d4ed8;}
+#report-content .r-exchange.ai-ex{background:#fafafa;border-left-color:#6b7280;}
+#report-content .r-role{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;font-family:system-ui,sans-serif;font-weight:600;margin-bottom:6px;}
+#report-content .r-role.user-role{color:#1d4ed8}
+#report-content .r-role.ai-role{color:#374151}
+#report-content .r-text{font-size:13px;line-height:1.7;color:#1f2937;}
+#report-content .r-products{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+#report-content .r-product-tag{padding:3px 10px;border-radius:12px;font-size:11px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-family:system-ui,sans-serif;}
+#report-content .r-footer{margin-top:40px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af;font-family:system-ui,sans-serif;display:flex;justify-content:space-between;}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.2s;}
+.modal-overlay.open{opacity:1;pointer-events:all}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;width:480px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;transform:translateY(10px);transition:transform 0.2s;}
+.modal-overlay.open .modal{transform:translateY(0)}
+.modal-header{padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-header h2{font-family:var(--serif);font-size:18px;font-weight:300}
+.modal-close{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:18px;line-height:1;padding:4px;}
+.search-wrap{padding:12px 16px;border-bottom:1px solid var(--border);}
+.search-input{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;transition:border-color 0.15s;}
+.search-input:focus{border-color:rgba(126,184,247,0.4)}
+.search-input::placeholder{color:var(--text-dim)}
+.product-list{overflow-y:auto;padding:8px;flex:1;}
+.product-list::-webkit-scrollbar{width:3px}
+.product-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.product-item{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text-mid);transition:all 0.1s;display:flex;align-items:center;gap:8px;}
+.product-item:hover{background:var(--surface2);color:var(--text)}
+.product-item.selected{background:rgba(126,184,247,0.1);color:var(--accent);border:1px solid rgba(126,184,247,0.2)}
+.product-item .dot{width:6px;height:6px;border-radius:50%;background:var(--border2);flex-shrink:0}
+.product-item.selected .dot{background:var(--accent)}
+.product-count{padding:8px 16px;font-size:10px;color:var(--text-dim);border-top:1px solid var(--border);flex-shrink:0;}
+.chat-panel{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.chat-header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.header-left h1{font-family:var(--serif);font-size:19px;font-weight:300}
+.header-left p{font-size:11px;color:var(--text-dim);margin-top:1px}
+.active-product-badge{display:flex;align-items:center;gap:6px;background:rgba(126,184,247,0.08);border:1px solid rgba(126,184,247,0.2);border-radius:20px;padding:5px 12px;font-size:11px;color:var(--accent);cursor:pointer;transition:all 0.15s;max-width:220px;}
+.active-product-badge:hover{background:rgba(126,184,247,0.15)}
+.active-product-badge .badge-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.no-product-badge{display:flex;align-items:center;gap:6px;background:rgba(201,169,110,0.08);border:1px solid rgba(201,169,110,0.2);border-radius:20px;padding:5px 12px;font-size:11px;color:var(--gold);cursor:pointer;transition:all 0.15s;}
+.no-product-badge:hover{background:rgba(201,169,110,0.15)}
+.product-context-bar{margin:10px 24px 0;padding:8px 14px;background:rgba(126,184,247,0.05);border:1px solid rgba(126,184,247,0.15);border-radius:8px;display:flex;align-items:center;justify-content:space-between;font-size:12px;flex-shrink:0;}
+.product-context-bar .ctx-label{color:var(--text-dim)}
+.product-context-bar .ctx-name{color:var(--accent);font-weight:500}
+.ctx-change{color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 8px;border:1px solid var(--border2);border-radius:4px;background:none;transition:all 0.15s;}
+.ctx-change:hover{color:var(--text)}
+.product-context-bar.hidden{display:none}
+.quick-chips{padding:8px 24px 0;display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;}
+.quick-chips.hidden{display:none}
+.quick-chip{padding:5px 12px;border-radius:16px;font-size:11px;border:1px solid var(--border2);color:var(--text-mid);background:var(--surface);cursor:pointer;transition:all 0.15s;white-space:nowrap;}
+.quick-chip:hover{border-color:rgba(126,184,247,0.3);color:var(--accent);background:rgba(126,184,247,0.05)}
+.messages{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px;scroll-behavior:smooth;}
+.messages::-webkit-scrollbar{width:3px}
+.messages::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:12px;padding:40px;animation:fadeIn 0.5s ease;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.empty-state h2{font-family:var(--serif);font-size:24px;font-weight:300}
+.empty-state p{font-size:13px;color:var(--text-dim);max-width:320px;line-height:1.7}
+.pick-product-cta{margin-top:6px;padding:11px 22px;border-radius:10px;background:linear-gradient(135deg,rgba(126,184,247,0.15),rgba(167,139,250,0.15));border:1px solid rgba(126,184,247,0.3);color:var(--accent);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.2s;}
+.pick-product-cta:hover{background:linear-gradient(135deg,rgba(126,184,247,0.25),rgba(167,139,250,0.25))}
+.system-msg{text-align:center;font-size:11px;color:var(--text-dim);padding:4px 0;}
+.system-msg span{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:3px 10px;}
+.message{display:flex;gap:10px;align-items:flex-start;animation:msgIn 0.2s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.message.user{flex-direction:row-reverse}
+.avatar-sm{width:28px;height:28px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;}
+.avatar-sm.ai{background:linear-gradient(135deg,#1d4ed8,#7c3aed);color:#fff;font-family:var(--serif);font-style:italic}
+.avatar-sm.user{background:var(--surface2);border:1px solid var(--border2);color:var(--text-mid)}
+.bubble{max-width:600px;padding:11px 15px;border-radius:var(--r);font-size:14px;line-height:1.75;}
+.message.ai .bubble{background:var(--surface);border:1px solid var(--border);color:var(--text);border-top-left-radius:4px;}
+.message.user .bubble{background:rgba(126,184,247,0.08);border:1px solid rgba(126,184,247,0.15);color:var(--text);border-top-right-radius:4px;}
+.bubble p{margin-bottom:6px}.bubble p:last-child{margin-bottom:0}
+.message.user:hover .edit-btn{opacity:1}
+.edit-btn{opacity:0;background:none;border:1px solid var(--border2);border-radius:6px;padding:3px 8px;font-size:10px;color:var(--text-dim);cursor:pointer;transition:all 0.15s;font-family:var(--sans);margin-top:4px;display:block;align-self:flex-end;}
+.edit-btn:hover{color:var(--accent);border-color:rgba(126,184,247,0.3)}
+.edit-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:600px;}
+.edit-textarea{width:100%;background:var(--surface2);border:1px solid rgba(126,184,247,0.35);border-radius:var(--r);border-top-right-radius:4px;padding:10px 14px;color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.75;resize:none;outline:none;min-height:44px;}
+.edit-actions{display:flex;gap:6px;}
+.edit-save{padding:5px 14px;border-radius:7px;background:var(--accent);border:none;color:#fff;font-family:var(--sans);font-size:12px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+.edit-save:hover{background:#5aa3f0}
+.edit-cancel{padding:5px 12px;border-radius:7px;background:none;border:1px solid var(--border2);color:var(--text-dim);font-family:var(--sans);font-size:12px;cursor:pointer;transition:all 0.15s;}
+.edit-cancel:hover{color:var(--text)}
+.transcript-badge{font-size:11px;color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:3px 9px;margin-bottom:6px;display:inline-block;font-style:italic;}
+.sources{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
+.sources-label{font-size:10px;font-weight:500;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.7px;margin-bottom:5px}
+.source-tag{display:inline-block;background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:2px 8px;font-size:10px;color:var(--text-mid);margin:2px 3px 2px 0;}
+.source-tag .rel{color:var(--accent);margin-left:3px;font-size:9px}
+.typing-dots{display:flex;gap:4px;align-items:center;padding:2px 0}
+.typing-dots span{width:5px;height:5px;background:var(--text-dim);border-radius:50%;animation:bounce 1.2s infinite}
+.typing-dots span:nth-child(2){animation-delay:0.2s}.typing-dots span:nth-child(3){animation-delay:0.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+.input-area{padding:12px 24px 20px;flex-shrink:0;border-top:1px solid var(--border)}
+.input-wrap{display:flex;align-items:flex-end;gap:8px;background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:10px 12px;transition:border-color 0.15s;}
+.input-wrap:focus-within{border-color:rgba(126,184,247,0.35)}
+#question-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:var(--sans);font-size:14px;resize:none;min-height:20px;max-height:100px;line-height:1.5;}
+#question-input::placeholder{color:var(--text-dim)}
+.send-btn{width:32px;height:32px;border-radius:8px;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s;}
+.send-btn:hover:not(:disabled){background:#5aa3f0}.send-btn:disabled{background:var(--surface2);cursor:not-allowed}
+.send-btn svg{width:14px;height:14px}
+.input-hint{font-size:11px;color:var(--text-dim);margin-top:6px;text-align:center}
+kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:10px}
+@media(max-width:700px){.app{grid-template-columns:1fr}.avatar-panel{display:none}}
+
+
+=== ./frontend/index.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>VitalAgent — Medical AI Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+<div class="bg-orbs">
+  <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+</div>
+
+<!-- Product Modal -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModalOnBg(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Choose a product</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="search-wrap">
+      <input class="search-input" id="product-search" placeholder="Search by name…" oninput="filterProducts(this.value)" autocomplete="off"/>
+    </div>
+    <div class="product-list" id="product-list"></div>
+    <div class="product-count" id="product-count"></div>
+  </div>
+</div>
+
+<!-- Report Modal -->
+<div class="report-overlay" id="report-overlay" onclick="closeReportOnBg(event)">
+  <div class="report-modal">
+    <div class="report-modal-header">
+      <h2>Session Report</h2>
+      <div class="report-modal-actions">
+        <button class="report-download-btn" onclick="downloadReport()">⬇ Download PDF</button>
+        <button class="report-close-btn" onclick="closeReport()">Close</button>
+      </div>
+    </div>
+    <div class="report-body">
+      <div id="report-content"></div>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="avatar-panel">
+    <div class="avatar-scene">
+      <div class="speak-ring r1"></div>
+      <div class="speak-ring r2"></div>
+      <div class="speak-ring r3"></div>
+      <div class="avatar-glow"></div>
+
+      <!-- ★ TalkingHead s'injecte ici ★ -->
+      <div id="avatarDiv"></div>
+
+      <!-- Spinner pendant le chargement du .glb -->
+      <div id="avatar-loading">
+        <div class="spin"></div>
+        <span>Loading avatar…</span>
+      </div>
+    </div>
+
+    <div class="agent-info">
+      <div class="agent-name">Dr. Layla</div>
+      <div class="agent-role">Medical Product Trainer</div>
+      <div class="agent-status">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">Loading…</span>
+      </div>
+    </div>
+    <div class="voice-controls">
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V20h3v2H8v-2h3v-2.08A7 7 0 0 1 5 11z"/></svg>
+        <span id="mic-label">Hold to speak</span>
+      </button>
+      <div class="waveform" id="waveform">
+        <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+        <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+      </div>
+      <div class="stats-mini">
+        <span>Products</span><span id="chunk-count">—</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="chat-panel">
+    <div class="chat-header">
+      <div class="header-left">
+        <h1>VitalAgent Training</h1>
+        <p>Select a product then ask questions about it</p>
+      </div>
+      <div class="header-right" style="display:flex;align-items:center;gap:8px;">
+        <span id="mode-badge" class="mode-badge" style="display:none"></span>
+        <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Report
+        </button>
+        <div id="product-badge" class="no-product-badge" onclick="openModal()">
+          <span>⬡</span><span id="badge-text">Select a product</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="product-context-bar hidden" id="context-bar">
+      <div><span class="ctx-label">Asking about: </span><span class="ctx-name" id="ctx-product-name">—</span></div>
+      <button class="ctx-change" onclick="openModal()">Change product</button>
+    </div>
+
+    <div class="quick-chips hidden" id="quick-chips"></div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="empty-state">
+        <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+          <rect width="44" height="44" rx="12" fill="rgba(126,184,247,0.08)" stroke="rgba(126,184,247,0.2)" stroke-width="1"/>
+          <path d="M22 12a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 10c4.42 0 8 1.79 8 4v2H14v-2c0-2.21 3.58-4 8-4z" fill="#7eb8f7" opacity="0.7"/>
+        </svg>
+        <h2>Bonjour, je suis Dr. Layla</h2>
+        <p>Start by selecting a product from your database, then ask me anything about it.</p>
+        <button class="pick-product-cta" onclick="openModal()">Browse products →</button>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="question-input" rows="1"
+          placeholder="Select a product first, or type a question…"
+          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendQuestion()">
+          <svg viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="10" y1="16" x2="10" y2="4"/><polyline points="5,9 10,4 15,9"/>
+          </svg>
+        </button>
+      </div>
+      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
+    </div>
+  </main>
+</div>
+
+<!-- ★ importmap : résout "three" pour TalkingHead ★ -->
+<script type="importmap">
+{
+  "imports": {
+    "three":         "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<!-- 1. Avatar + Lip-sync -->
+<script type="module" src="js/avatar.js"></script>
+
+<!-- 2. Main Logic (Chat, Voice, Products, Report) -->
+<script src="js/main.js"></script>
+
+</body>
+</html>
+=== ./frontend/js/avatar.js ===
+
+  import { TalkingHead } from '/TalkingHead-main/modules/talkinghead.mjs';
+
+  window._avatarReady = false;
+  window._head        = null;
+
+  // ── Initialisation de l'avatar ─────────────────────────────────────
+  window.initAvatar = async function () {
+    try {
+      window._head = new TalkingHead(document.getElementById('avatarDiv'), {
+        ttsEndpoint   : null,
+        cameraView    : 'upper',
+        lipsyncLang   : 'fr',                    // langue par défaut au démarrage
+        lipsyncModules: ['fr', 'en', 'ar'],      // IMPORTANT : ar doit être là
+      });
+
+      await window._head.showAvatar({
+        url        : '/TalkingHead-main/avatars/avatar.glb',
+        body       : 'F',
+        avatarMood : 'happy',
+        lipsyncLang: 'fr',
+      });
+
+      window._avatarReady = true;
+      document.getElementById('avatar-loading').classList.add('hidden');
+      document.getElementById('mic-btn').disabled = false;
+      window.setStatus('', 'Ready');
+
+    } catch (e) {
+      console.error('TalkingHead error:', e);
+      document.getElementById('avatar-loading').innerHTML =
+        '<span style="color:var(--text-dim);font-size:10px;padding:8px">Avatar unavailable</span>';
+      document.getElementById('mic-btn').disabled = false;
+      window.setStatus('', 'Ready');
+    }
+  };
+
+  // ── Mapping langue pour lipsync ───────────────────────────────────
+  function getLipsyncLang(lang) {
+    const map = { fr: 'fr', en: 'en', ar: 'ar' };
+    return map[lang] || 'fr';
+  }
+
+  // ── Fonction principale de parole avec lip-sync (utilisée partout) ──
+  window.speakWithAvatar = async function (text, forcedLang = null) {
+    if (!window._avatarReady || !window._head || !text?.trim()) return;
+
+    const head = window._head;
+    const API  = window._API;
+
+    try {
+      // 1. Appel à ton TTS intelligent (lang = "auto" ou langue forcée)
+      const res = await fetch(`${API}/tts/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          text: text.trim(), 
+          lang: forcedLang || "auto" 
+        })
+      });
+
+      if (!res.ok) throw new Error(`TTS error ${res.status}`);
+      const data = await res.json();
+
+      if (!data.audio_b64) throw new Error("No audio_b64");
+
+      // Langue détectée par ton backend (très important pour l'arabe)
+      const detectedLang = data.lang || forcedLang || 'fr';
+
+      // 2. Préparer l'audio
+      if (head.audioCtx.state !== "running") {
+        await head.audioCtx.resume();
+      }
+
+      const binary = atob(data.audio_b64);
+      const buf = new ArrayBuffer(binary.length);
+      const view = new Uint8Array(buf);
+      for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
+
+      const audioBuffer = await head.audioCtx.decodeAudioData(buf);
+      const durationMs  = audioBuffer.duration * 1000;
+
+      // 3. Timing intelligent selon la langue (clé pour une synchro naturelle)
+      let words, wtimes, wdurations;
+
+      if (detectedLang === 'ar') {
+        // Pour l'arabe : timing par caractères (plus précis que par mots)
+        const arabicChars = [...text.replace(/\s+/g, '')].filter(c => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(c));
+        if (arabicChars.length > 3) {
+          const charDuration = durationMs / arabicChars.length;
+          words      = arabicChars;
+          wtimes     = arabicChars.map((_, i) => i * charDuration);
+          wdurations = arabicChars.map(() => charDuration);
+        } else {
+          // fallback mots si très peu de caractères
+          words = text.trim().split(/\s+/);
+          const wd = durationMs / Math.max(words.length, 1);
+          wtimes = words.map((_, i) => i * wd);
+          wdurations = words.map(() => wd);
+        }
+      } else {
+        // Français & Anglais : timing par mots (plus naturel)
+        words = text.trim().split(/\s+/);
+        const wordDuration = durationMs / Math.max(words.length, 1);
+        wtimes     = words.map((_, i) => i * wordDuration);
+        wdurations = words.map(() => wordDuration);
+      }
+
+      console.log(`🗣️ Speaking [${detectedLang.toUpperCase()}] → ${words.length} units | duration ${durationMs.toFixed(0)}ms`);
+
+      // 4. Lancer le lip-sync
+      const lipsyncLang = getLipsyncLang(detectedLang);
+
+      head.speakAudio(
+        {
+          audio: audioBuffer,
+          words,
+          wtimes,
+          wdurations
+        },
+        { lipsyncLang }
+      );
+
+      // 5. Attendre la fin de la parole pour remettre le statut
+      await new Promise(resolve => {
+        const startTime = Date.now();
+        const checkInterval = setInterval(() => {
+          if (!head.isSpeaking && !head.isAudioPlaying) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+          if (Date.now() - startTime > durationMs + 1500) { // sécurité
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 80);
+      });
+
+    } catch (e) {
+      console.error("❌ speakWithAvatar error:", e);
+      // En cas d'erreur, on essaie quand même de lire l'audio sans timing parfait
+      console.warn("Falling back to simple audio playback");
+    }
+  };
+
+=== ./frontend/js/main.js ===
+
+const API = 'http://localhost:8000';
+window._API = API;
+
+let isLoading = false, isRecording = false;
+let mediaRecorder = null, audioChunks = [];
+let allProducts = [], selectedProduct = null, selectedProductData = null;
+let trainingMode = null;
+
+// ── Init ──────────────────────────────────────────────────────
+async function init() {
+  setStatus('loading', 'Loading avatar…');
+
+  // Attendre que initAvatar soit disponible (module chargé)
+  await new Promise(resolve => {
+    const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
+    setTimeout(() => { clearInterval(t); resolve(); }, 5000);
+  });
+
+  // Lancer avatar + stats en parallèle
+  const avatarP = window.initAvatar();
+  try {
+    const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
+    const d   = await res.json();
+    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? '—';
+  } catch { document.getElementById('chunk-count').textContent = 'offline'; }
+
+  await loadProducts();
+  await avatarP;
+  await loadGreeting();
+}
+
+function setStatus(state, text) {
+  document.getElementById('status-dot').className   = 'status-dot ' + state;
+  document.getElementById('status-text').textContent = text;
+  const scene = document.querySelector('.avatar-scene');
+  state === 'speaking' ? scene.classList.add('speaking') : scene.classList.remove('speaking');
+}
+
+// ── Mode intro ────────────────────────────────────────────────
+async function streamModeIntro(mode) {
+  addTyping(); setStatus('speaking', 'Responding…');
+  try {
+    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${mode}`);
+    if (!res.ok) throw new Error();
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf='', msgEl=null, full='';
+    while (true) {
+      const {value,done} = await reader.read(); if (done) break;
+      buf += dec.decode(value,{stream:true});
+      const lines = buf.split('\n\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let c; try{c=JSON.parse(line.slice(6))}catch{continue}
+        if (c.type==='token') { if(!msgEl) msgEl=addAIBubble(null); const el=document.getElementById('streaming-text'); if(el){full+=c.content;el.textContent=full;scrollBottom();} }
+        else if (c.type==='done') break;
+      }
+    }
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(full, []);
+    if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
+    setStatus('','Ready');
+  } catch { document.getElementById('typing-indicator')?.remove(); setStatus('','Ready'); }
+}
+
+// ── Greeting ──────────────────────────────────────────────────
+async function loadGreeting() {
+  hideEmpty(); addTyping(); setStatus('speaking','Greeting…');
+  try {
+    const res = await fetch(`${API}/chat/greeting/stream`, {signal:AbortSignal.timeout(60000)});
+    if (!res.ok) throw new Error();
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf='', msgEl=null, full='';
+    while (true) {
+      const {value,done} = await reader.read(); if (done) break;
+      buf += dec.decode(value,{stream:true});
+      const lines = buf.split('\n\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let c; try{c=JSON.parse(line.slice(6))}catch{continue}
+        if (c.type==='token') { if(!msgEl) msgEl=addAIBubble(null); const el=document.getElementById('streaming-text'); if(el){full+=c.content;el.textContent=full;scrollBottom();} }
+        else if (c.type==='done') break;
+      }
+    }
+    if (!msgEl) msgEl = addAIBubble(null);
+    const textEl = document.getElementById('streaming-text');
+    if (textEl) {
+      textEl.outerHTML = full.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('') || '<p></p>';
+    }
+    const bubble = document.getElementById('streaming-bubble');
+    if (bubble) {
+      bubble.removeAttribute('id');
+      bubble.insertAdjacentHTML('beforeend',`
+        <div class="mode-select-btns">
+          <button class="mode-btn medical"    onclick="setMode('medical')">🩺 Medical delegate</button>
+          <button class="mode-btn commercial" onclick="setMode('commercial')">💼 Commercial delegate</button>
+        </div>`);
+    }
+    if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
+    setStatus('','Ready');
+  } catch {
+    document.getElementById('typing-indicator')?.remove();
+    addAIBubble(null);
+    const bubble = document.getElementById('streaming-bubble');
+    if (bubble) {
+      bubble.removeAttribute('id');
+      bubble.innerHTML = `<p>Bonjour ! Je suis Dr. Layla, votre assistante de formation produits. Comment souhaitez-vous apprendre aujourd'hui ?</p>
+        <div class="mode-select-btns">
+          <button class="mode-btn medical"    onclick="setMode('medical')">🩺 Medical delegate</button>
+          <button class="mode-btn commercial" onclick="setMode('commercial')">💼 Commercial delegate</button>
+        </div>`;
+    }
+    setStatus('','Ready');
+  }
+}
+
+function setMode(mode) {
+  trainingMode = mode;
+  const badge = document.getElementById('mode-badge');
+  badge.style.display = 'inline-block';
+  badge.className = `mode-badge ${mode}`;
+  badge.textContent = mode==='medical' ? '🩺 Medical' : '💼 Commercial';
+  document.querySelectorAll('.mode-select-btns').forEach(el=>el.remove());
+  addSystemMsg(mode==='medical'
+    ? 'Mode: Medical delegate — deep product knowledge training'
+    : 'Mode: Commercial delegate — sales & persuasion training');
+  if (selectedProduct) renderChips(buildDynamicChips(selectedProduct, selectedProductData));
+  document.getElementById('question-input').placeholder = 'Select a product to begin…';
+  streamModeIntro(mode);
+}
+
+// ── Produits ──────────────────────────────────────────────────
+async function loadProducts() {
+  try {
+    const res = await fetch(`${API}/products`, {signal:AbortSignal.timeout(5000)});
+    if (res.ok) { const d = await res.json(); allProducts = d.products || []; }
+  } catch {
+    allProducts = ["LV PSOCALM","FerBiotic Lipo","Pulmax Kids","Pulmax Anti-Tussif","Pédiakids trio",
+      "PHYTOFANE Antipelliculaire","MULTIBON VITAMINE C Acérola","Allergiplant","LV Vitamine D3",
+      "DermaGyn","Uniderme peau sensible","Mincivit Detox"].sort();
+  }
+  renderProductList(allProducts);
+}
+
+async function fetchProductData(name) {
+  try {
+    const res = await fetch(`${API}/products/${encodeURIComponent(name)}`, {signal:AbortSignal.timeout(4000)});
+    if (res.ok) return await res.json();
+  } catch {}
+  return null;
+}
+
+function buildDynamicChips(name, productData) {
+  const desc = (productData?.description||'').toLowerCase();
+  const isMedical = trainingMode !== 'commercial';
+  if (isMedical) {
+    const chips = [`What is ${name} used for?`, `Tell me everything about ${name}`];
+    if (desc.includes('composition')||desc.includes('extrait')||desc.includes('vitamine')||desc.includes('mg'))
+      chips.push(`What is the composition of ${name}?`);
+    if (desc.includes('forme')||desc.includes('gélule')||desc.includes('sirop')||desc.includes('crème'))
+      chips.push(`What form is ${name} available in?`);
+    if (desc.includes('enfant')||desc.includes('nourrisson')||desc.includes('adulte'))
+      chips.push(`Who can use ${name}?`);
+    if (desc.includes('sans sucre')||desc.includes('diabétique'))
+      chips.push(`Is ${name} suitable for diabetics?`);
+    chips.push(`What medical questions should I expect about ${name}?`);
+    return chips.slice(0,6).map(l=>({label:l}));
+  } else {
+    return [
+      {label:`How do I pitch ${name} to a pharmacy?`},
+      {label:`What are the key selling points of ${name}?`},
+      {label:`How does ${name} compare to competitors?`},
+      {label:`What objections will I face selling ${name}?`},
+      {label:`Who is the ideal customer for ${name}?`},
+      {label:`Give me a sales script for ${name}`},
+    ].slice(0,6);
+  }
+}
+
+function renderChips(chips) {
+  const c = document.getElementById('quick-chips');
+  c.innerHTML = chips.map(c=>`<div class="quick-chip" onclick="askQuick(this)">${esc(c.label)}</div>`).join('');
+  c.classList.remove('hidden');
+}
+
+// ── Modal produit ─────────────────────────────────────────────
+function openModal() {
+  document.getElementById('modal-overlay').classList.add('open');
+  document.getElementById('product-search').value = '';
+  renderProductList(allProducts);
+  setTimeout(()=>document.getElementById('product-search').focus(),100);
+}
+function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); }
+function closeModalOnBg(e) { if (e.target===document.getElementById('modal-overlay')) closeModal(); }
+function filterProducts(q) {
+  renderProductList(q.trim() ? allProducts.filter(p=>p.toLowerCase().includes(q.toLowerCase())) : allProducts);
+}
+function renderProductList(products) {
+  document.getElementById('product-list').innerHTML = products.map(p=>
+    `<div class="product-item ${selectedProduct===p?'selected':''}" onclick="selectProduct('${esc(p)}')">
+      <div class="dot"></div>${esc(p)}</div>`).join('');
+  document.getElementById('product-count').textContent = `${products.length} product${products.length!==1?'s':''}`;
+}
+async function selectProduct(name) {
+  selectedProduct = name; closeModal();
+  const badge = document.getElementById('product-badge');
+  badge.className = 'active-product-badge';
+  badge.innerHTML = `<span>◈</span><span class="badge-name">${esc(name)}</span><span style="color:var(--text-dim);font-size:10px;flex-shrink:0">change</span>`;
+  document.getElementById('context-bar').classList.remove('hidden');
+  document.getElementById('ctx-product-name').textContent = name;
+  document.getElementById('question-input').placeholder = `Ask about ${name}…`;
+  hideEmpty(); addSystemMsg(`Now asking about: ${name}`);
+  const pd = await fetchProductData(name); selectedProductData = pd;
+  renderChips(buildDynamicChips(name, pd));
+}
+
+function askQuick(btn) {
+  if (!selectedProduct) { openModal(); return; }
+  document.getElementById('question-input').value = btn.textContent;
+  sendQuestion();
+}
+
+// ── Messages ──────────────────────────────────────────────────
+function hideEmpty() { document.getElementById('empty-state')?.remove(); }
+function addSystemMsg(text) {
+  const el = document.createElement('div'); el.className='system-msg';
+  el.innerHTML=`<span>${esc(text)}</span>`;
+  document.getElementById('messages').appendChild(el); scrollBottom();
+}
+function addUserMsg(text, isVoice) {
+  hideEmpty(); logUser(text, isVoice);
+  const el = document.createElement('div'); el.className='message user';
+  const msgId = 'msg-'+Date.now(); el.id = msgId;
+  el.innerHTML=`<div class="edit-wrap">
+    <div class="bubble" data-text="${esc(text)}">${esc(text)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>
+  </div><div class="avatar-sm user">You</div>`;
+  document.getElementById('messages').appendChild(el); scrollBottom(); return msgId;
+}
+function addTyping() {
+  const el = document.createElement('div'); el.className='message ai'; el.id='typing-indicator';
+  el.innerHTML=`<div class="avatar-sm ai">L</div><div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+  document.getElementById('messages').appendChild(el); scrollBottom();
+}
+function addAIBubble(transcriptText) {
+  document.getElementById('typing-indicator')?.remove();
+  const el = document.createElement('div'); el.className='message ai';
+  const tb = transcriptText ? `<div class="transcript-badge">Heard: "${esc(transcriptText)}"</div>` : '';
+  el.innerHTML=`<div class="avatar-sm ai">L</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
+  document.getElementById('messages').appendChild(el); scrollBottom(); return el;
+}
+function finalizeBubble(fullText, sources) {
+  logAI(fullText, sources);
+  const textEl = document.getElementById('streaming-text');
+  if (textEl) {
+    const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
+    textEl.outerHTML = html || '<p></p>';
+  }
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble && sources?.length) {
+    bubble.removeAttribute('id');
+    const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
+    bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+  }
+  scrollBottom();
+}
+
+// ── Send question ─────────────────────────────────────────────
+async function sendQuestion() {
+  const input = document.getElementById('question-input');
+  const userText = input.value.trim(); if (!userText||isLoading) return;
+  let ragQuestion = userText;
+  if (selectedProduct && !userText.toLowerCase().includes(selectedProduct.toLowerCase()))
+    ragQuestion = `${userText} — product: ${selectedProduct}`;
+  isLoading=true; setSend(true); input.value=''; input.style.height='auto';
+  addUserMsg(userText); addTyping(); setStatus('thinking','Thinking…');
+  try {
+    const res = await fetch(`${API}/chat/ask/stream`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical'})
+    });
+    if (!res.ok) throw new Error();
+    const reader=res.body.getReader(), dec=new TextDecoder();
+    let buf='', msgEl=null, full='', sources=[];
+    setStatus('speaking','Responding…');
+    while (true) {
+      const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n\n'); buf=lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let c; try{c=JSON.parse(line.slice(6))}catch{continue}
+        if (c.type==='token'){if(!msgEl)msgEl=addAIBubble(null);const el=document.getElementById('streaming-text');if(el){full+=c.content;el.textContent=full;scrollBottom();}}
+        else if (c.type==='sources') sources=c.sources;
+      }
+    }
+    if (!msgEl) msgEl=addAIBubble(null);
+    finalizeBubble(full, sources);
+    if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
+    setStatus('','Ready');
+  } catch {
+    document.getElementById('typing-indicator')?.remove();
+    showError('Cannot reach the API. Run: python backend/main.py');
+    setStatus('','Ready');
+  } finally { isLoading=false; setSend(false); document.getElementById('question-input').focus(); }
+}
+
+// ── Voice ─────────────────────────────────────────────────────
+async function toggleMic() { isRecording ? stopRecording() : startRecording(); }
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    mediaRecorder=new MediaRecorder(stream); audioChunks=[];
+    mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);
+    mediaRecorder.onstop=sendAudio; mediaRecorder.start(); isRecording=true;
+    document.getElementById('mic-btn').classList.add('recording');
+    document.getElementById('mic-label').textContent='Recording… click to stop';
+    document.getElementById('waveform').classList.add('recording-active');
+    setStatus('listening','Listening…');
+    if (window._avatarReady && window._head?.audioCtx?.state!=='running') await window._head.audioCtx.resume();
+  } catch { showError('Microphone access denied.'); }
+}
+function stopRecording() {
+  if (mediaRecorder&&isRecording) {
+    mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t=>t.stop()); isRecording=false;
+    document.getElementById('mic-btn').classList.remove('recording');
+    document.getElementById('mic-label').textContent='Hold to speak';
+    document.getElementById('waveform').classList.remove('recording-active');
+    setStatus('thinking','Processing…');
+  }
+}
+async function sendAudio() {
+  if (!audioChunks.length) return;
+  isLoading=true; setSend(true); addTyping();
+  const blob=new Blob(audioChunks,{type:'audio/webm'});
+  const form=new FormData(); form.append('audio',blob,'rec.webm');
+  try {
+    const res=await fetch(`${API}/voice/ask/stream`,{method:'POST',body:form});
+    if (!res.ok) throw new Error();
+    const reader=res.body.getReader(), dec=new TextDecoder();
+    let buf='', msgEl=null, full='', sources=[], detectedLang='fr';
+    setStatus('speaking','Responding…');
+    while (true) {
+      const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n\n'); buf=lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let c; try{c=JSON.parse(line.slice(6))}catch{continue}
+        if (c.type==='transcript') {
+          detectedLang=c.language||'fr';
+          const heard=c.text.toLowerCase().trim();
+          if (!trainingMode) {
+            const isMed=/médic|medical|clinique|docteur|pharmacien|scientif/.test(heard);
+            const isCom=/commerc|vente|vend|client|convaincre|sales|business/.test(heard);
+            if (isMed){addUserMsg(`🎤 ${c.text}`,true);document.getElementById('typing-indicator')?.remove();setMode('medical');addTyping();return;}
+            if (isCom){addUserMsg(`🎤 ${c.text}`,true);document.getElementById('typing-indicator')?.remove();setMode('commercial');addTyping();return;}
+          }
+          addUserMsg(`🎤 ${c.text}`,true);
+          document.getElementById('typing-indicator')?.remove(); addTyping();
+        } else if (c.type==='token'){
+          if(!msgEl)msgEl=addAIBubble(null);const el=document.getElementById('streaming-text');if(el){full+=c.content;el.textContent=full;scrollBottom();}
+        } else if (c.type==='sources') sources=c.sources;
+      }
+    }
+    if (!msgEl) msgEl=addAIBubble(null);
+    finalizeBubble(full,sources);
+    if (full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
+    setStatus('','Ready');
+  } catch {
+    document.getElementById('typing-indicator')?.remove();
+    showError('Voice processing failed.'); setStatus('','Ready');
+  } finally { isLoading=false; setSend(false); }
+}
+
+// ── Edit ──────────────────────────────────────────────────────
+function startEdit(msgId, btn) {
+  const msgEl=document.getElementById(msgId);
+  const wrap=msgEl.querySelector('.edit-wrap');
+  const originalText=msgEl.querySelector('.bubble').getAttribute('data-text')||msgEl.querySelector('.bubble').textContent;
+  wrap.innerHTML=`<textarea class="edit-textarea" id="edit-input-${msgId}" rows="2">${originalText}</textarea>
+    <div class="edit-actions">
+      <button class="edit-cancel" onclick="cancelEdit('${msgId}','${esc(originalText)}')">Cancel</button>
+      <button class="edit-save"   onclick="saveEdit('${msgId}')">Send</button>
+    </div>`;
+  const ta=document.getElementById(`edit-input-${msgId}`);
+  ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px';
+  ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length);
+  ta.addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();saveEdit(msgId);}
+    if(e.key==='Escape') cancelEdit(msgId,originalText);
+  });
+}
+function cancelEdit(msgId,originalText) {
+  const wrap=document.getElementById(msgId).querySelector('.edit-wrap');
+  wrap.innerHTML=`<div class="bubble" data-text="${esc(originalText)}">${esc(originalText)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
+}
+function saveEdit(msgId) {
+  const ta=document.getElementById(`edit-input-${msgId}`);
+  const newText=ta.value.trim(); if(!newText) return;
+  const wrap=document.getElementById(msgId).querySelector('.edit-wrap');
+  wrap.innerHTML=`<div class="bubble" data-text="${esc(newText)}">${esc(newText)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
+  let next=document.getElementById(msgId).nextElementSibling;
+  while(next){const rm=next;next=next.nextElementSibling;rm.remove();}
+  resendQuestion(newText);
+}
+async function resendQuestion(userText) {
+  let ragQuestion=userText;
+  if(selectedProduct&&!userText.toLowerCase().includes(selectedProduct.toLowerCase()))
+    ragQuestion=`${userText} — product: ${selectedProduct}`;
+  isLoading=true; setSend(true); addTyping(); setStatus('thinking','Thinking…');
+  try {
+    const res=await fetch(`${API}/chat/ask/stream`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical'})});
+    if(!res.ok) throw new Error();
+    const reader=res.body.getReader(),dec=new TextDecoder();
+    let buf='',msgEl=null,full='',sources=[];
+    setStatus('speaking','Responding…');
+    while(true){
+      const {value,done}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        let c;try{c=JSON.parse(line.slice(6))}catch{continue}
+        if(c.type==='token'){if(!msgEl)msgEl=addAIBubble(null);const el=document.getElementById('streaming-text');if(el){full+=c.content;el.textContent=full;scrollBottom();}}
+        else if(c.type==='sources') sources=c.sources;
+      }
+    }
+    if(!msgEl) msgEl=addAIBubble(null);
+    finalizeBubble(full,sources);
+    if(full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
+    setStatus('','Ready');
+  } catch {
+    document.getElementById('typing-indicator')?.remove();
+    showError('Cannot reach the API.'); setStatus('','Ready');
+  } finally { isLoading=false; setSend(false); }
+}
+
+// ── Log + Rapport ─────────────────────────────────────────────
+const conversationLog=[];
+function logUser(text,isVoice){
+  conversationLog.push({role:'user',text,isVoice:!!isVoice,time:new Date()});
+  document.getElementById('report-btn').disabled=false;
+}
+function logAI(text,sources){ conversationLog.push({role:'ai',text,sources:sources||[],time:new Date()}); }
+
+function openReport(){if(!conversationLog.length)return;buildReportContent();document.getElementById('report-overlay').classList.add('open');}
+function closeReport(){document.getElementById('report-overlay').classList.remove('open');}
+function closeReportOnBg(e){if(e.target===document.getElementById('report-overlay'))closeReport();}
+
+function buildReportContent(){
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
+  const timeStr=now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  const modeLabel=trainingMode==='commercial'?'Commercial Delegate':'Medical Delegate';
+  const modeColor=trainingMode==='commercial'?'#b45309':'#1d4ed8';
+  const products=[...new Set(conversationLog.flatMap(e=>(e.sources||[]).map(s=>s.name)))].filter(Boolean);
+  const userCount=conversationLog.filter(e=>e.role==='user').length;
+  const aiCount=conversationLog.filter(e=>e.role==='ai').length;
+  const exchangesHtml=conversationLog.map(entry=>{
+    if(entry.role==='user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Delegate ${entry.isVoice?'(voice)':'(text)'}</div><div class="r-text">${entry.isVoice?'🎤 ':''}${escHtml(entry.text)}</div></div>`;
+    const tags=entry.sources?.length?`<div class="r-products">${entry.sources.map(s=>`<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>`:'';
+    return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
+  }).join('');
+  const prodHtml=products.length?`<div class="r-section-title">Products covered</div><div class="r-products">${products.map(p=>`<span class="r-product-tag">${escHtml(p)}</span>`).join('')}</div>`:'';
+  document.getElementById('report-content').innerHTML=`
+    <div class="r-header"><div class="r-logo">VitalAgent</div><div class="r-subtitle">Training Session Report — Powered by Vita AI</div>
+    <div class="r-meta">
+      <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
+      <div class="r-meta-item"><strong>Training mode</strong><span style="color:${modeColor};font-weight:600">${modeLabel}</span></div>
+      <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} questions · ${aiCount} responses</span></div>
+      <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length||'None selected'}</span></div>
+    </div></div>
+    ${prodHtml}
+    <div class="r-section-title">Full conversation</div>${exchangesHtml}
+    <div class="r-footer"><span>Generated by VitalAgent · Vita AI Trainer</span><span>${dateStr}</span></div>`;
+}
+
+function downloadReport(){
+  const content=document.getElementById('report-content');
+  const now=new Date();
+  const win=window.open('','_blank','width=800,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>vita-report-${now.toISOString().slice(0,10)}.pdf</title>
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Georgia,serif;color:#111;background:#fff}
+    #report-content{padding:32px 40px;font-size:13px;line-height:1.7}
+    .r-header{border-bottom:2px solid #1d4ed8;padding-bottom:18px;margin-bottom:24px}
+    .r-logo{font-size:26px;color:#1d4ed8}.r-subtitle{font-size:11px;color:#6b7280;margin-top:3px;font-family:system-ui}
+    .r-meta{display:flex;gap:20px;margin-top:14px;flex-wrap:wrap}.r-meta-item{font-size:11px;font-family:system-ui}
+    .r-meta-item strong{display:block;font-size:9px;text-transform:uppercase;color:#374151;margin-bottom:1px}
+    .r-section-title{font-size:10px;text-transform:uppercase;color:#6b7280;font-family:system-ui;font-weight:600;margin:24px 0 10px;border-bottom:1px solid #e5e7eb;padding-bottom:5px}
+    .r-exchange{margin-bottom:16px;padding:12px 16px;border-radius:6px;border-left:3px solid #e5e7eb;page-break-inside:avoid}
+    .r-exchange.user-ex{background:#f8faff;border-left-color:#1d4ed8}.r-exchange.ai-ex{background:#fafafa;border-left-color:#6b7280}
+    .r-role{font-size:9px;text-transform:uppercase;font-family:system-ui;font-weight:600;margin-bottom:5px}
+    .r-role.user-role{color:#1d4ed8}.r-role.ai-role{color:#374151}
+    .r-text{font-size:12px;line-height:1.6;color:#1f2937}
+    .r-products{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+    .r-product-tag{padding:2px 8px;border-radius:10px;font-size:10px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-family:system-ui}
+    .r-footer{margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;font-family:system-ui;display:flex;justify-content:space-between}
+    @page{margin:1.5cm}</style></head><body>${content.outerHTML}
+    <script>window.onload=function(){window.print();setTimeout(()=>window.close(),1000)}<\/script></body></html>`);
+  win.document.close();
+}
+
+function escHtml(str){return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── Helpers ───────────────────────────────────────────────────
+function showError(msg){
+  document.getElementById('typing-indicator')?.remove();
+  const el=document.createElement('div');el.className='message ai';
+  el.innerHTML=`<div class="avatar-sm ai" style="background:#7f1d1d">!</div><div class="bubble" style="border-color:rgba(239,68,68,0.2);background:rgba(239,68,68,0.05)"><p style="color:#fca5a5">${esc(msg)}</p></div>`;
+  document.getElementById('messages').appendChild(el);scrollBottom();
+}
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendQuestion();}}
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,100)+'px';}
+function setSend(d){document.getElementById('send-btn').disabled=d;}
+function scrollBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
+function esc(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+init();
+=== ./frontend/package-lock.json ===
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "frontend",
+      "version": "1.0.0",
+      "license": "ISC",
+      "dependencies": {
+        "three": "^0.183.2"
+      }
+    },
+    "node_modules/three": {
+      "version": "0.183.2",
+      "resolved": "https://registry.npmjs.org/three/-/three-0.183.2.tgz",
+      "integrity": "sha512-di3BsL2FEQ1PA7Hcvn4fyJOlxRRgFYBpMTcyOgkwJIaDOdJMebEFPA+t98EvjuljDx4hNulAGwF6KIjtwI5jgQ==",
+      "license": "MIT"
+    }
+  }
+}
+=== ./frontend/package.json ===
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "three": "^0.183.2"
+  }
+}
+=== ./frontend/serve.json ===
+{
+  "headers": [
+    {
+      "source": "**/*.mjs",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/javascript"
+        }
+      ]
+    },
+    {
+      "source": "**/*.js",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/javascript"
+        }
+      ]
+    }
+  ]
+}
+=== ./frontend/TalkingHead-main/package-lock.json ===
+{
+  "name": "@met4citizen/talkinghead",
+  "version": "1.7.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "@met4citizen/talkinghead",
+      "version": "1.7.0",
+      "license": "MIT",
+      "dependencies": {
+        "three": "^0.180.0"
+      }
+    },
+    "node_modules/three": {
+      "version": "0.180.0",
+      "resolved": "https://registry.npmjs.org/three/-/three-0.180.0.tgz",
+      "integrity": "sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==",
+      "license": "MIT"
+    }
+  }
+}
+=== ./frontend/TalkingHead-main/package.json ===
+{
+  "name": "@met4citizen/talkinghead",
+  "version": "1.7.0",
+  "description": "Talking Head (3D): A JavaScript class for real-time lip-sync using Ready Player Me full-body 3D avatars.",
+  "type": "module",
+  "main": "modules/talkinghead.mjs",
+  "files": [
+    "README.md",
+    "LICENSE",
+    "modules/*"
+  ],
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/met4citizen/TalkingHead.git"
+  },
+  "keywords": [
+    "talkinghead",
+    "lip-sync",
+    "3D avatar",
+    "Ready Player Me",
+    "talking avatar"
+  ],
+  "author": "Mika Suominen",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/met4citizen/TalkingHead/issues"
+  },
+  "homepage": "https://github.com/met4citizen/TalkingHead#readme"
+}
+=== ./instructions.txt ===
+terminal 1 : 
+venv\Scripts\activate
+python scripts/ingest.py
+
+
+terminal 2 : 
+venv\Scripts\activate
+python backend/main.py
+
+terminal 3 : 
+serve . --config serve.json
+=== ./README.md ===
+# VitalAgent — 3D AI Medical Delegate Training Agent
+
+A voice-enabled AI agent that trains medical delegates on pharmaceutical products.
+
+## Pipeline
+Microphone → STT (Whisper large-v3) → RAG (ChromaDB + Ollama) → LLM → TTS → 3D Avatar
+
+## Stack
+| Layer | Technology |
+|---|---|
+| STT | Whisper large-v3 (free, local) |
+| RAG | ChromaDB + nomic-embed-text |
+| LLM | Ollama (llama3.1 / llama3.2) |
+| TTS | Coqui TTS (coming soon) |
+| Avatar | Three.js + VRM (coming soon) |
+| API | FastAPI |
+| DB | MySQL + ChromaDB |
+
+## Setup
+
+```bash
+# 1. Clone and enter project
+git clone https://github.com/yourname/vital-agent
+cd vital-agent
+
+# 2. Create virtual environment
+python -m venv venv
+venv\Scripts\activate       # Windows
+source venv/bin/activate    # Mac/Linux
+
+# 3. Install dependencies
+pip install -r backend/requirements.txt
+
+# 4. Configure environment
+cp .env.example .env
+# Edit .env with your MySQL credentials
+
+# 5. Install and start Ollama
+# Download: https://ollama.com/download
+ollama pull llama3.1
+ollama pull nomic-embed-text
+
+# 6. Ingest your product data
+python scripts/ingest.py
+
+# 7. Start the API
+python backend/main.py
+
+# 8. Open frontend
+# Open frontend/index.html in browser
+```
+
+## Team Structure
+| Member | Module |
+|---|---|
+| - | `backend/rag/` — RAG pipeline (done) |
+| - | `backend/stt/` — Whisper STT (done) |
+| - | `backend/tts/` — Text to Speech |
+| - | `frontend/avatar/` — 3D Avatar |
+| - | `frontend/voice/` — Mic UI |
+
+## Git LFS (for 3D avatar files)
+```bash
+git lfs install
+git lfs track "*.glb"
+git lfs track "*.vrm"
+```
+=== ./requirements.txt ===
+# ── RAG ──────────────────────────────────────────────────────
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-ollama==0.1.3
+chromadb==0.5.5
+pymysql==1.1.1
+cryptography==42.0.8
+
+# ── API ──────────────────────────────────────────────────────
+fastapi==0.112.2
+uvicorn==0.30.6
+pydantic==2.8.2
+python-multipart==0.0.9
+
+# ── STT ──────────────────────────────────────────────────────
+faster-whisper==1.0.3
+pyaudio==0.2.14
+
+# ── Utils ────────────────────────────────────────────────────
+python-dotenv==1.0.1
+sqlalchemy==2.0.32
+
+# ── TTS (add when ready) ──────────────────────────────────────
+edge-tts
+transformers
+torch=== ./scripts/import_catalogues.py ===
+"""
+import_catalogues.py
+====================
+Lit tous les fichiers PPTX du dossier catalogue,
+extrait le texte slide par slide,
+et insère tout dans la table `catalogues` de MySQL.
+
+Usage:
+    python import_catalogues.py
+
+Prérequis:
+    pip install markitdown[pptx] pymysql python-dotenv
+"""
+
+import os
+import re
+import sys
+import pymysql
+from dotenv import load_dotenv
+
+# ── markitdown pour extraire le texte des PPTX ──────────────────────────────
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    print("❌ markitdown non installé. Lance : pip install markitdown[pptx]")
+    sys.exit(1)
+
+# ── Charger les variables d'environnement (.env) ─────────────────────────────
+load_dotenv()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚙️  CONFIGURATION — Modifie ce chemin si nécessaire
+# ══════════════════════════════════════════════════════════════════════════════
+CATALOGUE_DIR = r"C:\Users\ASUS\OneDrive\Bureau\ESPRIT\4EME\Semestre 2\Projet DS\data\catalogue"
+
+
+# ── Connexion MySQL ───────────────────────────────────────────────────────────
+def get_connection():
+    return pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "vital_crm"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+# ── Créer la table catalogues si elle n'existe pas ───────────────────────────
+def create_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS `catalogues` (
+              `id`           INT NOT NULL AUTO_INCREMENT,
+              `gamme`        VARCHAR(150) NOT NULL,
+              `slide_number` INT DEFAULT NULL,
+              `titre_slide`  VARCHAR(300) DEFAULT NULL,
+              `contenu`      TEXT,
+              PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+        conn.commit()
+    print("   ✓ Table `catalogues` prête")
+
+
+# ── Vider la table avant réimport (évite les doublons) ───────────────────────
+def clear_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM `catalogues`")
+        conn.commit()
+    print("   ✓ Table `catalogues` vidée")
+
+
+# ── Extraire le nom de la gamme depuis le nom de fichier ─────────────────────
+def extract_gamme_name(filename):
+    # Ex: "Gamme BACTOL.pptx" → "BACTOL"
+    name = os.path.splitext(filename)[0]         # enlever .pptx
+    name = re.sub(r'^Gamme\s*', '', name, flags=re.IGNORECASE).strip()
+    return name
+
+
+# ── Parser les slides depuis le markdown extrait ─────────────────────────────
+def parse_slides(markdown_text):
+    """
+    Découpe le markdown en slides.
+    Retourne une liste de dicts: {slide_number, titre_slide, contenu}
+    """
+    slides = []
+
+    # Séparer par "<!-- Slide number: N -->"
+    parts = re.split(r'<!--\s*Slide number:\s*(\d+)\s*-->', markdown_text)
+
+    # parts = ['', '1', 'contenu slide 1', '2', 'contenu slide 2', ...]
+    i = 1
+    while i < len(parts) - 1:
+        slide_num = int(parts[i])
+        raw_content = parts[i + 1].strip()
+
+        # Extraire le titre (première ligne non vide qui n'est pas une image)
+        lines = [l.strip() for l in raw_content.split('\n') if l.strip()]
+        lines = [l for l in lines if not l.startswith('![')]  # enlever images
+        lines = [l for l in lines if not l.startswith('###')]  # enlever notes
+
+        titre = ''
+        if lines:
+            # Nettoyer le titre des # markdown
+            titre = re.sub(r'^#+\s*', '', lines[0]).strip()
+            if len(titre) > 300:
+                titre = titre[:297] + '...'
+
+        # Nettoyer le contenu
+        content = raw_content
+        content = re.sub(r'!\[.*?\]\(.*?\)', '', content)   # enlever images
+        content = re.sub(r'###\s*Notes:.*', '', content, flags=re.DOTALL)  # enlever notes
+        content = re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)      # enlever commentaires
+        content = re.sub(r'\n{3,}', '\n\n', content).strip()               # nettoyer espaces
+
+        if content:
+            slides.append({
+                'slide_number': slide_num,
+                'titre_slide': titre,
+                'contenu': content,
+            })
+
+        i += 2
+
+    return slides
+
+
+# ── Insérer les slides d'une gamme dans MySQL ─────────────────────────────────
+def insert_slides(conn, gamme, slides):
+    with conn.cursor() as cur:
+        for slide in slides:
+            cur.execute("""
+                INSERT INTO `catalogues` (`gamme`, `slide_number`, `titre_slide`, `contenu`)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                gamme,
+                slide['slide_number'],
+                slide['titre_slide'],
+                slide['contenu'],
+            ))
+        conn.commit()
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main():
+    print("\n=== Import Catalogues PPTX → MySQL ===\n")
+
+    # 1. Connexion MySQL
+    print("1. Connexion à MySQL...")
+    try:
+        conn = get_connection()
+        print("   ✓ Connecté")
+    except Exception as e:
+        print(f"   ✗ Erreur connexion: {e}")
+        sys.exit(1)
+
+    # 2. Préparer la table
+    print("\n2. Préparation de la table...")
+    create_table(conn)
+    clear_table(conn)
+
+    # 3. Vérifier le dossier
+    print(f"\n3. Lecture du dossier: {CATALOGUE_DIR}")
+    if not os.path.exists(CATALOGUE_DIR):
+        print(f"   ✗ Dossier introuvable: {CATALOGUE_DIR}")
+        print("   → Modifie la variable CATALOGUE_DIR dans le script")
+        sys.exit(1)
+
+    pptx_files = [f for f in os.listdir(CATALOGUE_DIR) if f.endswith('.pptx')]
+    print(f"   ✓ {len(pptx_files)} fichiers PPTX trouvés")
+
+    # 4. Traiter chaque PPTX
+    print("\n4. Extraction et import...\n")
+    md = MarkItDown()
+    total_slides = 0
+
+    for filename in sorted(pptx_files):
+        filepath = os.path.join(CATALOGUE_DIR, filename)
+        gamme    = extract_gamme_name(filename)
+
+        print(f"  📂 {filename}  →  Gamme: {gamme}")
+
+        try:
+            result   = md.convert(filepath)
+            slides   = parse_slides(result.text_content)
+            insert_slides(conn, gamme, slides)
+            total_slides += len(slides)
+            print(f"     ✓ {len(slides)} slides importées")
+
+        except Exception as e:
+            print(f"     ✗ Erreur: {e}")
+
+    conn.close()
+
+    # 5. Résumé
+    print(f"\n{'='*45}")
+    print(f"✓ Import terminé !")
+    print(f"  {len(pptx_files)} fichiers PPTX traités")
+    print(f"  {total_slides} slides insérées dans `catalogues`")
+    print(f"\nProchaine étape:")
+    print(f"  Ajouter `catalogues` dans backend/rag/config.py")
+    print(f"  puis : python scripts/ingest.py --reset")
+
+
+if __name__ == "__main__":
+    main()
+=== ./scripts/import_catalogues_v2.py ===
+"""
+import_catalogues_v2.py
+=======================
+Lit tous les fichiers PPTX du dossier catalogue,
+extrait TOUT le texte du PPTX en un seul bloc,
+et insère UNE SEULE LIGNE par gamme dans la table `catalogues`.
+
+Structure de la table:
+  id    | gamme   | contenu
+  1     | BACTOL  | tout le texte du pptx concatené...
+  2     | HYDRA   | tout le texte du pptx concatené...
+  ...
+
+Usage:
+    python scripts/import_catalogues_v2.py
+
+Prérequis:
+    pip install "markitdown[pptx]" pymysql python-dotenv
+"""
+
+import os
+import re
+import sys
+import pymysql
+from dotenv import load_dotenv
+
+try:
+    from markitdown import MarkItDown
+except ImportError:
+    print("❌ markitdown non installé. Lance : pip install markitdown[pptx]")
+    sys.exit(1)
+
+load_dotenv()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚙️  CONFIGURATION — Modifie ce chemin si nécessaire
+# ══════════════════════════════════════════════════════════════════════════════
+CATALOGUE_DIR = r"C:\Users\ASUS\OneDrive\Bureau\ESPRIT\4EME\Semestre 2\Projet DS\data\catalogue"
+
+
+def get_connection():
+    return pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "vital_crm"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def fix_table(conn):
+    """Recrée la table catalogues avec la nouvelle structure simplifiée."""
+    with conn.cursor() as cur:
+        # Supprimer l'ancienne table
+        cur.execute("DROP TABLE IF EXISTS `catalogues`;")
+
+        # Créer la nouvelle structure : une ligne par gamme
+        cur.execute("""
+            CREATE TABLE `catalogues` (
+              `id`      INT NOT NULL AUTO_INCREMENT,
+              `gamme`   VARCHAR(150) NOT NULL,
+              `contenu` LONGTEXT,
+              PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+        conn.commit()
+    print("   ✓ Table `catalogues` recréée (id, gamme, contenu)")
+
+
+def extract_gamme_name(filename):
+    """Ex: 'Gamme BACTOL.pptx' → 'BACTOL'"""
+    name = os.path.splitext(filename)[0]
+    name = re.sub(r'^Gamme\s*', '', name, flags=re.IGNORECASE).strip()
+    return name
+
+
+def clean_text(raw):
+    """Nettoie le markdown extrait : enlève images, commentaires, notes."""
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', raw)              # images
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL) # commentaires HTML
+    text = re.sub(r'###\s*Notes:.*?(?=\n\n|\Z)', '', text, flags=re.DOTALL)  # notes
+    text = re.sub(r'\n{3,}', '\n\n', text)                  # lignes vides multiples
+    return text.strip()
+
+
+def main():
+    print("\n=== Import Catalogues PPTX → MySQL (v2 — 1 ligne par gamme) ===\n")
+
+    # 1. Connexion
+    print("1. Connexion à MySQL...")
+    try:
+        conn = get_connection()
+        print("   ✓ Connecté")
+    except Exception as e:
+        print(f"   ✗ Erreur: {e}")
+        sys.exit(1)
+
+    # 2. Recréer la table
+    print("\n2. Recréation de la table...")
+    fix_table(conn)
+
+    # 3. Vérifier le dossier
+    print(f"\n3. Lecture du dossier...")
+    if not os.path.exists(CATALOGUE_DIR):
+        print(f"   ✗ Dossier introuvable: {CATALOGUE_DIR}")
+        print("   → Modifie CATALOGUE_DIR dans le script")
+        sys.exit(1)
+
+    pptx_files = sorted([f for f in os.listdir(CATALOGUE_DIR) if f.endswith('.pptx')])
+    print(f"   ✓ {len(pptx_files)} fichiers PPTX trouvés")
+
+    # 4. Traiter chaque PPTX → 1 ligne par fichier
+    print("\n4. Extraction et import...\n")
+    md = MarkItDown()
+
+    for filename in pptx_files:
+        filepath = os.path.join(CATALOGUE_DIR, filename)
+        gamme    = extract_gamme_name(filename)
+
+        print(f"  📂 {filename}  →  Gamme: {gamme}", end="", flush=True)
+
+        try:
+            result  = md.convert(filepath)
+            contenu = clean_text(result.text_content)
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO `catalogues` (`gamme`, `contenu`) VALUES (%s, %s)",
+                    (gamme, contenu)
+                )
+            conn.commit()
+
+            # Afficher la taille du contenu extrait
+            print(f"  ✓  ({len(contenu)} caractères)")
+
+        except Exception as e:
+            print(f"  ✗ Erreur: {e}")
+
+    conn.close()
+
+    # 5. Résumé
+    print(f"\n{'='*50}")
+    print(f"✓ Import terminé ! {len(pptx_files)} gammes insérées.")
+    print(f"\nProchaines étapes:")
+    print(f"  1. Vérifier dans Workbench : SELECT gamme, LENGTH(contenu) FROM catalogues;")
+    print(f"  2. Ajouter dans backend/rag/config.py :")
+    print(f"       {{")
+    print(f'           "table": "catalogues",')
+    print(f'           "id_column": "id",')
+    print(f'           "name_column": "gamme",')
+    print(f'           "text_columns": ["gamme", "contenu"],')
+    print(f"       }}")
+    print(f"  3. python scripts/ingest.py --reset")
+
+
+if __name__ == "__main__":
+    main()
+=== ./scripts/ingest.py ===
+"""
+ingest.py
+=========
+Step 1 of the pipeline.
+
+Reads product data from MySQL → splits into chunks → embeds with Ollama →
+stores in ChromaDB vector database.
+
+Run once to set up, then re-run whenever your MySQL data changes.
+
+Usage:
+    python scripts/ingest.py
+    python scripts/ingest.py --reset   (wipe the vector DB and rebuild)
+"""
+
+import os
+import sys
+import argparse
+import pymysql
+from dotenv import load_dotenv
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings
+import chromadb
+from chromadb.config import Settings
+
+# ── Load .env ────────────────────────────────────────────────────────────────
+load_dotenv()
+
+# ── Import your table config ─────────────────────────────────────────────────
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
+from rag.config import TABLES, CHUNK_SIZE, CHUNK_OVERLAP
+
+
+def get_mysql_connection():
+    """Create and return a MySQL connection using .env credentials."""
+    return pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER"),
+        password=os.getenv("MYSQL_PASSWORD"),
+        database=os.getenv("MYSQL_DATABASE"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def fetch_rows_from_mysql(conn, table_config: dict) -> list[dict]:
+    """
+    Fetch all rows from one table and return as list of dicts.
+    Each dict has: id, name, text (concatenated columns)
+    """
+    table   = table_config["table"]
+    id_col  = table_config["id_column"]
+    name_col = table_config["name_column"]
+    text_cols = table_config["text_columns"]
+
+    # Build a SELECT for the columns we need
+    cols_to_fetch = list(dict.fromkeys([id_col, name_col] + text_cols))
+    col_list = ", ".join(f"`{c}`" for c in cols_to_fetch)
+
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {col_list} FROM `{table}`")
+        rows = cur.fetchall()
+
+    print(f"  → Fetched {len(rows)} rows from `{table}`")
+    return rows
+
+
+def row_to_document(row: dict, table_config: dict) -> tuple[str, dict]:
+    """
+    Convert a MySQL row to a (text, metadata) pair.
+    Text is built by concatenating column_name: value pairs.
+    """
+    text_cols = table_config["text_columns"]
+    id_col    = table_config["id_column"]
+    name_col  = table_config["name_column"]
+    table     = table_config["table"]
+
+    parts = []
+    for col in text_cols:
+        val = row.get(col)
+        if val and str(val).strip():
+            # Clean up the pipe-separated format
+            cleaned = str(val).strip()
+            cleaned = cleaned.replace(" | ", "\n")
+            cleaned = cleaned.replace("• ", "\n- ")
+            cleaned = cleaned.replace("– ", "\n- ")
+            label = col.replace("_", " ").title()
+            parts.append(f"{label}: {cleaned}")
+
+    text = "\n\n".join(parts)
+
+    metadata = {
+        "source_table": table,
+        "source_id":    str(row.get(id_col, "")),
+        "product_name": str(row.get(name_col, "Unknown Product")),
+    }
+
+    return text, metadata
+
+
+def chunk_document(text: str, metadata: dict, chunk_idx: int) -> list[tuple]:
+    """Split a document into chunks, preserving metadata."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    chunks = splitter.split_text(text)
+    result = []
+    for i, chunk in enumerate(chunks):
+        chunk_meta = {**metadata, "chunk_index": i}
+        chunk_id   = f"{metadata['source_table']}_{metadata['source_id']}_chunk{i}"
+        result.append((chunk_id, chunk, chunk_meta))
+    return result
+
+
+def main(reset: bool = False):
+    print("\n=== MedRAG Ingestion Pipeline ===\n")
+
+    # ── 1. Connect to MySQL ──────────────────────────────────────────────────
+    print("1. Connecting to MySQL...")
+    try:
+        conn = get_mysql_connection()
+        print("   ✓ Connected to MySQL")
+    except Exception as e:
+        print(f"   ✗ MySQL connection failed: {e}")
+        print("   Check your .env file credentials.")
+        sys.exit(1)
+
+    # ── 2. Load embedding model ──────────────────────────────────────────────
+    print("\n2. Loading embedding model from Ollama...")
+    embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
+        # Quick test
+        _ = embeddings.embed_query("test")
+        print(f"   ✓ Embedding model '{embed_model}' ready")
+    except Exception as e:
+        print(f"   ✗ Ollama not reachable: {e}")
+        print("   Make sure Ollama is running: open a terminal and type 'ollama serve'")
+        sys.exit(1)
+
+    # ── 3. Set up ChromaDB ───────────────────────────────────────────────────
+    print("\n3. Setting up ChromaDB...")
+    persist_dir     = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+    collection_name = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
+
+    os.makedirs(persist_dir, exist_ok=True)
+    chroma_client = chromadb.PersistentClient(path=persist_dir)
+
+    if reset:
+        print("   ! --reset flag: deleting existing collection...")
+        try:
+            chroma_client.delete_collection(collection_name)
+        except Exception:
+            pass
+
+    collection = chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+    print(f"   ✓ Collection '{collection_name}' ready")
+
+    # ── 4. Process each table ────────────────────────────────────────────────
+    print("\n4. Reading MySQL data and ingesting into vector DB...\n")
+
+    total_chunks = 0
+
+    for table_config in TABLES:
+        table_name = table_config["table"]
+        print(f"  Processing table: {table_name}")
+
+        rows = fetch_rows_from_mysql(conn, table_config)
+
+        all_ids, all_docs, all_metas = [], [], []
+
+        for i, row in enumerate(rows):
+            text, metadata = row_to_document(row, table_config)
+            if not text.strip():
+                continue
+
+            chunks = chunk_document(text, metadata, i)
+            for chunk_id, chunk_text, chunk_meta in chunks:
+                all_ids.append(chunk_id)
+                all_docs.append(chunk_text)
+                all_metas.append(chunk_meta)
+
+        if not all_docs:
+            print(f"  ! No text found in table '{table_name}' — check your column names")
+            continue
+
+        # Embed in batches of 50 (avoids memory issues)
+        BATCH = 50
+        for batch_start in range(0, len(all_docs), BATCH):
+            batch_ids   = all_ids[batch_start:batch_start + BATCH]
+            batch_docs  = all_docs[batch_start:batch_start + BATCH]
+            batch_metas = all_metas[batch_start:batch_start + BATCH]
+
+            print(f"    Embedding batch {batch_start // BATCH + 1} "
+                  f"({len(batch_docs)} chunks)...", end="", flush=True)
+
+            vectors = embeddings.embed_documents(batch_docs)
+
+            # Upsert (add or update) into ChromaDB
+            collection.upsert(
+                ids=batch_ids,
+                documents=batch_docs,
+                embeddings=vectors,
+                metadatas=batch_metas,
+            )
+            print(" ✓")
+
+        total_chunks += len(all_docs)
+        print(f"  ✓ {table_name}: {len(rows)} rows → {len(all_docs)} chunks stored\n")
+
+    conn.close()
+
+    # ── 5. Summary ───────────────────────────────────────────────────────────
+    final_count = collection.count()
+    print("=" * 40)
+    print(f"✓ Ingestion complete!")
+    print(f"  Total chunks in vector DB: {final_count}")
+    print(f"  Database stored at: {persist_dir}")
+    print("\nNext step: run the API with:")
+    print("  python backend/api.py")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Wipe the existing vector DB and rebuild from scratch",
+    )
+    args = parser.parse_args()
+    main(reset=args.reset)
+=== ./scripts/test_system.py ===
+"""
+test_system.py
+==============
+Run this after setup to check each component of the system.
+
+Usage:
+    python scripts/test_system.py
+"""
+
+import os
+import sys
+import json
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dotenv import load_dotenv
+load_dotenv()
+
+
+def section(title):
+    print(f"\n{'─'*50}")
+    print(f"  {title}")
+    print(f"{'─'*50}")
+
+
+def ok(msg):    print(f"  ✓ {msg}")
+def fail(msg):  print(f"  ✗ {msg}")
+def info(msg):  print(f"  · {msg}")
+
+
+# ── 1. Python packages ──────────────────────────────────────────────────────
+section("1. Python Dependencies")
+required = [
+    "langchain", "langchain_community", "langchain_ollama",
+    "chromadb", "pymysql", "dotenv", "fastapi", "uvicorn",
+]
+all_ok = True
+for pkg in required:
+    try:
+        __import__(pkg.replace("-", "_"))
+        ok(pkg)
+    except ImportError:
+        fail(f"{pkg}  ← run: pip install -r requirements.txt")
+        all_ok = False
+
+if not all_ok:
+    print("\n  Fix missing packages first, then re-run this script.")
+    sys.exit(1)
+
+
+# ── 2. .env file ───────────────────────────────────────────────────────────
+section("2. Environment Variables")
+required_env = ["MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"]
+for var in required_env:
+    val = os.getenv(var)
+    if val:
+        display = val if "PASSWORD" not in var else "***"
+        ok(f"{var} = {display}")
+    else:
+        fail(f"{var} is not set in .env")
+
+
+# ── 3. MySQL connection ────────────────────────────────────────────────────
+section("3. MySQL Connection")
+try:
+    import pymysql
+    conn = pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "localhost"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER"),
+        password=os.getenv("MYSQL_PASSWORD"),
+        database=os.getenv("MYSQL_DATABASE"),
+    )
+    ok(f"Connected to MySQL database '{os.getenv('MYSQL_DATABASE')}'")
+
+    with conn.cursor() as cur:
+        cur.execute("SHOW TABLES")
+        tables = cur.fetchall()
+        info(f"Tables found: {[t[0] for t in tables]}")
+
+    conn.close()
+except Exception as e:
+    fail(f"MySQL connection failed: {e}")
+    print("  Check your .env credentials.")
+
+
+# ── 4. Ollama ──────────────────────────────────────────────────────────────
+section("4. Ollama LLM Service")
+try:
+    import urllib.request
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    req = urllib.request.urlopen(f"{base_url}/api/tags", timeout=3)
+    data = json.loads(req.read())
+    models = [m["name"] for m in data.get("models", [])]
+    ok(f"Ollama is running at {base_url}")
+    info(f"Available models: {models}")
+
+    llm_model   = os.getenv("OLLAMA_LLM_MODEL", "llama3.1")
+    embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
+    if any(llm_model in m for m in models):
+        ok(f"LLM model '{llm_model}' is available")
+    else:
+        fail(f"LLM model '{llm_model}' not found — run: ollama pull {llm_model}")
+
+    if any(embed_model in m for m in models):
+        ok(f"Embed model '{embed_model}' is available")
+    else:
+        fail(f"Embed model '{embed_model}' not found — run: ollama pull {embed_model}")
+
+except Exception as e:
+    fail(f"Cannot reach Ollama: {e}")
+    print("  Make sure Ollama is installed and running.")
+    print("  Download: https://ollama.com/download")
+    print("  Then run: ollama serve")
+
+
+# ── 5. ChromaDB / Vector store ─────────────────────────────────────────────
+section("5. ChromaDB Vector Store")
+try:
+    import chromadb
+    persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+    coll_name   = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
+
+    client = chromadb.PersistentClient(path=persist_dir)
+    coll   = client.get_or_create_collection(coll_name)
+    count  = coll.count()
+    ok(f"ChromaDB accessible at: {persist_dir}")
+
+    if count > 0:
+        ok(f"{count} chunks already stored — ingestion done!")
+    else:
+        info("0 chunks stored — run: python scripts/ingest.py")
+
+except Exception as e:
+    fail(f"ChromaDB error: {e}")
+
+
+# ── Summary ────────────────────────────────────────────────────────────────
+section("Summary")
+print("  If all checks passed, run the system with:")
+print()
+print("    Step 1: python scripts/ingest.py")
+print("    Step 2: python backend/api.py")
+print("    Step 3: Open frontend/index.html in your browser")
+print()

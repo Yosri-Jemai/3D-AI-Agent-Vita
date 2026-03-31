@@ -9,5 +9,3 @@ python backend/main.py
 
 terminal 3 : 
 serve . --config serve.json
-
-
