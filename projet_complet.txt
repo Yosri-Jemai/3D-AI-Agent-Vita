@@ -6,6 +6,11 @@ MYSQL_USER=root
 MYSQL_PASSWORD=root
 MYSQL_DATABASE=vital_crm
 
+# ─── Token Factory ─────────────────────────────────
+TOKEN_FACTORY_API_KEY=sk-eba12363be2745e486aafc91d91652cc
+TOKEN_FACTORY_BASE_URL=https://tokenfactory.esprit.tn
+TOKEN_FACTORY_MODEL=hosted_vllm/Llama-3.1-70B-Instruct 
+
 # ─── Ollama ──────────────────────────────────────────────────
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_LLM_MODEL=llama3.1
@@ -144,6 +149,17 @@ A delegate just chose medical training mode.
 Introduce yourself warmly as Vita, explain briefly what you will help them with (product indications, composition, clinical use, medical terminology, what to say to doctors and pharmacists).
 End by asking them to select a product to get started.
 Be professional and warm. 3-4 sentences max. Respond in French."""
+# Commercial mode intro
+    elif mode == "vita_commercial":
+        prompt = """You are Vita, a pharmaceutical delegate from VITAL SA.
+    You are about to have a natural conversation with a doctor.
+
+    Start with a warm, brief introduction: state your name and role.
+    Then ask the doctor which product they would like to discuss today.
+    Be open-ended: the doctor can name a product, ask for a suggestion, or ask a general question.
+    Keep it to 2-3 sentences, warm and professional.
+
+    Respond in French initially, but be ready to switch to English or Arabic based on the doctor's language."""
     else:
         prompt = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
 A delegate just chose commercial training mode.
@@ -274,6 +290,7 @@ async def voice_ask(
     audio: UploadFile = File(...),
     language: str = Form(default=None),
     n_results: int = Form(default=10),
+    mode: str = Form(default="medical"),
 ):
     """
     Full voice pipeline:
@@ -294,7 +311,7 @@ async def voice_ask(
         raise HTTPException(status_code=400, detail="Could not transcribe audio")
 
     # Step 2: RAG
-    rag_result = engine.ask(question, n_results=n_results)
+    rag_result = engine.ask(question, n_results=n_results, mode=mode)
 
     return {
         "question": question,
@@ -308,6 +325,7 @@ async def voice_ask_stream(
     audio: UploadFile = File(...),
     language: str = Form(default=None),
     n_results: int = Form(default=10),
+    mode: str = Form(default="medical"),
 ):
     """
     Full voice pipeline with streamed answer.
@@ -331,7 +349,7 @@ async def voice_ask_stream(
         yield f"data: {json.dumps({'type': 'transcript', 'text': question, 'language': stt_result['language']})}\n\n"
 
         try:
-            for chunk in engine.stream_ask(question, n_results=n_results):
+            for chunk in engine.stream_ask(question, n_results=n_results, mode=mode):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
@@ -541,19 +559,21 @@ Given a user question:
   1. Embeds the question using Ollama
   2. Searches ChromaDB for the most relevant product chunks
   3. Builds a prompt with context + question
-  4. Streams the answer from the LLM
+  4. Streams the answer from the LLM (Token Factory API)
 """
 
 import os
 from dotenv import load_dotenv
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_ollama import OllamaEmbeddings
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 import chromadb
 
 load_dotenv()
 
 
 # ── Greeting prompt — sent on first load, no product context needed ───────────
-GREETING_PROMPT = """You are Dr. Layla, a professional training assistant for a pharmaceutical company.
+GREETING_PROMPT = """You are Vita, a professional training assistant for a pharmaceutical company.
 
 A delegate has just opened the training platform. Greet them warmly and ask them which training mode they want:
 
@@ -566,8 +586,6 @@ Do NOT mention any products yet. Just greet and ask for the training mode."""
 
 
 # ── Medical delegate prompt ────────────────────────────────────────────────────
-# Dans engine.py, modifie MEDICAL_PROMPT :
-
 MEDICAL_PROMPT = """Tu es Dr. Layla, une experte en formation produits médicaux.
 Tu formes un DÉLÉGUÉ MÉDICAL qui présente des produits aux médecins et pharmaciens.
 
@@ -592,7 +610,7 @@ Réponse de formation :"""
 
 
 # ── Commercial delegate prompt ─────────────────────────────────────────────────
-COMMERCIAL_PROMPT = """You are Dr. Layla, a pharmaceutical sales training coach for a pharmaceutical company.
+COMMERCIAL_PROMPT = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
 You are training a COMMERCIAL delegate — someone who sells products to pharmacies, clinics and healthcare buyers.
 
 Your role:
@@ -619,9 +637,79 @@ Delegate question: {question}
 Sales training response (be motivating, practical, suggest objection handling at the end):"""
 
 
+# ── Vita Commercial prompt — Vita acts as delegate, user is the doctor ─────────
+VITA_COMMERCIAL_PROMPT = """You are Vita, a pharmaceutical delegate from VITAL SA.
+Your role is to conduct a natural, flowing medical visit with a doctor (the user). Follow the VITAL framework flexibly, not rigidly.
+
+CRITICAL LANGUAGE RULE: 
+- Detect the language of the doctor's input (French, English, or Arabic)
+- Respond ONLY in that exact language throughout the entire conversation
+- If the doctor switches language mid-conversation, you MUST switch to that new language immediately
+- Never mix languages in a single response
+- Do not explain which language you're using – just respond in that language
+
+ADAPTIVE BEHAVIOR:
+- If the doctor directly asks for a specific product by name (e.g., "Tell me about LV PSOCALM"), provide the information immediately: 2-3 key benefits, evidence, and practical usage.
+- If the doctor expresses a need or condition (e.g., "I need a supplement for vitamin A", "What do you have for anxiety?"), suggest the most relevant product(s) from your knowledge or the context. Give its key benefits, how it works, and practical usage. Then optionally ask a short follow-up question to engage further.
+- Only use Sondage (discovery questions) when the doctor's request is very vague or you truly lack enough information to make a recommendation.
+
+THE VITAL FRAMEWORK (use flexibly, repeat as needed):
+
+1. INTRODUCTION (Instant Zero)
+   - Start with a warm greeting, state who you are, ask for permission
+   - Be brief and respectful of time
+
+2. SONDAGE (Discovery & Understanding)
+   - Ask open questions to understand the doctor's needs, practice, patient profiles
+   - Listen actively and adapt based on their answers
+   - You may return to this at any time if you need more context
+
+3. SYNTHÈSE (Reformulation)
+   - Periodically summarize what you've understood to ensure alignment
+   - Show that you're listening and value their input
+
+4. ARGUMENTATION (Benefits & Evidence)
+   - Present product benefits linked to the doctor's expressed needs
+   - Provide evidence (studies, data, clinical experience) naturally
+   - You may give multiple arguments over several exchanges
+   - Focus on patient outcomes and practical value
+
+5. OBJECTIONS (A-C-R-V)
+   - When objections arise, handle them immediately:
+        * Accueillir / Acknowledge with empathy
+        * Clarifier / Clarify to understand the real concern
+        * Répondre / Respond with facts + evidence
+        * Valider / Validate that the objection is resolved
+   - You may handle several objections throughout the conversation
+   - Never ignore or dismiss concerns
+
+6. CONCLUSION & ENGAGEMENT
+   - When the conversation reaches a natural closing point, propose a micro-commitment
+   - Look for signals: detailed questions, resolved objections, interest in samples, request for follow-up
+   - Keep it light and professional
+
+CONVERSATION STYLE:
+- Be warm, professional, and empathetic
+- Read the doctor's tone and adapt (busy → be brief; engaged → go deeper)
+- Use natural transitions, not scripts
+- Let the conversation flow organically
+- You are a trusted partner, not a salesperson
+
+If information is missing from the context database, say you don't have all the details and the department will come back to them.
+
+Context from product database:
+{context}
+
+Doctor's input: {question}
+
+Your response (as Vita) – have a natural conversation. Follow the VITAL framework flexibly. Respond in the EXACT SAME LANGUAGE as the doctor. Keep it warm, professional, and adaptive."""
+
+
 def get_prompt(mode: str) -> str:
     if mode == "commercial":
         return COMMERCIAL_PROMPT
+    elif mode == "vita_commercial":
+        return VITA_COMMERCIAL_PROMPT
     return MEDICAL_PROMPT
 
 
@@ -640,17 +728,19 @@ class RAGEngine:
 
         base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-        llm_model   = os.getenv("OLLAMA_LLM_MODEL", "llama3.1")
         persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
         coll_name   = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
 
+        # Embeddings restent sur Ollama (local)
         self.embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
 
-        self.llm = OllamaLLM(
-            model=llm_model,
-            base_url=base_url,
-            temperature=0.1,      # Low temperature = more factual, less creative
-            num_predict=400,     # Max tokens in the answer
+        # LLM → Token Factory API (compatible OpenAI)
+        self.llm = ChatOpenAI(
+            model=os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct"),
+            openai_api_key=os.getenv("TOKEN_FACTORY_API_KEY"),
+            openai_api_base=os.getenv("TOKEN_FACTORY_BASE_URL") + "/api",
+            temperature=0.1,
+            max_tokens=400,
         )
 
         client = chromadb.PersistentClient(path=persist_dir)
@@ -661,10 +751,13 @@ class RAGEngine:
 
         self._initialized = True
 
+    # ── Recherche sémantique + keyword ────────────────────────────────────────
     def search(self, question: str, n_results: int = 10) -> list[dict]:
         self.initialize()
 
-        # 1. Semantic search (meaning-based)
+        import re
+
+        # 1. Semantic search
         question_vector = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=[question_vector],
@@ -680,51 +773,40 @@ class RAGEngine:
             results["metadatas"][0],
             results["distances"][0],
         ):
-            hits.append(
-                {
-                    "text": doc,
-                    "product_name": meta.get("product_name", "Unknown"),
-                    "source_table": meta.get("source_table", ""),
-                    "relevance": round(1 - dist, 3),
-                }
-            )
+            hits.append({
+                "text": doc,
+                "product_name": meta.get("product_name", "Unknown"),
+                "source_table": meta.get("source_table", ""),
+                "relevance": round(1 - dist, 3),
+            })
             seen_ids.add(meta.get("source_id", ""))
 
-        # 2. Special case: question about gammes/catalogues → force-inject catalogue chunks
-        import re
-
+        # 2. Force-inject catalogue chunks for gamme queries
         catalogue_keywords = [
-            "gamme",
-            "gammes",
-            "catalogue",
-            "catalogues",
-            "liste",
-            "laboratoire",
-            "portfolio",
-            "offre",
+            "gamme", "gammes", "catalogue", "catalogues",
+            "liste", "laboratoire", "portfolio", "offre",
         ]
         question_lower = question.lower()
         is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
 
         if is_catalogue_query:
             cat_docs = self.collection.get(
-                include=["documents", "metadatas"], where={"source_table": "catalogues"}
+                include=["documents", "metadatas"],
+                where={"source_table": "catalogues"},
             )
             for doc, meta in zip(cat_docs["documents"], cat_docs["metadatas"]):
                 source_id = meta.get("source_id", "")
                 if source_id in seen_ids:
                     continue
-                hits.append(
-                    {
-                        "text": doc,
-                        "product_name": meta.get("product_name", "Unknown"),
-                        "source_table": "catalogues",
-                        "relevance": 0.98,
-                    }
-                )
+                hits.append({
+                    "text": doc,
+                    "product_name": meta.get("product_name", "Unknown"),
+                    "source_table": "catalogues",
+                    "relevance": 0.98,
+                })
                 seen_ids.add(source_id)
 
-        # 3. Keyword search — match product name against question words
+        # 3. Keyword search on product names
         words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
@@ -734,134 +816,150 @@ class RAGEngine:
                 if source_id in seen_ids:
                     continue
                 if any(w.lower() in product_name for w in words):
-                    hits.append(
-                        {
-                            "text": doc,
-                            "product_name": meta.get("product_name", "Unknown"),
-                            "source_table": meta.get("source_table", ""),
-                            "relevance": 0.99,
-                        }
-                    )
+                    hits.append({
+                        "text": doc,
+                        "product_name": meta.get("product_name", "Unknown"),
+                        "source_table": meta.get("source_table", ""),
+                        "relevance": 0.99,
+                    })
                     seen_ids.add(source_id)
 
         hits.sort(key=lambda x: x["relevance"], reverse=True)
         return hits[:n_results]
 
+    # ── Recherche spécifique gammes/catalogues ────────────────────────────────
+    def search_gammes(self, question: str, n_results: int = 10) -> list[dict]:
+        """Recherche spécifique pour les gammes/catalogues."""
+        self.initialize()
 
+        all_docs = self.collection.get(
+            where={"source_table": "catalogues"},
+            include=["documents", "metadatas"],
+        )
+
+        gammes_dict = {}
+        for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
+            gamme = meta.get("product_name", "")
+            if gamme not in gammes_dict:
+                gammes_dict[gamme] = {
+                    "text": doc,
+                    "product_name": gamme,
+                    "source_table": "catalogues",
+                    "relevance": 0.99,
+                }
+
+        return list(gammes_dict.values())[:n_results]
+
+    # ── Ask (non-streaming) ───────────────────────────────────────────────────
     def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
         self.initialize()
-    
-        # Détection des questions sur les gammes
+
         question_lower = question.lower()
         is_gamme_question = any(word in question_lower for word in [
-            "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
-            "quelles gammes", "quels catalogues", "offres", "offert"
+            "gamme", "gammes", "catalogue", "catalogues", "liste des gammes",
+            "quelles gammes", "quels catalogues", "offres", "offert",
         ])
-    
+
         if is_gamme_question:
-            # Utilise la recherche spéciale pour les gammes
             hits = self.search_gammes(question, n_results=n_results)
-        
+
             if hits:
-                # Construit la liste des gammes
                 gammes_list = []
                 for hit in hits:
                     if hit["product_name"] and hit["product_name"] not in gammes_list:
                         gammes_list.append(hit["product_name"])
-            
-                # 🔍 Détecter si on demande une gamme spécifique
+
+                # Cas 1 : gamme spécifique demandée
                 specific_gamme = None
                 for gamme_name in gammes_list:
                     if gamme_name.lower() in question_lower:
                         specific_gamme = gamme_name
                         break
-            
-                # 🎯 Cas 1: L'utilisateur demande une gamme spécifique
+
                 if specific_gamme:
-                    # Récupérer tous les chunks de cette gamme spécifique
                     gamme_chunks = self.collection.get(
                         where={
                             "source_table": "catalogues",
-                            "product_name": specific_gamme
+                            "product_name": specific_gamme,
                         },
-                        include=["documents", "metadatas"]
+                        include=["documents", "metadatas"],
                     )
-                
-                    # Extraire les infos produits de cette gamme
                     produits_text = ""
                     for doc, meta in zip(gamme_chunks["documents"], gamme_chunks["metadatas"]):
-                       produits_text += doc + "\n\n"
-                    
+                        produits_text += doc + "\n\n"
+
                     prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
-    Le délégué te demande des informations sur la gamme {specific_gamme}.
+Le délégué te demande des informations sur la gamme {specific_gamme}.
 
-    La gamme {specific_gamme} comprend les produits suivants :
-    {produits_text[:2000]}  # Limite pour éviter de dépasser la taille du contexte
+La gamme {specific_gamme} comprend les produits suivants :
+{produits_text[:2000]}
 
-    IMPORTANT : 
-    - Ne parle que de la gamme {specific_gamme}
-    - Ne mentionne aucun autre produit ou gamme
-    - Donne une description claire de ce que propose cette gamme
-    - Liste les produits principaux qu'elle contient
-    - Réponds dans la même langue que la question
+IMPORTANT :
+- Ne parle que de la gamme {specific_gamme}
+- Ne mentionne aucun autre produit ou gamme
+- Donne une description claire de ce que propose cette gamme
+- Liste les produits principaux qu'elle contient
+- Réponds dans la même langue que la question
 
-    Réponse :"""
-                
-                    answer = self.llm.invoke(prompt)
+Réponse :"""
+
+                    answer = self.llm.invoke([HumanMessage(content=prompt)]).content
                     sources = [{"name": specific_gamme, "relevance": 0.99}]
                     return {"answer": answer.strip(), "sources": sources, "chunks_used": len(gamme_chunks["documents"])}
-            
-                # 📋 Cas 2: L'utilisateur demande la liste de TOUTES les gammes
+
+                # Cas 2 : liste de toutes les gammes
                 else:
                     gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
                     context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
-                
+
                     prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
-    Le délégué te demande la liste des gammes offertes par le laboratoire.
+Le délégué te demande la liste des gammes offertes par le laboratoire.
 
-    {context}
+{context}
 
-    IMPORTANT : 
-    - Donne uniquement la liste des gammes
-    - Ne parle d'aucun produit spécifique
-    - Réponds dans la même langue que la question
-    - Termine en demandant s'il souhaite des détails sur une gamme spécifique
+IMPORTANT :
+- Donne uniquement la liste des gammes
+- Ne parle d'aucun produit spécifique
+- Réponds dans la même langue que la question
+- Termine en demandant s'il souhaite des détails sur une gamme spécifique
+- Sois précis : il y a {len(gammes_list)} gammes au total.
 
-    Réponse :"""
-                
-                    answer = self.llm.invoke(prompt)
+Réponse :"""
+
+                    answer = self.llm.invoke([HumanMessage(content=prompt)]).content
                     sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
                     return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
-    
-        # Sinon, recherche normale (produits, etc.)
+
+        # Recherche normale
         hits = self.search(question, n_results=n_results)
-        
+
         if not hits:
             return {
                 "answer": "Je n'ai pas trouvé d'information pertinente.",
                 "sources": [],
                 "chunks_used": 0,
             }
-    
+
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
         prompt  = get_prompt(mode).format(context=context, question=question)
-        answer  = self.llm.invoke(prompt)
-    
+        answer  = self.llm.invoke([HumanMessage(content=prompt)]).content
+
         seen, sources = set(), []
         for hit in hits:
             if hit["product_name"] not in seen:
                 seen.add(hit["product_name"])
                 sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
-    
+
         return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 
+    # ── Ask streaming ─────────────────────────────────────────────────────────
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
         self.initialize()
         hits = self.search(question, n_results=n_results)
 
         if not hits:
-            yield {"type": "token", "content": "I couldn't find relevant product information."}
+            yield {"type": "token", "content": "Je n'ai pas trouvé d'information pertinente."}
             yield {"type": "sources", "sources": []}
             return
 
@@ -869,12 +967,12 @@ class RAGEngine:
         context = "\n\n---\n\n".join(context_parts)
         prompt  = get_prompt(mode).format(context=context, question=question)
 
-        for token in self.llm.stream(prompt):
-            yield {"type": "token", "content": token}
+        for chunk in self.llm.stream([HumanMessage(content=prompt)]):
+            token = chunk.content
+            if token:
+                yield {"type": "token", "content": token}
 
-        # Send sources at the end
-        seen    = set()
-        sources = []
+        seen, sources = set(), []
         for hit in hits:
             name = hit["product_name"]
             if name not in seen:
@@ -883,124 +981,38 @@ class RAGEngine:
 
         yield {"type": "sources", "sources": sources}
 
+    # ── Stats ─────────────────────────────────────────────────────────────────
     def get_stats(self) -> dict:
         self.initialize()
         count = self.collection.count()
         return {
-            "total_chunks":   count,
-            "collection":     os.getenv("CHROMA_COLLECTION_NAME", "medical_products"),
-            "llm_model":      os.getenv("OLLAMA_LLM_MODEL", "llama3.1"),
-            "embed_model":    os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
-            "ready":          count > 0,
+            "total_chunks": count,
+            "collection":   os.getenv("CHROMA_COLLECTION_NAME", "medical_products"),
+            "llm_model":    os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct"),
+            "embed_model":  os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+            "ready":        count > 0,
         }
 
+    # ── Greeting (non-streaming) ──────────────────────────────────────────────
     def greeting(self) -> str:
         """Generate opening greeting asking which training mode the delegate wants."""
         self.initialize()
-        return self.llm.invoke(GREETING_PROMPT).strip()
+        return self.llm.invoke([HumanMessage(content=GREETING_PROMPT)]).content.strip()
 
+    # ── Greeting streaming ────────────────────────────────────────────────────
     def stream_greeting(self):
         """Stream the opening greeting token by token."""
         self.initialize()
-        for token in self.llm.stream(GREETING_PROMPT):
-            yield {"type": "token", "content": token}
+        for chunk in self.llm.stream([HumanMessage(content=GREETING_PROMPT)]):
+            token = chunk.content
+            if token:
+                yield {"type": "token", "content": token}
         yield {"type": "done"}
 
 
-# Shared engine instance
+# ── Shared engine instance ────────────────────────────────────────────────────
 engine = RAGEngine()
 
-
-# Dans engine.py, après la classe RAGEngine, ajoute cette méthode :
-
-def search_gammes(self, question: str, n_results: int = 10) -> list[dict]:
-    """Recherche spécifique pour les gammes/catalogues."""
-    self.initialize()
-    
-    # 1. Récupère TOUS les chunks de la table catalogues
-    all_docs = self.collection.get(
-        where={"source_table": "catalogues"},
-        include=["documents", "metadatas"]
-    )
-    
-    # 2. Groupe par gamme pour éviter les doublons
-    gammes_dict = {}
-    for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
-        gamme = meta.get("product_name", "")
-        if gamme not in gammes_dict:
-            gammes_dict[gamme] = {
-                "text": doc,
-                "product_name": gamme,
-                "source_table": "catalogues",
-                "relevance": 0.99
-            }
-    
-    hits = list(gammes_dict.values())
-    return hits[:n_results]
-def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
-    self.initialize()
-    
-    # Détection des questions sur les gammes
-    question_lower = question.lower()
-    is_gamme_question = any(word in question_lower for word in [
-        "gamme", "gammes", "catalogue", "catalogues", "liste des gammes", 
-        "quelles gammes", "quels catalogues", "offres", "offert"
-    ])
-    
-    if is_gamme_question:
-        # Utilise la recherche spéciale pour les gammes
-        hits = self.search_gammes(question, n_results=n_results)
-        
-        if hits:
-            # Construit une réponse spéciale pour les gammes
-            gammes_list = []
-            for hit in hits:
-                if hit["product_name"] and hit["product_name"] not in gammes_list:
-                    gammes_list.append(hit["product_name"])
-            
-            # Crée un prompt spécifique pour les gammes
-            gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
-            context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
-            
-            prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
-Le délégué te demande la liste des gammes offertes par le laboratoire.
-
-{context}
-
-Réponds de manière claire et structurée en listant toutes les gammes.
-Termine en demandant s'il souhaite des détails sur une gamme spécifique.
-Réponds dans la même langue que la question.
-Sois précis : il y a {len(gammes_list)} gammes au total.
-
-Réponse :"""
-            
-            answer = self.llm.invoke(prompt)
-            
-            sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
-            return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
-    
-    # Sinon, recherche normale
-    hits = self.search(question, n_results=n_results)
-    
-    if not hits:
-        return {
-            "answer": "Je n'ai pas trouvé d'information pertinente.",
-            "sources": [],
-            "chunks_used": 0,
-        }
-    
-    context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
-    context = "\n\n---\n\n".join(context_parts)
-    prompt  = get_prompt(mode).format(context=context, question=question)
-    answer  = self.llm.invoke(prompt)
-    
-    seen, sources = set(), []
-    for hit in hits:
-        if hit["product_name"] not in seen:
-            seen.add(hit["product_name"])
-            sources.append({"name": hit["product_name"], "relevance": hit["relevance"]})
-    
-    return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 === ./backend/rag/ingest.py ===
 """
 ingest.py
@@ -1603,7 +1615,130 @@ def synthesize(text: str, lang: str = "auto") -> dict:
 === ./backend/__init__.py ===
 # backend package
 === ./docker-compose.yml ===
-=== ./frontend/css/style.css ===
+=== ./frontend/commercial.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>VITAL Commercial – Vita</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="css/style.css"/>
+<style>
+:root {
+  --accent: #c084fc;
+}
+.avatar-sm.ai {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+}
+.send-btn {
+  background: var(--accent);
+}
+.send-btn:hover:not(:disabled) {
+  background: #a855f7;
+}
+.product-badge, .product-context-bar, .quick-chips, .mode-badge {
+  display: none !important;
+}
+</style>
+</head>
+<body>
+<div class="bg-orbs">
+  <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+</div>
+
+<div class="app">
+  <aside class="avatar-panel">
+    <div class="avatar-scene">
+      <div class="speak-ring r1"></div>
+      <div class="speak-ring r2"></div>
+      <div class="speak-ring r3"></div>
+      <div class="avatar-glow"></div>
+      <div id="avatarDiv"></div>
+      <div id="avatar-loading">
+        <div class="spin"></div>
+        <span>Loading avatar…</span>
+      </div>
+    </div>
+    <div class="agent-info">
+      <div class="agent-name">Vita</div>
+      <div class="agent-role">Pharmaceutical Delegate</div>
+      <div class="agent-status">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">Loading…</span>
+      </div>
+    </div>
+    <div class="voice-controls">
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V20h3v2H8v-2h3v-2.08A7 7 0 0 1 5 11z"/></svg>
+        <span id="mic-label">Hold to speak</span>
+      </button>
+      <div class="waveform" id="waveform">
+        <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+        <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+      </div>
+      <div class="stats-mini">
+        <span>Products</span><span id="chunk-count">—</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="chat-panel">
+    <div class="chat-header">
+      <div class="header-left">
+        <h1>VITAL Commercial Visit</h1>
+        <p>You are the doctor. Vita is your delegate.</p>
+      </div>
+      <div class="header-right">
+        <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Report
+        </button>
+      </div>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="empty-state">
+        <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+          <rect width="44" height="44" rx="12" fill="rgba(192,132,252,0.08)" stroke="rgba(192,132,252,0.2)" stroke-width="1"/>
+          <path d="M22 12a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 10c4.42 0 8 1.79 8 4v2H14v-2c0-2.21 3.58-4 8-4z" fill="#c084fc" opacity="0.7"/>
+        </svg>
+        <h2>Bonjour Docteur</h2>
+        <p>Cliquez pour commencer la visite avec Vita.</p>
+        <button class="pick-product-cta" onclick="startVisit()">Commencer la visite →</button>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="question-input" rows="1"
+          placeholder="Type your question or objection as the doctor..."
+          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendQuestion()">
+          <svg viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="10" y1="16" x2="10" y2="4"/><polyline points="5,9 10,4 15,9"/>
+          </svg>
+        </button>
+      </div>
+      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
+    </div>
+  </main>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":         "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="js/avatar.js"></script>
+<script type="module" src="js/commercial.js"></script>
+</body>
+</html>=== ./frontend/css/style.css ===
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -2129,7 +2264,571 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
     }
   };
 
-=== ./frontend/js/main.js ===
+=== ./frontend/js/commercial.js ===
+const API = 'http://localhost:8000';
+window._API = API;
+
+let isLoading = false;
+let isRecording = false;
+let mediaRecorder = null;
+let audioChunks = [];
+
+const MODE = 'vita_commercial';
+let visitStarted = false;
+
+// ── Init ──────────────────────────────────────────────────────
+async function init() {
+  setStatus('loading', 'Loading avatar…');
+
+  await new Promise(resolve => {
+    const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
+    setTimeout(() => { clearInterval(t); resolve(); }, 5000);
+  });
+
+  try {
+    const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
+    const d = await res.json();
+    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? '—';
+  } catch {
+    document.getElementById('chunk-count').textContent = 'offline';
+  }
+
+  await window.initAvatar();
+  // No auto‑start – wait for user to click the button
+}
+
+function setStatus(state, text) {
+  document.getElementById('status-dot').className = 'status-dot ' + state;
+  document.getElementById('status-text').textContent = text;
+  const scene = document.querySelector('.avatar-scene');
+  state === 'speaking' ? scene.classList.add('speaking') : scene.classList.remove('speaking');
+}
+window.setStatus = setStatus;
+
+// ── Start Visit (called by button) ──────────────────────────
+window.startVisit = async function() {
+  if (visitStarted) return;
+  visitStarted = true;
+
+  // Resume audio context (user gesture)
+  if (window._head?.audioCtx?.state !== 'running') {
+    await window._head.audioCtx.resume();
+  }
+
+  // Enable mic button
+  const micBtn = document.getElementById('mic-btn');
+  if (micBtn) micBtn.disabled = false;
+
+  await loadGreeting();
+};
+
+// ── Load and speak greeting ──────────────────────────────────
+async function loadGreeting() {
+  hideEmpty();
+  addTyping();
+  setStatus('speaking', 'Greeting…');
+
+  try {
+    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, {
+      signal: AbortSignal.timeout(60000)
+    });
+    if (!res.ok) throw new Error();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let msgEl = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch { continue; }
+        if (data.type === 'token') {
+          if (!msgEl) {
+            removeTyping();
+            msgEl = addAIBubble(null);
+          }
+          fullText += data.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = fullText;
+          scrollBottom();
+        } else if (data.type === 'done') break;
+      }
+    }
+
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(fullText, []);
+
+    if (fullText) {
+      setStatus('speaking', 'Speaking…');
+      await window.speakWithAvatar(fullText);
+    }
+    setStatus('', 'Ready');
+  } catch (err) {
+    console.error('Error loading greeting:', err);
+    removeTyping();
+    const fallback = "Bonjour Docteur, je suis Vita de VITAL SA. Je suis votre déléguée pharmaceutique. Je suis prête à discuter de nos produits avec vous. Quel produit souhaitez-vous aborder aujourd'hui ?";
+    addAIBubble(null);
+    const textSpan = document.getElementById('streaming-text');
+    if (textSpan) textSpan.textContent = fallback;
+    finalizeBubble(fallback, []);
+    await window.speakWithAvatar(fallback);
+    setStatus('', 'Ready');
+  }
+}
+
+// ── Send Question (doctor input) ────────────────────────────
+window.sendQuestion = async function() {
+  if (!visitStarted) {
+    await window.startVisit(); // ensure visit started before sending
+  }
+
+  const input = document.getElementById('question-input');
+  const userText = input.value.trim();
+  if (!userText || isLoading) return;
+
+  isLoading = true;
+  setSend(true);
+  input.value = '';
+  input.style.height = 'auto';
+
+  addUserMsg(userText);
+  addTyping();
+  setStatus('thinking', 'Thinking…');
+
+  try {
+    const res = await fetch(`${API}/chat/ask/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+    });
+    if (!res.ok) throw new Error();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let sources = [];
+    let msgEl = null;
+    setStatus('speaking', 'Responding…');
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch { continue; }
+        if (data.type === 'token') {
+          if (!msgEl) {
+            removeTyping();
+            msgEl = addAIBubble(null);
+          }
+          fullText += data.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = fullText;
+          scrollBottom();
+        } else if (data.type === 'sources') {
+          sources = data.sources;
+        }
+      }
+    }
+
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(fullText, sources);
+
+    if (fullText) {
+      await window.speakWithAvatar(fullText);
+    }
+    setStatus('', 'Ready');
+  } catch {
+    removeTyping();
+    showError('Cannot reach the API. Run: python backend/main.py');
+    setStatus('', 'Ready');
+  } finally {
+    isLoading = false;
+    setSend(false);
+    document.getElementById('question-input').focus();
+  }
+};
+
+// ── Voice ─────────────────────────────────────────────────────
+window.toggleMic = async function() {
+  if (!visitStarted) {
+    await window.startVisit(); // ensure audio enabled
+  }
+  isRecording ? stopRecording() : startRecording();
+};
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = sendAudio;
+    mediaRecorder.start();
+    isRecording = true;
+    document.getElementById('mic-btn').classList.add('recording');
+    document.getElementById('mic-label').textContent = 'Recording… click to stop';
+    document.getElementById('waveform').classList.add('recording-active');
+    setStatus('listening', 'Listening…');
+    if (window._avatarReady && window._head?.audioCtx?.state !== 'running') {
+      await window._head.audioCtx.resume();
+    }
+  } catch {
+    showError('Microphone access denied.');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    isRecording = false;
+    document.getElementById('mic-btn').classList.remove('recording');
+    document.getElementById('mic-label').textContent = 'Hold to speak';
+    document.getElementById('waveform').classList.remove('recording-active');
+    setStatus('thinking', 'Processing…');
+  }
+}
+
+async function sendAudio() {
+  if (!audioChunks.length) return;
+  console.log("Sending audio...");
+  isLoading = true;
+  setSend(true);
+  addTyping();
+  const blob = new Blob(audioChunks, { type: 'audio/webm' });
+  const form = new FormData();
+  form.append('audio', blob, 'rec.webm');
+  form.append('mode', MODE);
+
+  try {
+    const res = await fetch(`${API}/voice/ask/stream`, { method: 'POST', body: form });
+    console.log("Voice response status:", res.status);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let sources = [];
+    let msgEl = null;
+    let transcript = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch (e) {
+          console.warn("Failed to parse SSE data:", line, e);
+          continue;
+        }
+        if (data.type === 'transcript') {
+          transcript = data.text;
+          addUserMsg(`🎤 ${transcript}`, true);
+          removeTyping();
+          addTyping();
+        } else if (data.type === 'token') {
+          if (!msgEl) {
+            removeTyping();
+            msgEl = addAIBubble(null);
+          }
+          fullText += data.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = fullText;
+          scrollBottom();
+        } else if (data.type === 'sources') {
+          sources = data.sources;
+        } else if (data.type === 'error') {
+          console.error("Backend error:", data.content);
+        }
+      }
+    }
+
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(fullText, sources);
+    if (fullText) {
+      await window.speakWithAvatar(fullText);
+    }
+    setStatus('', 'Ready');
+  } catch (err) {
+    console.error("Voice processing error:", err);
+    removeTyping();
+    showError('Voice processing failed.');
+    setStatus('', 'Ready');
+  } finally {
+    isLoading = false;
+    setSend(false);
+  }
+}
+
+// ── Message UI Helpers (identical to main.js) ────────────────
+function hideEmpty() { document.getElementById('empty-state')?.remove(); }
+function addSystemMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'system-msg';
+  el.innerHTML = `<span>${esc(text)}</span>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+function addUserMsg(text, isVoice) {
+  hideEmpty();
+  logUser(text, isVoice);
+  const el = document.createElement('div');
+  el.className = 'message user';
+  const msgId = 'msg-' + Date.now();
+  el.id = msgId;
+  el.innerHTML = `<div class="edit-wrap">
+    <div class="bubble" data-text="${esc(text)}">${esc(text)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>
+  </div><div class="avatar-sm user">You</div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  return msgId;
+}
+function addTyping() {
+  const el = document.createElement('div');
+  el.className = 'message ai';
+  el.id = 'typing-indicator';
+  el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+function removeTyping() {
+  const t = document.getElementById('typing-indicator');
+  if (t) t.remove();
+}
+function addAIBubble(transcriptText) {
+  removeTyping();
+  const el = document.createElement('div');
+  el.className = 'message ai';
+  const tb = transcriptText ? `<div class="transcript-badge">Heard: "${esc(transcriptText)}"</div>` : '';
+  el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  return el;
+}
+function finalizeBubble(fullText, sources) {
+  logAI(fullText, sources);
+  const textEl = document.getElementById('streaming-text');
+  if (textEl) {
+    const html = fullText.split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    textEl.outerHTML = html || '<p></p>';
+  }
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble && sources?.length) {
+    bubble.removeAttribute('id');
+    const tags = sources.map(s => `<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance * 100)}%</span></span>`).join('');
+    bubble.insertAdjacentHTML('beforeend', `<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+  }
+  scrollBottom();
+}
+
+// ── Edit & Resend (copied from main.js) ──────────────────────
+window.startEdit = function(msgId, btn) {
+  const msgEl = document.getElementById(msgId);
+  const wrap = msgEl.querySelector('.edit-wrap');
+  const originalText = msgEl.querySelector('.bubble').getAttribute('data-text') || msgEl.querySelector('.bubble').textContent;
+  wrap.innerHTML = `<textarea class="edit-textarea" id="edit-input-${msgId}" rows="2">${originalText}</textarea>
+    <div class="edit-actions">
+      <button class="edit-cancel" onclick="cancelEdit('${msgId}','${esc(originalText)}')">Cancel</button>
+      <button class="edit-save"   onclick="saveEdit('${msgId}')">Send</button>
+    </div>`;
+  const ta = document.getElementById(`edit-input-${msgId}`);
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msgId); }
+    if (e.key === 'Escape') cancelEdit(msgId, originalText);
+  });
+};
+window.cancelEdit = function(msgId, originalText) {
+  const wrap = document.getElementById(msgId).querySelector('.edit-wrap');
+  wrap.innerHTML = `<div class="bubble" data-text="${esc(originalText)}">${esc(originalText)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
+};
+window.saveEdit = function(msgId) {
+  const ta = document.getElementById(`edit-input-${msgId}`);
+  const newText = ta.value.trim();
+  if (!newText) return;
+  const wrap = document.getElementById(msgId).querySelector('.edit-wrap');
+  wrap.innerHTML = `<div class="bubble" data-text="${esc(newText)}">${esc(newText)}</div>
+    <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
+  let next = document.getElementById(msgId).nextElementSibling;
+  while (next) { const rm = next; next = next.nextElementSibling; rm.remove(); }
+  resendQuestion(newText);
+};
+
+async function resendQuestion(userText) {
+  if (!visitStarted) await window.startVisit();
+  isLoading = true;
+  setSend(true);
+  addTyping();
+  setStatus('thinking', 'Thinking…');
+  try {
+    const res = await fetch(`${API}/chat/ask/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+    });
+    if (!res.ok) throw new Error();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', full = '', sources = [], msgEl = null;
+    setStatus('speaking', 'Responding…');
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let c;
+        try { c = JSON.parse(line.slice(6)); } catch { continue; }
+        if (c.type === 'token') {
+          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
+          full += c.content;
+          const textSpan = document.getElementById('streaming-text');
+          if (textSpan) textSpan.textContent = full;
+          scrollBottom();
+        } else if (c.type === 'sources') sources = c.sources;
+      }
+    }
+    if (!msgEl) msgEl = addAIBubble(null);
+    finalizeBubble(full, sources);
+    if (full) { await window.speakWithAvatar(full); }
+    setStatus('', 'Ready');
+  } catch {
+    removeTyping();
+    showError('Cannot reach the API.');
+    setStatus('', 'Ready');
+  } finally {
+    isLoading = false;
+    setSend(false);
+  }
+}
+
+// ── Log + Report (copied from main.js, adapted to commercial) ──
+const conversationLog = [];
+function logUser(text, isVoice) {
+  conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
+  document.getElementById('report-btn').disabled = false;
+}
+function logAI(text, sources) {
+  conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() });
+}
+window.openReport = function() {
+  if (!conversationLog.length) return;
+  buildReportContent();
+  document.getElementById('report-overlay').classList.add('open');
+};
+window.closeReport = function() {
+  document.getElementById('report-overlay').classList.remove('open');
+};
+window.closeReportOnBg = function(e) {
+  if (e.target === document.getElementById('report-overlay')) closeReport();
+};
+function buildReportContent() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const products = [...new Set(conversationLog.flatMap(e => (e.sources || []).map(s => s.name)))].filter(Boolean);
+  const userCount = conversationLog.filter(e => e.role === 'user').length;
+  const aiCount = conversationLog.filter(e => e.role === 'ai').length;
+  const exchangesHtml = conversationLog.map(entry => {
+    if (entry.role === 'user') {
+      return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
+    } else {
+      const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
+      return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
+    }
+  }).join('');
+  const prodHtml = products.length ? `<div class="r-section-title">Products discussed</div><div class="r-products">${products.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('')}</div>` : '';
+  document.getElementById('report-content').innerHTML = `
+    <div class="r-header">
+      <div class="r-logo">VITAL Commercial Visit</div>
+      <div class="r-subtitle">Session with Vita — Delegate</div>
+      <div class="r-meta">
+        <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
+        <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
+        <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
+      </div>
+    </div>
+    ${prodHtml}
+    <div class="r-section-title">Full conversation</div>
+    ${exchangesHtml}
+    <div class="r-footer"><span>Generated by VitalAgent · VITAL SA</span><span>${dateStr}</span></div>`;
+}
+window.downloadReport = function() {
+  const content = document.getElementById('report-content');
+  if (!content) return;
+  const now = new Date();
+  const win = window.open('', '_blank', 'width=800,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>vital-commercial-${now.toISOString().slice(0,10)}.pdf</title>
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Georgia,serif;color:#111;background:#fff}
+    #report-content{padding:32px 40px;font-size:13px;line-height:1.7}
+    .r-header{border-bottom:2px solid #c084fc;padding-bottom:18px;margin-bottom:24px}
+    .r-logo{font-size:26px;color:#c084fc}.r-subtitle{font-size:11px;color:#6b7280;margin-top:3px;font-family:system-ui}
+    .r-meta{display:flex;gap:20px;margin-top:14px;flex-wrap:wrap}.r-meta-item{font-size:11px;font-family:system-ui}
+    .r-meta-item strong{display:block;font-size:9px;text-transform:uppercase;color:#374151;margin-bottom:1px}
+    .r-section-title{font-size:10px;text-transform:uppercase;color:#6b7280;font-family:system-ui;font-weight:600;margin:24px 0 10px;border-bottom:1px solid #e5e7eb;padding-bottom:5px}
+    .r-exchange{margin-bottom:16px;padding:12px 16px;border-radius:6px;border-left:3px solid #e5e7eb;page-break-inside:avoid}
+    .r-exchange.user-ex{background:#f8f5ff;border-left-color:#c084fc}.r-exchange.ai-ex{background:#fafafa;border-left-color:#6b7280}
+    .r-role{font-size:9px;text-transform:uppercase;font-family:system-ui;font-weight:600;margin-bottom:5px}
+    .r-role.user-role{color:#c084fc}.r-role.ai-role{color:#374151}
+    .r-text{font-size:12px;line-height:1.6;color:#1f2937}
+    .r-products{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+    .r-product-tag{padding:2px 8px;border-radius:10px;font-size:10px;background:#f3e8ff;color:#c084fc;border:1px solid #e9d5ff;font-family:system-ui}
+    .r-footer{margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;font-family:system-ui;display:flex;justify-content:space-between}
+    @page{margin:1.5cm}</style></head><body>${content.outerHTML}
+    <script>window.onload=function(){window.print();setTimeout(()=>window.close(),1000)}<\/script></body></html>`);
+  win.document.close();
+};
+function escHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// ── Helpers ───────────────────────────────────────────────────
+function showError(msg) {
+  removeTyping();
+  const el = document.createElement('div');
+  el.className = 'message ai';
+  el.innerHTML = `<div class="avatar-sm ai" style="background:#7f1d1d">!</div><div class="bubble" style="border-color:rgba(239,68,68,0.2);background:rgba(239,68,68,0.05)"><p style="color:#fca5a5">${esc(msg)}</p></div>`;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+window.handleKey = function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window.sendQuestion(); } };
+window.autoResize = function(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 100) + 'px'; };
+function setSend(d) { document.getElementById('send-btn').disabled = d; }
+function scrollBottom() { const el = document.getElementById('messages'); el.scrollTop = el.scrollHeight; }
+function esc(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// Start
+init();=== ./frontend/js/main.js ===
 
 const API = 'http://localhost:8000';
 window._API = API;
@@ -3637,3 +4336,77 @@ print("    Step 1: python scripts/ingest.py")
 print("    Step 2: python backend/api.py")
 print("    Step 3: Open frontend/index.html in your browser")
 print()
+=== ./scripts/test_token_factory.py ===
+"""
+test_token_direct.py
+=====================
+Test direct de l'API Token Factory (fournie par notre ecole) sans OpenAI SDK
+"""
+
+import requests
+import os
+from dotenv import load_dotenv
+
+# Désactiver les warnings SSL (pour test seulement)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+load_dotenv()
+
+api_key = os.getenv("TOKEN_FACTORY_API_KEY")
+base_url = os.getenv("TOKEN_FACTORY_BASE_URL", "https://tokenfactory.esprit.tn")
+
+# URL complète
+url = f"{base_url}/api/chat/completions"
+
+headers = {
+    "Authorization": f"Bearer {api_key}",
+    "Content-Type": "application/json"
+}
+
+data = {
+    "model": "hosted_vllm/Llama-3.1-70B-Instruct",
+    "messages": [
+        {"role": "user", "content": "tu connais la tunisie ?"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 100,
+    "top_p": 0.9,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0
+}
+
+print("=" * 60)
+print("Test Token Factory API")
+print("=" * 60)
+print(f"URL: {url}")
+print(f"API Key: {api_key[:5]}...{api_key[-3:]}")
+print(f"Model: {data['model']}")
+print()
+
+try:
+    print("📤 Envoi de la requête...")
+    response = requests.post(url, headers=headers, json=data, verify=False, timeout=30)
+    
+    print(f"Status code: {response.status_code}")
+    print(f"Response headers: {dict(response.headers)}")
+    print()
+    
+    if response.status_code == 200:
+        result = response.json()
+        print("✅ Succès !")
+        print(f"Réponse: {result['choices'][0]['message']['content']}")
+        print()
+        print("Détails complets:")
+        print(f"  Model utilisé: {result.get('model')}")
+        print(f"  Tokens: {result.get('usage', {})}")
+    else:
+        print(f"❌ Erreur {response.status_code}")
+        print(f"Body: {response.text}")
+        
+except requests.exceptions.Timeout:
+    print("❌ Timeout - L'API ne répond pas")
+except requests.exceptions.ConnectionError as e:
+    print(f"❌ Erreur de connexion: {e}")
+except Exception as e:
+    print(f"❌ Erreur inattendue: {e}")
