@@ -116,45 +116,18 @@ def get_products():
 def mode_intro_stream(mode: str = "medical"):
     """Stream a mode-specific intro message from Vita."""
     from backend.rag.engine import engine
-
-    if mode == "medical":
-        prompt = """You are Vita, a medical product training coach for a pharmaceutical company.
-A delegate just chose medical training mode. 
-Introduce yourself warmly as Vita, explain briefly what you will help them with (product indications, composition, clinical use, medical terminology, what to say to doctors and pharmacists).
-End by asking them to select a product to get started.
-Be professional and warm. 3-4 sentences max. Respond in French."""
-# Commercial mode intro
-    elif mode == "vita_commercial":
-        prompt = """You are Vita, a pharmaceutical delegate from VITAL SA.
-    You are about to have a natural conversation with a doctor.
-
-    Start with a warm, brief introduction: state your name and role.
-    Then ask the doctor which product they would like to discuss today.
-    Be open-ended: the doctor can name a product, ask for a suggestion, or ask a general question.
-    Keep it to 2-3 sentences, warm and professional.
-
-    Respond in French initially, but be ready to switch to English or Arabic based on the doctor's language."""
-    else:
-        prompt = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
-A delegate just chose commercial training mode.
-Introduce yourself with energy as Vita, explain briefly what you will help them with (sales pitches, objection handling, convincing pharmacies and clinics, competitive positioning).
-End by asking them to select a product to get started.
-Be motivating and enthusiastic. 3-4 sentences max. Respond in French."""
+    from fastapi.responses import StreamingResponse
 
     def event_generator():
         try:
-            engine.initialize()
-            for token in engine.llm.stream(prompt):
+            # stream_greeting yields {"type": "token", "content": ...} then {"type": "done"}
+            for chunk in engine.stream_greeting(mode):
                 import json
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
             import json
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-        finally:
-            import json
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-    from fastapi.responses import StreamingResponse
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
