@@ -1,9 +1,14 @@
 """
 backend/tts/synthesizer.py
 ==========================
-TTS intelligent : segmentation contextuelle 100% naturelle
-Supports : Français (Denise), Anglais (Jenny), Arabe (Zariyah)
-Prononciation fluide comme Google Translate
+TTS simple et rapide — sans transformers, sans torch
+Détection de langue : langdetect (local, < 1s)
+Voix : edge-tts  (Denise FR · Jenny EN · Zariyah AR)
+
+Cas spécial arabe mixte :
+  Les mots scientifiques/français insérés dans une réponse arabe
+  sont regroupés et lus par la voix française (Denise), puis on
+  revient à la voix arabe (Zariyah).
 """
 
 import asyncio
@@ -11,231 +16,211 @@ import base64
 import os
 import re
 import tempfile
-from transformers import pipeline
 
-# =====================================
-# Chargement du modèle de détection de langue
-# =====================================
-print("Chargement du modèle de détection de langue...")
-lang_classifier = pipeline(
-    "text-classification",
-    model="papluca/xlm-roberta-base-language-detection",
-    top_k=None,
-    device=-1  # CPU
-)
-
-# =====================================
-# Voix TTS
-# =====================================
+# ─────────────────────────────────────────────────────────────
+# Voix edge-tts
+# ─────────────────────────────────────────────────────────────
 VOICES = {
     "fr": "fr-FR-DeniseNeural",
     "en": "en-US-JennyNeural",
     "ar": "ar-SA-ZariyahNeural",
 }
 
-# =====================================
-# Fonction : détection langue avec fallback et score
-# =====================================
-def get_lang_from_model(text_chunk: str, fallback_lang="fr") -> str:
-    if not text_chunk.strip():
-        return fallback_lang
+# ─────────────────────────────────────────────────────────────
+# Nettoyage du texte avant TTS (supprime le markdown)
+# ─────────────────────────────────────────────────────────────
+def clean_for_tts(text: str) -> str:
+    """
+    Supprime les symboles markdown qui seraient lus à voix haute
+    par edge-tts — fonctionne pour FR, EN et AR.
+    """
+    # Gras/italique : **texte** ou *texte* → texte  (avant de toucher aux *)
+    text = re.sub(r'\*{1,3}([^*\n]+?)\*{1,3}', r'\1', text)
+    # Puces universelles en début de ligne : * - – — • ◦ ▪ › » et chiffres arabes ١. ٢.
+    text = re.sub(r'^\s*([*\-–—•◦▪›»]|[0-9٠-٩]+[.\)]|[٠-٩]+\.?)\s+', '', text, flags=re.MULTILINE)
+    # Titres markdown : ## Titre → Titre
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Backticks : `code` → code
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # Astérisques isolés restants
+    text = text.replace('*', '')
+    # Underscores italiques : _texte_ → texte
+    text = re.sub(r'_([^_]+)_', r'\1', text)
+    # Tirets de séparation (---  ===  ***) → rien
+    text = re.sub(r'^[\-=*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # Lignes vides multiples → une seule
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
-    # Détection arabe par script (très fiable)
-    if re.search(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]', text_chunk):
-        return 'ar'
 
+# ─────────────────────────────────────────────────────────────
+# Détection de langue dominante
+# ─────────────────────────────────────────────────────────────
+def detect_lang(text: str, fallback: str = "fr") -> str:
+    if not text or not text.strip():
+        return fallback
+    # Comparer les caractères arabes vs latins
+    arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
+    latin_chars  = len(re.findall(r'[A-Za-z]', text))
+    if arabic_chars > latin_chars:
+        return "ar"
     try:
-        results = lang_classifier(text_chunk[:200])
-        top = results[0][0]
-        lang = top['label']
-        score = top['score']
+        from langdetect import detect
+        lang = detect(text.strip())
+        return lang if lang in ("fr", "en", "ar") else fallback
+    except Exception:
+        return fallback
 
-        # Si confiance faible, on utilise fallback
-        if score < 0.90:
-            return fallback_lang
 
-        if lang in ["fr", "en", "ar"]:
-            return lang
+# ─────────────────────────────────────────────────────────────
+# Segmentation token par token (arabe vs latin)
+# ─────────────────────────────────────────────────────────────
+def _is_latin_token(token: str) -> bool:
+    """True si le token contient des lettres latines (mot FR/EN scientifique)."""
+    return bool(re.search(r'[A-Za-zÀ-ÿ]', token))
 
-        return fallback_lang
 
-    except:
-        return fallback_lang
+def split_arabic_latin(text: str) -> list[tuple[str, str]]:
+    """
+    Découpe le texte mot par mot et regroupe les séquences consécutives
+    de même type (arabe ou latin) en un seul segment.
 
-# =====================================
-# Fonction : segmentation intelligente
-# =====================================
-def smart_segment(text: str) -> list[tuple[str, str]]:
+    Exemple :
+      "يحتوي على Acide salicylique وهو متوفر"
+      -> [("يحتوي على", "ar"), ("Acide salicylique", "fr"), ("وهو متوفر", "ar")]
+    """
+    tokens = text.split()
     segments = []
+    current_tokens = []
+    current_type = None
 
-    # Découpage en phrases
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-
-    for sentence in sentences:
-        if not sentence.strip():
+    for token in tokens:
+        if not token.strip():
             continue
+        token_type = "fr" if _is_latin_token(token) else "ar"
 
-        # langue globale de la phrase
-        sentence_lang = get_lang_from_model(sentence)
+        if token_type == current_type:
+            current_tokens.append(token)
+        else:
+            if current_tokens and current_type:
+                chunk = " ".join(current_tokens).strip()
+                if chunk:
+                    segments.append((chunk, current_type))
+            current_tokens = [token]
+            current_type   = token_type
 
-        words = sentence.split()
+    # Dernier groupe
+    if current_tokens and current_type:
+        chunk = " ".join(current_tokens).strip()
+        if chunk:
+            segments.append((chunk, current_type))
 
-        # phrases courtes → direct
-        if len(words) <= 6:
-            segments.append((sentence, sentence_lang))
-            continue
+    return segments if segments else [(text.strip(), "ar")]
 
-        current_chunk = []
-        current_lang = sentence_lang
-        i = 0
 
-        while i < len(words):
-            # analyser petit groupe de mots (contextuel)
-            chunk_test = " ".join(words[i:i+3])
-            detected_lang = get_lang_from_model(chunk_test, fallback_lang=sentence_lang)
-
-            # si changement réel
-            if detected_lang != current_lang:
-                if current_chunk:
-                    segments.append((" ".join(current_chunk), current_lang))
-                current_chunk = [words[i]]
-                current_lang = detected_lang
-            else:
-                current_chunk.append(words[i])
-
-            i += 1
-
-        if current_chunk:
-            segments.append((" ".join(current_chunk), current_lang))
-
-    return segments
-
-# =====================================
-# Fonction : synthèse d’un segment en mp3
-# =====================================
-async def synthesize_segment_async(text: str, lang: str) -> bytes:
+# ─────────────────────────────────────────────────────────────
+# Synthèse d'un seul segment audio
+# ─────────────────────────────────────────────────────────────
+async def _synth_segment(text: str, lang: str) -> bytes:
     import edge_tts
     voice = VOICES.get(lang, VOICES["fr"])
-
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         out_path = f.name
-
     try:
-        communicate = edge_tts.Communicate(text.strip(), voice, rate="+10%")
-        await communicate.save(out_path)
+        comm = edge_tts.Communicate(text.strip(), voice, rate="+10%")
+        await comm.save(out_path)
         with open(out_path, "rb") as f:
             return f.read()
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
 
-# =====================================
-# Fonction : TTS asynchrone multi-segments
-# =====================================
+
+# ─────────────────────────────────────────────────────────────
+# Estimation des timings pour le lipsync
+# ─────────────────────────────────────────────────────────────
+def _estimate_timings(text: str, audio_b64: str) -> tuple[list, list, list]:
+    words = text.strip().split()
+    if not words:
+        return [], [], []
+    audio_bytes = len(audio_b64) * 3 / 4
+    duration_ms = max((audio_bytes / 16000) * 1000, 500)
+    unit_dur    = duration_ms / len(words)
+    wtimes      = [i * unit_dur for i in range(len(words))]
+    wdurations  = [unit_dur] * len(words)
+    return words, wtimes, wdurations
+
+
+# ─────────────────────────────────────────────────────────────
+# Synthèse principale (async)
+# ─────────────────────────────────────────────────────────────
 async def synthesize_async(text: str, lang: str = "auto") -> dict:
-    if lang != "auto" and lang in VOICES:
-        return await _single_tts(text, lang)
+    # 0. Nettoyer le markdown avant toute synthèse
+    text = clean_for_tts(text)
+    if not text:
+        return {"audio_b64": "", "voice": VOICES["fr"], "lang": "fr",
+                "format": "mp3", "segments": [], "words": [], "wtimes": [], "wdurations": []}
 
-    segments_info = smart_segment(text)
+    # 1. Détecter la langue dominante
+    detected = detect_lang(text) if lang == "auto" or lang not in VOICES else lang
 
-    print(f"🎙️ TTS intelligent → {len(segments_info)} segment(s)")
-    for seg_text, seg_lang in segments_info:
-        print(f"   [{seg_lang}] {seg_text[:80].strip()}...")
+    # 2. Cas arabe avec mots latins -> segments mixtes
+    if detected == "ar" and re.search(r'[A-Za-z]{2,}', text):
+        segments = split_arabic_latin(text)
 
-    if len(segments_info) == 1:
-        seg_text, seg_lang = segments_info[0]
-        return await _single_tts(seg_text, seg_lang)
+        print(f"🎙️ TTS arabe mixte -> {len(segments)} segment(s)")
+        for seg_text, seg_lang in segments:
+            print(f"   [{seg_lang}] {seg_text[:70]}")
 
-    audio_parts = []
-    segments_meta = []
+        audio_parts: list[bytes] = []
+        for seg_text, seg_lang in segments:
+            if not seg_text.strip():
+                continue
+            mp3 = await _synth_segment(seg_text, seg_lang)
+            audio_parts.append(mp3)
 
-    for seg_text, seg_lang in segments_info:
-        if not seg_text.strip():
-            continue
-        mp3_bytes = await synthesize_segment_async(seg_text, seg_lang)
-        audio_parts.append(mp3_bytes)
-        segments_meta.append({"text": seg_text, "lang": seg_lang})
+        if not audio_parts:
+            mp3 = await _synth_segment(text, "ar")
+            audio_parts = [mp3]
 
-    if not audio_parts:
-        return await _single_tts(text, "fr")
-
-    # ajouter pause naturelle entre segments
-    silence = b'\x00' * 2000
-    combined = silence.join(audio_parts)
-    audio_b64 = base64.b64encode(combined).decode("utf-8")
-
-    # Création des timings pour le frontend
-    all_words = []
-    all_wtimes = []
-    all_wdurations = []
-    time_offset = 0
-    total_duration_est = max(len(combined) / 16000 * 1000, 1000)
-
-    for seg in segments_meta:
-        units = seg["text"].strip().split()
-        if not units:
-            units = [" "]
-        seg_dur = total_duration_est * (len(seg["text"]) / max(len(text), 1))
-        unit_dur = seg_dur / len(units)
-
-        for w in units:
-            all_words.append(w)
-            all_wtimes.append(time_offset)
-            all_wdurations.append(unit_dur)
-            time_offset += unit_dur
-
-    dominant_lang = max(
-        set(s["lang"] for s in segments_meta),
-        key=lambda l: sum(len(s["text"]) for s in segments_meta if s["lang"] == l)
-    )
-
-    return {
-        "audio_b64": audio_b64,
-        "voice": VOICES.get(dominant_lang, VOICES["fr"]),
-        "lang": dominant_lang,
-        "format": "mp3",
-        "segments": [{"text": s["text"], "lang": s["lang"]} for s in segments_meta],
-        "words": all_words,
-        "wtimes": all_wtimes,
-        "wdurations": all_wdurations
-    }
-
-# =====================================
-# Fonction : TTS d’un texte entier (simple)
-# =====================================
-async def _single_tts(text: str, lang: str) -> dict:
-    import edge_tts
-    voice = VOICES.get(lang, VOICES["fr"])
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        out_path = f.name
-    try:
-        communicate = edge_tts.Communicate(text, voice, rate="+10%")
-        await communicate.save(out_path)
-        with open(out_path, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-        words = text.strip().split()
-        duration_est = max(len(audio_b64) / 200, 1000)
-        unit_dur = duration_est / max(len(words), 1)
+        combined  = b"".join(audio_parts)
+        audio_b64 = base64.b64encode(combined).decode("utf-8")
+        words, wtimes, wdurations = _estimate_timings(text, audio_b64)
 
         return {
-            "audio_b64": audio_b64,
-            "voice": voice,
-            "lang": lang,
-            "format": "mp3",
-            "segments": [{"text": text, "lang": lang}],
-            "words": words,
-            "wtimes": [i * unit_dur for i in range(len(words))],
-            "wdurations": [unit_dur] * len(words)
+            "audio_b64":  audio_b64,
+            "voice":      VOICES["ar"],
+            "lang":       "ar",
+            "format":     "mp3",
+            "segments":   [{"text": t, "lang": l} for t, l in segments],
+            "words":      words,
+            "wtimes":     wtimes,
+            "wdurations": wdurations,
         }
-    finally:
-        if os.path.exists(out_path):
-            os.unlink(out_path)
 
-# =====================================
-# Fonction synchrone pour appeler l’async
-# =====================================
+    # 3. Cas simple FR / EN / AR pur
+    print(f"🎙️ TTS simple [{detected}] -> {text[:70]}")
+    mp3_bytes = await _synth_segment(text, detected)
+    audio_b64 = base64.b64encode(mp3_bytes).decode("utf-8")
+    words, wtimes, wdurations = _estimate_timings(text, audio_b64)
+
+    return {
+        "audio_b64":  audio_b64,
+        "voice":      VOICES[detected],
+        "lang":       detected,
+        "format":     "mp3",
+        "segments":   [{"text": text, "lang": detected}],
+        "words":      words,
+        "wtimes":     wtimes,
+        "wdurations": wdurations,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# Interface synchrone
+# ─────────────────────────────────────────────────────────────
 def synthesize(text: str, lang: str = "auto") -> dict:
+    """Point d'entrée synchrone."""
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(asyncio.run, synthesize_async(text, lang))
