@@ -93,6 +93,32 @@
       </div>
       <div class="header-right" style="display:flex;align-items:center;gap:8px;">
         <span id="mode-badge" class="mode-badge" style="display:none"></span>
+        
+        <!-- TEST DROPDOWN -->
+<div class="test-dropdown-wrap" id="test-dropdown-wrap">
+  <button class="test-btn" onclick="toggleTestMenu()" id="test-btn">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Assess Knowledge
+    <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </button>
+  <div class="test-menu" id="test-menu">
+    <div class="test-menu-header">Take a certification test</div>
+    <a class="test-menu-item medical-item" href="test-medical.html" target="_blank">
+      <span class="test-menu-icon">🩺</span>
+      <div>
+        <div class="test-menu-label">Medical Representative</div>
+        <div class="test-menu-sub">Clinical knowledge assessment · 10 questions</div>
+      </div>
+    </a>
+    <a class="test-menu-item commercial-item" href="test-commercial.html" target="_blank">
+      <span class="test-menu-icon">💼</span>
+      <div>
+        <div class="test-menu-label">Commercial Representative</div>
+        <div class="test-menu-sub">Sales skills assessment · 10 questions</div>
+      </div>
+    </a>
+  </div>
+</div>
         <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           Report

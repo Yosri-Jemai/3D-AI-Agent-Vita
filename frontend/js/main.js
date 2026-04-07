@@ -519,4 +519,19 @@ function setSend(d){document.getElementById('send-btn').disabled=d;}
 function scrollBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
 function esc(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+
+
+function toggleTestMenu() {
+  const menu = document.getElementById('test-menu');
+  const btn  = document.getElementById('test-btn');
+  const open = menu.classList.toggle('open');
+  btn.classList.toggle('open', open);
+}
+document.addEventListener('click', function(e) {
+  const wrap = document.getElementById('test-dropdown-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('test-menu')?.classList.remove('open');
+    document.getElementById('test-btn')?.classList.remove('open');
+  }
+});
 init();
