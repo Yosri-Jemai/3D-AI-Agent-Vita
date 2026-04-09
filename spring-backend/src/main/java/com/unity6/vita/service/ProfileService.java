@@ -115,4 +115,10 @@ public class ProfileService {
                 .map(this::toDTO)
                 .collect(Collectors.toList());
     }
+
+    // Dans ProfileService.java, ajoutez :
+    public Profile getProfileById(Long id) {
+        return profileRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Profile not found with id: " + id));
+    }
 }

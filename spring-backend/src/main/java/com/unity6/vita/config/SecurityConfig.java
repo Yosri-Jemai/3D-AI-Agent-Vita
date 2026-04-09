@@ -2,6 +2,8 @@ package com.unity6.vita.config;
 
 import com.unity6.vita.security.JwtRequestFilter;
 import com.unity6.vita.service.AppUserDetailsService;
+import lombok.AllArgsConstructor;
+import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
