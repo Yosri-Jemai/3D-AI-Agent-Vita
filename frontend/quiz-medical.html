@@ -10,14 +10,9 @@
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════
-     ÉLÉMENTS FANTÔMES requis par avatar.js
-     (avatar.js les cherche par getElementById — s'ils
-      n'existent pas l'init plante silencieusement)
-     ═══════════════════════════════════════════════════════ -->
-<div id="mic-btn"       style="display:none"></div>
+<div id="mic-btn"        style="display:none"></div>
 <div id="avatar-loading" style="display:none"></div>
-<div id="chunk-count"   style="display:none"></div>
+<div id="chunk-count"    style="display:none"></div>
 
 <!-- ─── HEADER ──────────────────────────────────────────────────────────── -->
 <header class="app-header">
@@ -53,7 +48,6 @@
   <div class="setup-card">
 
     <div class="setup-avatar-wrap">
-      <!-- TalkingHead monte l'avatar ici (même id que index.html) -->
       <div id="avatarDiv" class="setup-avatar-div"></div>
       <div class="setup-avatar-pulse" id="setup-pulse"></div>
     </div>
@@ -70,12 +64,50 @@
     </p>
 
     <div class="setup-options">
+
+      <!-- ── Multi-product selector ──────────────────────────────────── -->
       <div class="option-group">
-        <label class="option-label">Produit / Gamme</label>
-        <select id="product-select" class="option-select">
-          <option value="">Tous les produits</option>
-        </select>
+        <label class="option-label">Produit(s)</label>
+
+        <div class="product-selector" id="product-dropdown">
+
+          <!-- Trigger button -->
+          <button class="product-trigger" id="product-dropdown-btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+            <span id="selection-label">Tous les produits</span>
+            <svg class="trigger-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <!-- Dropdown panel -->
+          <div class="product-panel">
+            <div class="product-panel-header">
+              <input
+                type="text"
+                id="product-search"
+                class="product-search"
+                placeholder="Rechercher un produit…"
+                autocomplete="off"
+              />
+              <button class="clear-btn" id="clear-selection" type="button" title="Tout désélectionner">
+                Réinitialiser
+              </button>
+            </div>
+            <div class="product-list" id="product-list">
+              <div class="product-loading">Chargement…</div>
+            </div>
+          </div>
+
+        </div>
       </div>
+      <!-- ────────────────────────────────────────────────────────────── -->
+
       <div class="option-group">
         <label class="option-label">Difficulté</label>
         <div class="difficulty-pills">
@@ -84,6 +116,7 @@
           <button class="diff-pill" data-level="difficile">Difficile</button>
         </div>
       </div>
+
       <div class="option-group">
         <label class="option-label">Nombre de questions</label>
         <div class="q-count-pills">
@@ -107,14 +140,12 @@
 <!-- ─── QUIZ SCREEN ──────────────────────────────────────────────────────── -->
 <section class="quiz-screen" id="quiz-screen" style="display:none">
 
-  <!-- LEFT: Avatar Panel — structure identique à index.html -->
   <aside class="avatar-panel">
     <div class="avatar-scene">
       <div class="speak-ring r1"></div>
       <div class="speak-ring r2"></div>
       <div class="speak-ring r3"></div>
       <div class="avatar-glow"></div>
-      <!-- avatarDiv sera déplacé ici par quiz-medical.js au démarrage -->
       <div id="avatar-scene-slot"></div>
       <div class="avatar-reaction" id="avatar-reaction"></div>
     </div>
@@ -124,12 +155,10 @@
       <div class="agent-role">Experte Formation Médicale</div>
     </div>
 
-    <!-- Speech bubble -->
     <div class="speech-bubble" id="speech-bubble">
       <p id="bubble-text">Êtes-vous prêt(e) ?</p>
     </div>
 
-    <!-- Score donut -->
     <div class="donut-wrap">
       <svg class="donut" viewBox="0 0 80 80">
         <circle cx="40" cy="40" r="32" fill="none" stroke="var(--border)" stroke-width="6"/>
@@ -142,18 +171,13 @@
     </div>
     <div class="donut-label">Score</div>
 
-    <!-- Progression génération questions -->
     <div class="load-progress" id="load-progress" style="display:none">
       <div class="load-bar"><div class="load-fill" id="load-fill"></div></div>
       <span id="load-label">Questions : 0 / 10</span>
     </div>
-
   </aside>
 
-  <!-- RIGHT: Question Panel -->
   <main class="question-panel">
-
-    <!-- Skeleton loader -->
     <div class="waiting-state" id="waiting-state">
       <div class="waiting-spinner"></div>
       <p class="waiting-text">Dr. Layla prépare votre quiz…</p>
@@ -169,7 +193,6 @@
       </div>
     </div>
 
-    <!-- Zone question -->
     <div id="question-area" style="display:none">
       <div class="question-card">
         <div class="question-meta">
@@ -199,7 +222,6 @@
         </button>
       </div>
     </div>
-
   </main>
 </section>
 
@@ -231,7 +253,6 @@
   </div>
 </section>
 
-<!-- ★ Même importmap que index.html — OBLIGATOIRE ★ -->
 <script type="importmap">
 {
   "imports": {
@@ -241,11 +262,7 @@
 }
 </script>
 
-<!-- ★ Même avatar.js que index.html ★ -->
 <script type="module" src="js/avatar.js"></script>
-
-<!-- Quiz logic -->
 <script src="js/quiz-medical.js"></script>
-
 </body>
 </html>

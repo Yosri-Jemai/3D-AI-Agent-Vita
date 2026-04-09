@@ -3,10 +3,11 @@ backend/api/routes_quiz_medicale.py
 ====================================
 Quiz endpoints — VERSION REFONTE COMPLÈTE
 Corrections :
-  1. Génération en parallèle (asyncio) → toutes les questions prêtes d'un coup
+  1. Génération en parallèle (asyncio)
   2. Prompt renforcé → questions pédagogiques, jamais de codes/IDs
   3. Contexte nettoyé → suppression codes articles, IDs numériques
-  4. Cache questions côté serveur → "suivante" est instantané
+  4. [FIX] 1 produit sélectionné → N questions UNIQUEMENT sur ce produit
+  5. [FIX] Multi-produits → questions UNIQUEMENT sur les produits sélectionnés
 """
 
 import json
@@ -16,39 +17,26 @@ import asyncio
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 router = APIRouter()
 
-# ════════════════════════════════════════════════════════════════════════════
-# MODÈLES
-# ════════════════════════════════════════════════════════════════════════════
-
 class QuizRequest(BaseModel):
     product: Optional[str] = None
+    products: Optional[List[str]] = None
     difficulty: str = "moyen"
     question_count: int = 10
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# NETTOYAGE DU CONTEXTE — supprime codes, IDs, numéros parasites
-# ════════════════════════════════════════════════════════════════════════════
-
 def clean_context(text: str, product_name: str) -> str:
-    """
-    Nettoie le contexte produit avant de l'envoyer au LLM :
-    - Supprime les lignes contenant uniquement des codes/IDs
-    - Supprime les numéros d'article (ex: Code Article: 3690)
-    - Garde uniquement les informations médicales/commerciales utiles
-    """
     lines = text.splitlines()
     clean_lines = []
     skip_patterns = [
         r"^code[_\s]article\s*:.*$",
         r"^id\s*:.*$",
         r"^source[_\s]id\s*:.*$",
-        r"^\[source\s+\d+",           # [Source 1: ...]
-        r"^\s*\d{3,}\s*$",            # ligne = rien qu'un numéro
+        r"^\[source\s+\d+",
+        r"^\s*\d{3,}\s*$",
         r"code article\s*:\s*\d+",
     ]
     for line in lines:
@@ -61,93 +49,92 @@ def clean_context(text: str, product_name: str) -> str:
                 skip = True
                 break
         if not skip:
-            # Remplace les numéros orphelins collés au nom produit
             line_stripped = re.sub(r'\b\d{3,}\b', '', line_stripped).strip()
             if line_stripped:
                 clean_lines.append(line_stripped)
-
     cleaned = "\n".join(clean_lines)
-    # Tronquer à 1200 caractères max
     return cleaned[:1200]
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# PROMPTS
-# ════════════════════════════════════════════════════════════════════════════
-
 QUIZ_SYSTEM_PROMPT = """Tu es un formateur expert chez VITAL SA, spécialisé dans la formation des délégués médicaux.
 
-Ta mission : créer des QCM professionnels et pédagogiques pour former les délégués à présenter les produits aux médecins et pharmaciens.
+Ta mission : créer des QCM pour ÉVALUER les connaissances d'un délégué médical sur les produits.
+Le délégué répond à tes questions pour prouver qu'il maîtrise le produit avant d'aller voir les médecins.
 
 RÈGLES ABSOLUES :
-1. Utilise UNIQUEMENT le nom commercial du produit (ex: "Doliprane", "Augmentin") — JAMAIS de codes, IDs ou numéros
-2. Les questions doivent tester des connaissances réelles qu'un délégué médical doit maîtriser
-3. Les réponses doivent être crédibles et professionnelles
+1. Utilise UNIQUEMENT le nom commercial du produit — JAMAIS de codes, IDs ou numéros
+2. La question teste ce qu'un délégué doit savoir : indications, posologie, composition, mécanisme, contre-indications
+3. Les réponses doivent être précises et professionnelles
 4. Réponds UNIQUEMENT avec du JSON valide. Zéro texte avant ou après.
 """
 
-def build_question_prompt(product_name: str, context: str, difficulty: str) -> str:
+QUESTION_ANGLES = [
+    "les indications principales et la population cible",
+    "la posologie et le mode d'administration",
+    "la composition et les principes actifs",
+    "le mécanisme d'action",
+    "les contre-indications absolues et relatives",
+    "les effets indésirables les plus fréquents",
+    "les interactions médicamenteuses importantes",
+    "les conseils pratiques à donner au patient",
+    "la forme galénique et la présentation",
+    "les avantages par rapport aux alternatives thérapeutiques",
+    "les précautions d'emploi particulières",
+    "la durée de traitement recommandée",
+    "les populations à risque (personnes âgées, enfants, femmes enceintes)",
+    "les conditions de conservation et de stockage",
+    "les différences entre les dosages disponibles",
+]
+
+
+def build_question_prompt(product_name: str, context: str, difficulty: str, angle: str = None) -> str:
     difficulty_guide = {
-        "facile": "Teste les indications principales, la forme galénique et la population cible. Questions directes et accessibles.",
-        "moyen": "Teste la posologie, le mécanisme d'action, les conseils pratiques et la composition. Questions de niveau intermédiaire.",
-        "difficile": "Teste les contre-indications, les interactions médicamenteuses, la différenciation concurrentielle et les cas cliniques complexes.",
+        "facile": "Teste les indications principales, la forme galénique et la population cible.",
+        "moyen": "Teste la posologie, le mécanisme d'action, les conseils pratiques et la composition.",
+        "difficile": "Teste les contre-indications, les interactions médicamenteuses et les cas cliniques complexes.",
     }
     guide = difficulty_guide.get(difficulty, difficulty_guide["moyen"])
+    angle_instruction = f"\nFOCUS OBLIGATOIRE : teste spécifiquement {angle}." if angle else ""
 
-    return f"""Tu formes un délégué médical sur le produit {product_name}.
+    return f"""Tu évalues les connaissances d'un délégué médical sur le produit {product_name}.
 
 INFORMATIONS SUR LE PRODUIT :
 {context}
 
 NIVEAU DE DIFFICULTÉ : {difficulty.upper()}
-{guide}
+{guide}{angle_instruction}
 
 GÉNÈRE exactement 1 question QCM selon ce format JSON :
 
 {{
-  "question": "[question réaliste en situation de visite médicale] concernant {product_name} ?",
+  "question": "Question directe testant ce que le délégué doit savoir sur {product_name} ?",
   "choices": [
     "Réponse A complète et précise",
     "Réponse B plausible mais incorrecte",
-    "Réponse C plausible mais incorrecte", 
+    "Réponse C plausible mais incorrecte",
     "Réponse D plausible mais incorrecte"
   ],
   "correct_index": 0,
-  "explanation": "Explication pédagogique en 1-2 phrases pour que le délégué retienne l'information clé.",
+  "explanation": "Explication pédagogique en 1-2 phrases.",
   "product": "{product_name}"
 }}
 
-EXEMPLES DE BONNES QUESTIONS (adapte au produit) :
-- "quelle est la posologie recommandée de {product_name} chez l'adulte ?"
-- "dans quelles situations {product_name} est-il particulièrement indiqué ?"
-- "quel est le principal avantage de {product_name} par rapport aux alternatives ?"
-- "y a-t-il des contre-indications à connaître avec {product_name} ?"
-
 INTERDICTIONS STRICTES :
+- JAMAIS "Docteur," au début
 - Jamais de codes ou numéros dans la question
-- Jamais "le produit" ou "ce produit" — toujours le nom exact : {product_name}
-- Jamais de question sur le prix ou le code article
-- La bonne réponse doit être la A (correct_index: 0) — le shuffle est fait côté serveur
+- Jamais "le produit" — toujours le nom exact : {product_name}
+- La bonne réponse doit être la A (correct_index: 0)
 
 Génère la question maintenant :"""
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# GÉNÉRATION PARALLÈLE
-# ════════════════════════════════════════════════════════════════════════════
-
-async def generate_one_question(engine, product_name: str, context: str, difficulty: str) -> Optional[dict]:
-    """Génère une question pour un produit donné de manière asynchrone."""
+async def generate_one_question(engine, product_name: str, context: str, difficulty: str, angle: str = None) -> Optional[dict]:
     from langchain_core.messages import SystemMessage, HumanMessage
-
     clean_ctx = clean_context(context, product_name)
     if not clean_ctx.strip():
         return None
-
-    prompt = build_question_prompt(product_name, clean_ctx, difficulty)
-
+    prompt = build_question_prompt(product_name, clean_ctx, difficulty, angle)
     try:
-        # Appel synchrone dans un thread pour ne pas bloquer l'event loop
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
@@ -158,71 +145,89 @@ async def generate_one_question(engine, product_name: str, context: str, difficu
         )
         raw = response.content.strip()
         q = _safe_parse_one(raw)
-
         if not _is_valid_question(q, product_name):
             return None
-
+        q = _sanitize_question(q)
         q = _shuffle_correct_position(q)
         return q
-
     except Exception as e:
         print(f"[Quiz] Erreur génération pour {product_name}: {e}")
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# ENDPOINTS
-# ════════════════════════════════════════════════════════════════════════════
+def _build_task_list(hits: dict, count: int) -> list:
+    """
+    hits  = {product_name: context}  — ONLY the allowed products
+    count = total questions to generate
+
+    1 product  → count questions on THAT product with varied angles
+    N products → questions distributed cyclically among the N products
+    """
+    products = list(hits.keys())
+    if not products:
+        return []
+
+    angles = QUESTION_ANGLES[:]
+    random.shuffle(angles)
+    while len(angles) < count:
+        extra = QUESTION_ANGLES[:]
+        random.shuffle(extra)
+        angles.extend(extra)
+
+    tasks = []
+    if len(products) == 1:
+        pname   = products[0]
+        context = hits[pname]
+        for i in range(count):
+            tasks.append((pname, context, angles[i]))
+    else:
+        random.shuffle(products)
+        for i in range(count):
+            pname   = products[i % len(products)]
+            context = hits[pname]
+            tasks.append((pname, context, angles[i]))
+
+    return tasks
+
+
+def _resolve_hits(engine, req: QuizRequest) -> dict:
+    """Return {product_name: context} strictly matching the selection."""
+    selected = []
+    if req.products and len(req.products) > 0:
+        selected = req.products
+    elif req.product:
+        selected = [req.product]
+
+    if selected:
+        return _fetch_selected_products(engine, selected)
+    return _fetch_all_products(engine)
+
 
 @router.post("/generate/stream")
 async def generate_quiz_stream(req: QuizRequest):
-    """
-    Génère TOUTES les questions en parallèle, puis les envoie via SSE.
-    Le frontend reçoit d'abord un événement 'loading' pendant la génération,
-    puis toutes les questions arrivent en rafale → navigation instantanée.
-    """
     from backend.rag.engine import engine
     engine.initialize()
 
     count = min(max(req.question_count, 5), 15)
-    all_hits = _fetch_products_from_chroma(engine, req.product)
+    hits  = _resolve_hits(engine, req)
 
-    if not all_hits:
+    if not hits:
         async def error_gen():
             yield f'data: {json.dumps({"type": "error", "message": "Aucun produit trouvé dans la base"})}\n\n'
         return StreamingResponse(error_gen(), media_type="text/event-stream")
 
-    # Sélection aléatoire des produits
-    product_list = list(all_hits.keys())
-    random.shuffle(product_list)
-    selected_products = product_list[:count]
+    task_list = _build_task_list(hits, count)
 
     async def event_generator():
-        # Signal de démarrage
-        yield f'data: {json.dumps({"type": "loading", "total": len(selected_products)})}\n\n'
-
-        # Génération PARALLÈLE de toutes les questions
-        tasks = [
-            generate_one_question(engine, pname, all_hits[pname], req.difficulty)
-            for pname in selected_products
-        ]
-
-        # Gather avec gestion d'erreurs
+        yield f'data: {json.dumps({"type": "loading", "total": len(task_list)})}\n\n'
+        tasks   = [generate_one_question(engine, pname, ctx, req.difficulty, angle)
+                   for pname, ctx, angle in task_list]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-
         questions = []
-        for i, result in enumerate(results):
+        for result in results:
             if isinstance(result, dict) and result:
                 questions.append(result)
-                # Envoyer chaque question dès qu'elle est prête (ordre de génération)
-                event = {
-                    "type": "question",
-                    "question": result,
-                    "index": len(questions) - 1,
-                    "total": len(selected_products),
-                }
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
+                yield f"data: {json.dumps({'type': 'question', 'question': result, 'index': len(questions)-1, 'total': len(task_list)}, ensure_ascii=False)}\n\n"
         yield f'data: {json.dumps({"type": "done", "count": len(questions)})}\n\n'
 
     return StreamingResponse(
@@ -234,50 +239,30 @@ async def generate_quiz_stream(req: QuizRequest):
 
 @router.post("/generate/full")
 async def generate_quiz_full(req: QuizRequest):
-    """Endpoint batch — retourne toutes les questions d'un coup (pas SSE)."""
     from backend.rag.engine import engine
     engine.initialize()
-
-    count = min(max(req.question_count, 5), 15)
-    all_hits = _fetch_products_from_chroma(engine, req.product)
-
-    if not all_hits:
+    count     = min(max(req.question_count, 5), 15)
+    hits      = _resolve_hits(engine, req)
+    if not hits:
         return {"error": "Aucun produit trouvé", "questions": []}
-
-    product_list = list(all_hits.keys())
-    random.shuffle(product_list)
-    selected = product_list[:count]
-
-    tasks = [
-        generate_one_question(engine, pname, all_hits[pname], req.difficulty)
-        for pname in selected
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
+    task_list = _build_task_list(hits, count)
+    tasks     = [generate_one_question(engine, pname, ctx, req.difficulty, angle)
+                 for pname, ctx, angle in task_list]
+    results   = await asyncio.gather(*tasks, return_exceptions=True)
     questions = [r for r in results if isinstance(r, dict) and r]
     return {"questions": questions, "count": len(questions)}
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# HELPERS
-# ════════════════════════════════════════════════════════════════════════════
+# ── FETCH ────────────────────────────────────────────────────────────────────
 
-def _fetch_products_from_chroma(engine, product_filter=None) -> dict:
+def _fetch_selected_products(engine, product_names: List[str]) -> dict:
     """
-    Récupère les produits depuis ChromaDB.
-    Retourne: {product_name: context_text}
-    Filtre les entrées sans nom ou avec uniquement des IDs numériques.
+    Pull from ChromaDB only the chunks whose product_name matches
+    one of the requested names — EXACT match, case-insensitive.
+    No fuzzy / semantic search that could smuggle in other products.
     """
-    result = {}
-
-    if product_filter:
-        hits = engine.search(product_filter, n_results=30)
-        for h in hits:
-            pname = h.get("product_name", "").strip()
-            # Ignore les noms qui sont juste des IDs numériques
-            if pname and not re.match(r'^\d+$', pname) and pname not in result:
-                result[pname] = h.get("text", "")
-        return result
+    wanted = {name.strip().lower(): name.strip() for name in product_names}
+    result = {original: "" for original in wanted.values()}
 
     try:
         all_docs = engine.collection.get(include=["documents", "metadatas"])
@@ -286,46 +271,70 @@ def _fetch_products_from_chroma(engine, product_filter=None) -> dict:
                 meta.get("product_name", "").strip()
                 or meta.get("name", "").strip()
             )
-            # Filtre strict : nom doit être un vrai nom (pas un ID, pas vide)
             if not pname:
                 continue
-            if re.match(r'^\d+$', pname):  # Ignore les IDs purs
-                continue
-            if len(pname) < 3:              # Ignore les noms trop courts
-                continue
-            # Ignore les tables non-produits (doc, annimation_fiches)
-            source_table = meta.get("source_table", "")
-            if source_table in ("doc", "annimation_fiches"):
+            if pname.lower() not in wanted:
+                continue                          # ← strict: skip anything else
+            if meta.get("source_table", "") in ("doc", "annimation_fiches"):
                 continue
 
+            canonical = wanted[pname.lower()]
+            result[canonical] += "\n" + doc
+
+    except Exception as e:
+        print(f"[Quiz] ChromaDB error in _fetch_selected_products: {e}")
+
+    # Remove products with no data found
+    for pname in list(result.keys()):
+        text = result[pname].strip()
+        if not text:
+            print(f"[Quiz] WARNING: no chunks found for '{pname}'")
+            del result[pname]
+        else:
+            result[pname] = text[:1500]
+
+    print(f"[Quiz] Selected products loaded: {list(result.keys())}")
+    return result
+
+
+def _fetch_all_products(engine) -> dict:
+    result = {}
+    try:
+        all_docs = engine.collection.get(include=["documents", "metadatas"])
+        for doc, meta in zip(all_docs.get("documents", []), all_docs.get("metadatas", [])):
+            pname = (
+                meta.get("product_name", "").strip()
+                or meta.get("name", "").strip()
+            )
+            if not pname or re.match(r'^\d+$', pname) or len(pname) < 3:
+                continue
+            if meta.get("source_table", "") in ("doc", "annimation_fiches"):
+                continue
             if pname not in result:
                 result[pname] = doc
             else:
                 result[pname] += f"\n{doc}"
     except Exception as e:
-        print(f"[Quiz] ChromaDB error: {e}")
+        print(f"[Quiz] ChromaDB error in _fetch_all_products: {e}")
 
-    # Nettoyage final
     for pname in list(result.keys()):
         if len(result[pname]) > 1500:
             result[pname] = result[pname][:1500]
 
-    print(f"[Quiz] {len(result)} produits chargés depuis ChromaDB")
+    print(f"[Quiz] {len(result)} products loaded from ChromaDB")
     return result
 
 
+# ── PARSE / SANITIZE / VALIDATE ──────────────────────────────────────────────
+
 def _safe_parse_one(raw: str) -> Optional[dict]:
-    """Parse JSON depuis la réponse LLM, avec fallback regex."""
-    # Nettoyage markdown si présent
     raw = re.sub(r'```json\s*', '', raw)
     raw = re.sub(r'```\s*', '', raw)
     raw = raw.strip()
-
     try:
         return json.loads(raw)
     except Exception:
         pass
-
     match = re.search(r'\{[\s\S]*\}', raw)
     if match:
         try:
@@ -335,52 +344,42 @@ def _safe_parse_one(raw: str) -> Optional[dict]:
     return None
 
 
-def _shuffle_correct_position(q: dict) -> dict:
-    """Mélange la position de la bonne réponse pour éviter que A soit toujours correct."""
-    choices = q.get("choices", [])
-    correct_idx = q.get("correct_index", 0)
+def _sanitize_question(q: dict) -> dict:
+    question = q.get("question", "")
+    for pat in [r"^docteur\s*,\s*", r"^dr\.\s*,\s*", r"^dr\s*,\s*", r"^doctor\s*,\s*"]:
+        question = re.sub(pat, "", question, flags=re.IGNORECASE)
+    if question:
+        question = question[0].upper() + question[1:]
+    return {**q, "question": question}
 
+
+def _shuffle_correct_position(q: dict) -> dict:
+    choices     = q.get("choices", [])
+    correct_idx = q.get("correct_index", 0)
     if not choices or not (0 <= correct_idx < len(choices)):
         return q
-
     correct_answer = choices[correct_idx]
-    wrong_answers = [c for i, c in enumerate(choices) if i != correct_idx]
+    wrong_answers  = [c for i, c in enumerate(choices) if i != correct_idx]
     random.shuffle(wrong_answers)
-
     new_position = random.randint(0, min(3, len(choices) - 1))
-    new_choices = wrong_answers[:]
+    new_choices  = wrong_answers[:]
     new_choices.insert(new_position, correct_answer)
-
     return {**q, "choices": new_choices[:4], "correct_index": new_position}
 
 
 def _is_valid_question(q: Optional[dict], expected_product: str) -> bool:
-    """Valide qu'une question est exploitable par un délégué médical."""
     if not q or not isinstance(q, dict):
         return False
-
     question = str(q.get("question", "")).strip()
-    choices = q.get("choices", [])
-    product = str(q.get("product", "")).strip()
-
-    # Validations de base
-    if len(question) < 30:
+    choices  = q.get("choices", [])
+    product  = str(q.get("product", "")).strip()
+    if len(question) < 30 or len(choices) != 4 or len(product) < 3:
         return False
-    if len(choices) != 4:
-        return False
-    if len(product) < 3:
-        return False
-
-    # Refus des questions avec codes/IDs numériques longs
     if re.search(r'\b\d{4,}\b', question):
         return False
-
-    # Le nom du produit doit être dans la question
-    if expected_product.lower() not in question.lower():
+    question_clean = re.sub(r'^docteur\s*,\s*', '', question, flags=re.IGNORECASE)
+    if expected_product.lower() not in question_clean.lower():
         return False
-
-    # Chaque choix doit avoir du contenu
     if any(len(str(c).strip()) < 5 for c in choices):
         return False
-
     return True
