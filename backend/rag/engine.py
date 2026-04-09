@@ -548,24 +548,47 @@ Réponse :"""
     # ── Ask streaming ─────────────────────────────────────────────────────────
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
         self.initialize()
+        
+        import re
+        question = re.sub(r'\s+', ' ', question).strip()
+        question = ''.join(char for char in question if char.isprintable() or char == ' ')
+        
+        if not question or len(question) < 3:
+            yield {"type": "token", "content": "Pouvez-vous reformuler votre question s'il vous plaît ?"}
+            yield {"type": "sources", "sources": []}
+            return
 
-        lang = detect_language(question)          # ← NEW: detect language
-
-        hits = self.search(question, n_results=n_results)
+        lang = detect_language(question)
+        
+        # --- Wrap search in try-except ---
+        try:
+            hits = self.search(question, n_results=n_results)
+        except Exception as e:
+            print(f"[RAG] Search error: {e}")
+            yield {"type": "token", "content": "Désolé, je n'ai pas pu traiter votre demande. Veuillez réessayer."}
+            yield {"type": "sources", "sources": []}
+            return
 
         if not hits:
-            yield {"type": "token", "content": "Je n'ai pas trouvé d'information pertinente."}
+            yield {"type": "token", "content": "Je n'ai pas trouvé d'information sur ce sujet. Pouvez-vous me poser une autre question ?"}
             yield {"type": "sources", "sources": []}
             return
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # ← NEW: lang=lang
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)
 
+        # --- Collect full response and ensure it's not empty ---
+        full_response = ""
         for chunk in self.llm.stream([HumanMessage(content=prompt)]):
-            token = chunk.content
+            token = chunk.content or ""
+            full_response += token
             if token:
                 yield {"type": "token", "content": token}
+        
+        # If LLM returned nothing, send a fallback
+        if not full_response.strip():
+            yield {"type": "token", "content": "Je n'ai pas pu générer une réponse. Pouvez-vous reformuler ?"}
 
         seen, sources = set(), []
         for hit in hits:

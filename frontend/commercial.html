@@ -108,6 +108,22 @@
   </main>
 </div>
 
+<div id="report-overlay" class="report-overlay" onclick="closeReportOnBg(event)">
+  <div class="report-modal">
+    <div class="report-modal-header">
+      <h2>Session Report</h2>
+      <button class="close-report" onclick="closeReport()">&times;</button>
+    </div>
+    <div id="report-content" class="report-content">
+      <!-- Report content will be inserted here -->
+    </div>
+    <div class="report-modal-footer">
+      <button class="download-pdf" onclick="downloadReport()">Download PDF</button>
+      <button class="close-btn" onclick="closeReport()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script type="importmap">
 {
   "imports": {

@@ -15,6 +15,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+from backend.api.routes_analytics import router as analytics_router
+
 load_dotenv()
 
 from backend.api.routes_chat  import router as chat_router
@@ -39,6 +41,7 @@ app.add_middleware(
 app.include_router(chat_router,  prefix="/chat",  tags=["Chat"])
 app.include_router(voice_router, prefix="/voice", tags=["Voice"])
 app.include_router(tts_router, prefix="/tts", tags=["TTS"])
+app.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 
 @app.get("/health")
 def health():
