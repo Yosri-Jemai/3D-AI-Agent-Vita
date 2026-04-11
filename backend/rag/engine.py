@@ -352,6 +352,45 @@ class RAGEngine:
 
         import re
 
+        question_lower = question.lower()
+        hits = []
+        seen_ids = set()
+        
+        # ========== EXACT PRODUCT NAME DETECTION ==========
+        # Get ALL unique product names first
+        all_metas = self.collection.get(include=["metadatas"])
+        product_to_id = {}
+        for meta in all_metas["metadatas"]:
+            name = meta.get("product_name", "")
+            if name and name not in product_to_id:
+                product_to_id[name.lower()] = (meta.get("source_id"), meta.get("source_table"))
+        
+        # Check if any product name is IN the question
+        for prod_name_lower, (source_id, source_table) in product_to_id.items():
+            if prod_name_lower in question_lower:
+                # Get ALL chunks for this product - FIXED where clause
+                product_docs = self.collection.get(
+                    where={
+                        "$and": [
+                            {"source_id": source_id},
+                            {"source_table": source_table}
+                        ]
+                    },
+                    include=["documents", "metadatas"]
+                )
+                if product_docs["documents"]:
+                    # Combine all chunks into one document
+                    full_text = "\n\n".join(product_docs["documents"])
+                    hits.append({
+                        "text": full_text,
+                        "product_name": product_docs["metadatas"][0].get("product_name", "Unknown"),
+                        "source_table": source_table,
+                        "relevance": 1.0,  # Perfect match
+                    })
+                    seen_ids.add(source_id)
+                    print(f"✅ EXACT MATCH FOUND: {product_docs['metadatas'][0].get('product_name')}")
+        # ========== END EXACT MATCH ==========
+
         question_vector = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=[question_vector],
@@ -359,27 +398,30 @@ class RAGEngine:
             include=["documents", "metadatas", "distances"],
         )
 
-        hits = []
-        seen_ids = set()
+        #hits = []
+        #seen_ids = set()
 
         for doc, meta, dist in zip(
             results["documents"][0],
             results["metadatas"][0],
             results["distances"][0],
         ):
+            source_id = meta.get("source_id", "")
+            if source_id in seen_ids:
+                continue
             hits.append({
                 "text": doc,
                 "product_name": meta.get("product_name", "Unknown"),
                 "source_table": meta.get("source_table", ""),
                 "relevance": round(1 - dist, 3),
             })
-            seen_ids.add(meta.get("source_id", ""))
+            seen_ids.add(source_id)
 
         catalogue_keywords = [
             "gamme", "gammes", "catalogue", "catalogues",
             "liste", "laboratoire", "portfolio", "offre",
         ]
-        question_lower = question.lower()
+        #question_lower = question.lower()
         is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
 
         if is_catalogue_query:
@@ -399,7 +441,7 @@ class RAGEngine:
                 })
                 seen_ids.add(source_id)
 
-        words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
+        words = re.findall(r"\w+", question)
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
             for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
