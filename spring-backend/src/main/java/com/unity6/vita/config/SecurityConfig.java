@@ -35,14 +35,17 @@ public class SecurityConfig {
         http.cors(Customizer.withDefaults())
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(authorizeRequests ->
-                        authorizeRequests.requestMatchers("/health",
-                                        "/register",
-                                        "/activate",
-                                        "/login",
-                                        "/v3/api-docs/**",
-                                        "/swagger-ui/**",
-                                        "/swagger-ui.html").permitAll()
-                                .anyRequest().authenticated())
+                        authorizeRequests
+//                                .requestMatchers("/health",
+//                                        "/register",
+//                                        "/activate",
+//                                        "/login",
+//                                        "/v3/api-docs/**",
+//                                        "/swagger-ui/**",
+//                                        "/swagger-ui.html",
+//                                        "/api/sessions/**").permitAll()
+//                                .anyRequest().authenticated())
+                            .anyRequest().permitAll()) // For testing , Remove later and uncomment the above
                 .sessionManagement(sessionManagement ->
                         sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);

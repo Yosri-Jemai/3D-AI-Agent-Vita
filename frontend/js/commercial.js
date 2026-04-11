@@ -6,6 +6,9 @@ let isRecording = false;
 let mediaRecorder = null;
 let audioChunks = [];
 
+let currentSessionId = null;
+let currentProfileId = null;
+
 const MODE = 'vita_commercial';
 let visitStarted = false;
 
@@ -37,14 +40,49 @@ function setStatus(state, text) {
 }
 window.setStatus = setStatus;
 
-// ── Start Visit ───────────────────────────────────────────────
+// Store original function BEFORE overriding
+const originalStartVisit = window.startVisit;
+
+// Create new startVisit function
 window.startVisit = async function() {
-  if (visitStarted) return;
-  visitStarted = true;
-  if (window._head?.audioCtx?.state !== 'running') await window._head.audioCtx.resume();
-  const micBtn = document.getElementById('mic-btn');
-  if (micBtn) micBtn.disabled = false;
-  await loadGreeting();
+    if (visitStarted) return;
+    
+    // Get profile ID from somewhere (you can skip for now)
+    currentProfileId = localStorage.getItem('profileId') || 1;
+    
+    // Create session in Spring Boot (skip if Spring Boot not ready)
+    try {
+        const response = await fetch('http://localhost:8080/api/v1/sessions/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ mode: MODE })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            currentSessionId = data.id;
+            console.log('Session started:', currentSessionId);
+        }
+    } catch (error) {
+        console.warn('Session start failed (Spring Boot may not be running):', error);
+        // Continue anyway - session is optional
+    }
+    
+    // Call original startVisit if it exists
+    if (originalStartVisit) {
+        await originalStartVisit();
+    } else {
+        // Fallback to original logic
+        visitStarted = true;
+        if (window._head?.audioCtx?.state !== 'running') {
+            await window._head.audioCtx.resume();
+        }
+        const micBtn = document.getElementById('mic-btn');
+        if (micBtn) micBtn.disabled = false;
+        await loadGreeting();
+    }
 };
 
 // ── Greeting ──────────────────────────────────────────────────
@@ -89,46 +127,251 @@ async function loadGreeting() {
   }
 }
 
-// ── Send Question ─────────────────────────────────────────────
+// ── Send Question (doctor input) ────────────────────────────
+// ── Send Question (doctor input) ────────────────────────────
 window.sendQuestion = async function() {
-  if (!visitStarted) await window.startVisit();
-  const input = document.getElementById('question-input');
-  const userText = input.value.trim();
-  if (!userText || isLoading) return;
-  isLoading = true; setSend(true); input.value = ''; input.style.height = 'auto';
-  addUserMsg(userText); addTyping(); setStatus('thinking', 'Thinking…');
-  try {
-    const res = await fetch(`${API}/chat/ask/stream`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+    const input = document.getElementById('question-input');
+    const userText = input.value.trim();
+    if (!userText || isLoading) return;
+    
+    // Log user message to conversationLog
+    conversationLog.push({
+        role: 'user',
+        text: userText,
+        timestamp: new Date().toISOString()
     });
-    if (!res.ok) throw new Error();
-    const reader = res.body.getReader(); const decoder = new TextDecoder();
-    let buffer = '', fullText = '', sources = [], msgEl = null;
-    setStatus('speaking', 'Responding…');
-    while (true) {
-      const { value, done } = await reader.read(); if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n'); buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
-        if (data.type === 'token') {
-          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
-          fullText += data.content;
-          const textSpan = document.getElementById('streaming-text');
-          if (textSpan) textSpan.textContent = fullText;
-          scrollBottom();
-        } else if (data.type === 'sources') { sources = data.sources; }
-      }
+    
+    // Display user message in chat UI
+    addUserMsg(userText, false);
+    
+    // Clear input
+    input.value = '';
+    input.style.height = 'auto';
+    
+    // Show typing indicator
+    addTyping();
+    setStatus('thinking', 'Thinking…');
+    
+    isLoading = true;
+    setSend(true);
+    
+    try {
+        // Call the RAG backend
+        const res = await fetch(`${API}/chat/ask/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+        });
+        
+        if (!res.ok) throw new Error();
+        
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullText = '';
+        let sources = [];
+        let msgEl = null;
+        setStatus('speaking', 'Responding…');
+        
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                let data;
+                try {
+                    data = JSON.parse(line.slice(6));
+                } catch { continue; }
+                if (data.type === 'token') {
+                    if (!msgEl) {
+                        removeTyping();
+                        msgEl = addAIBubble(null);
+                    }
+                    fullText += data.content;
+                    const textSpan = document.getElementById('streaming-text');
+                    if (textSpan) textSpan.textContent = fullText;
+                    scrollBottom();
+                } else if (data.type === 'sources') {
+                    sources = data.sources;
+                }
+            }
+        }
+        
+        // Log assistant response
+        conversationLog.push({
+            role: 'assistant',
+            text: fullText,
+            sources: sources,
+            timestamp: new Date().toISOString()
+        });
+        
+        if (!msgEl) msgEl = addAIBubble(null);
+        finalizeBubble(fullText, sources, userText);
+        
+        if (fullText) {
+            await window.speakWithAvatar(fullText);
+        }
+        setStatus('', 'Ready');
+        
+    } catch (error) {
+        console.error('Error:', error);
+        removeTyping();
+        showError('Cannot reach the API. Run: python backend/main.py');
+        setStatus('', 'Ready');
+    } finally {
+        isLoading = false;
+        setSend(false);
+        document.getElementById('question-input').focus();
     }
-    if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, sources, userText);
-    if (fullText) await window.speakWithAvatar(fullText);
-    setStatus('', 'Ready');
-  } catch {
-    removeTyping(); showError('Cannot reach the API. Run: python backend/main.py'); setStatus('', 'Ready');
-  } finally { isLoading = false; setSend(false); document.getElementById('question-input').focus(); }
+};
+
+// Modified openReport to use AI extraction
+const originalOpenReport = window.openReport;
+window.openReport = async function() {
+    if (!conversationLog.length) {
+        showToast('No conversation to analyze');
+        return;
+    }
+    
+    // Show loading
+    const reportBtn = document.getElementById('report-btn');
+    const originalText = reportBtn.innerHTML;
+    reportBtn.innerHTML = 'Analyzing...';
+    reportBtn.disabled = true;
+    
+    try {
+        // If session exists, end it and get extraction
+        if (currentSessionId) {
+            const token = localStorage.getItem('jwt');
+            const response = await fetch('http://localhost:8080/api/v1/sessions/end', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify({
+                    sessionId: currentSessionId,
+                    profileId: currentProfileId,
+                    conversation: conversationLog
+                })
+            });
+            
+            const extraction = await response.json();
+            displayAIReport(extraction);
+        } else {
+            // Just extract without saving
+            const response = await fetch('http://localhost:8000/analytics/extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conversation: conversationLog })
+            });
+            const result = await response.json();
+            displayAIReport(result.extraction);
+        }
+    } catch (error) {
+        console.error('Analysis failed:', error);
+        showToast('Failed to analyze conversation');
+        originalOpenReport(); // Fallback to old report
+    } finally {
+        reportBtn.innerHTML = originalText;
+        reportBtn.disabled = false;
+    }
+};
+
+// New function to display AI report
+function displayAIReport(extraction) {
+    const reportContent = document.getElementById('report-content');
+    if (!reportContent) {
+        console.error('report-content element not found');
+        return;
+    }
+    
+    const metadata = extraction._metadata || {};
+    const html = `
+        <div class="extraction-report">
+            <div class="r-header">
+                <div class="r-logo">VITAL AI Analysis</div>
+                <div class="r-subtitle">Powered by Groq (${metadata.extraction_time_ms || '?'}ms)</div>
+            </div>
+            
+            <div class="r-section-title">Products Discussed</div>
+            <div class="r-products">
+                ${extraction.products?.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('') || 'None'}
+            </div>
+            
+            <div class="r-section-title">Objections Raised</div>
+            ${extraction.objections?.map(o => `
+                <div class="r-exchange">
+                    <div class="r-text">Type: ${o.type} - ${o.resolved ? '✓ Resolved' : '✗ Unresolved'}</div>
+                </div>
+            `).join('') || 'None'}
+            
+            <div class="r-section-title">Engagement Score</div>
+            <div class="r-text">${extraction.engagement_score}/5</div>
+            
+            <div class="r-section-title">Topics</div>
+            <div class="r-text">${extraction.topics?.join(', ') || 'None'}</div>
+            
+            <div class="r-section-title">Language</div>
+            <div class="r-text">${extraction.language}</div>
+            
+            <div class="r-section-title">Training Recommendations</div>
+            <ul>
+                ${extraction.recommendations?.map(r => `<li>${escHtml(r)}</li>`).join('') || 'None'}
+            </ul>
+        </div>
+    `;
+    
+    reportContent.innerHTML = html;
+    
+    // Show the overlay
+    const overlay = document.getElementById('report-overlay');
+    if (overlay) {
+        overlay.classList.add('open');
+    }
+}
+
+window.closeReport = function() {
+    const overlay = document.getElementById('report-overlay');
+    if (overlay) {
+        overlay.classList.remove('open');
+    }
+};
+
+window.closeReportOnBg = function(e) {
+    if (e.target === document.getElementById('report-overlay')) {
+        closeReport();
+    }
+};
+
+window.downloadReport = function() {
+    const content = document.getElementById('report-content');
+    if (!content) return;
+    
+    const win = window.open('', '_blank');
+    win.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>VITAL Report</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 40px; }
+                .r-header { border-bottom: 2px solid #c084fc; margin-bottom: 20px; }
+                .r-section-title { font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
+                .r-product-tag { display: inline-block; background: #f3e8ff; padding: 2px 8px; border-radius: 10px; margin: 2px; }
+            </style>
+        </head>
+        <body>
+            ${content.innerHTML}
+        </body>
+        </html>
+    `);
+    win.document.close();
+    win.print();
+  
 };
 
 // ── Voice ─────────────────────────────────────────────────────
@@ -172,8 +415,16 @@ async function sendAudio() {
   try {
     const res = await fetch(`${API}/voice/ask/stream`, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const reader = res.body.getReader(); const decoder = new TextDecoder();
-    let buffer = '', fullText = '', sources = [], msgEl = null;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let sources = [];
+    let msgEl = null;
+    let transcript = null;
+    setStatus('speaking', 'Responding…');
+
     while (true) {
       const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -183,20 +434,51 @@ async function sendAudio() {
         let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
         if (data.type === 'transcript') {
           transcript = data.text;
-          addUserMsg(`🎤 ${transcript}`, true); removeTyping(); addTyping();
+          addUserMsg(`🎤 ${transcript}`, true);
+          conversationLog.push({
+            role: 'user',
+            text: transcript,
+            timestamp: new Date().toISOString()
+          });
+          removeTyping();
+          addTyping();
         } else if (data.type === 'token') {
           if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           fullText += data.content;
           const textSpan = document.getElementById('streaming-text');
           if (textSpan) textSpan.textContent = fullText;
           scrollBottom();
-        } else if (data.type === 'sources') { sources = data.sources; }
-        else if (data.type === 'error') { console.error("Backend error:", data.content); }
+        } else if (data.type === 'sources') {
+          sources = data.sources;
+        } else if (data.type === 'error') {
+          console.error("Backend error:", data.content);
+          showError(`Error: ${data.content}`);
+          removeTyping();
+          setStatus('', 'Ready');
+          isLoading = false;
+          setSend(false);
+          return;
+        }
       }
     }
-    if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, sources, transcript); // ← transcript correct
-    if (fullText) await window.speakWithAvatar(fullText);
+
+    // Log assistant response
+    if (fullText) {
+      conversationLog.push({
+        role: 'assistant',
+        text: fullText,
+        sources: sources,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (msgEl) {
+      finalizeBubble(fullText, sources);
+    }
+    
+    if (fullText) {
+      await window.speakWithAvatar(fullText);
+    }
     setStatus('', 'Ready');
   } catch (err) {
     console.error("Voice processing error:", err);
@@ -262,6 +544,28 @@ function finalizeBubble(fullText, sources, userQuestion) {
     }
   }
   scrollBottom();
+}
+function showToast(message) {
+  // Create toast element
+  const toast = document.createElement('div');
+  toast.className = 'toast-message';
+  toast.textContent = message;
+  toast.style.position = 'fixed';
+  toast.style.bottom = '20px';
+  toast.style.left = '50%';
+  toast.style.transform = 'translateX(-50%)';
+  toast.style.backgroundColor = '#333';
+  toast.style.color = '#fff';
+  toast.style.padding = '10px 20px';
+  toast.style.borderRadius = '8px';
+  toast.style.zIndex = '9999';
+  toast.style.fontSize = '14px';
+  document.body.appendChild(toast);
+  
+  // Remove after 3 seconds
+  setTimeout(() => {
+    toast.remove();
+  }, 3000);
 }
 
 // ── Edit & Resend ─────────────────────────────────────────────
@@ -341,12 +645,15 @@ function logUser(text, isVoice) {
   conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
   document.getElementById('report-btn').disabled = false;
 }
-function logAI(text, sources) { conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() }); }
-
-window.openReport = function() { if (!conversationLog.length) return; buildReportContent(); document.getElementById('report-overlay').classList.add('open'); };
-window.closeReport = function() { document.getElementById('report-overlay').classList.remove('open'); };
-window.closeReportOnBg = function(e) { if (e.target === document.getElementById('report-overlay')) closeReport(); };
-
+function logAI(text, sources) {
+  conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() });
+}
+window.closeReport = function() {
+  document.getElementById('report-overlay').classList.remove('open');
+};
+window.closeReportOnBg = function(e) {
+  if (e.target === document.getElementById('report-overlay')) closeReport();
+};
 function buildReportContent() {
   const now = new Date();
   const dateStr = now.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });

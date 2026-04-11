@@ -233,6 +233,20 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 .medical-item .test-menu-label{color:var(--accent)}
 .commercial-item .test-menu-label{color:var(--gold)}
 .test-menu-sub{font-size:11px;color:var(--text-dim);margin-top:1px}
+.toast-message {
+    animation: fadeInUp 0.3s ease;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    ★ AJOUTER À LA FIN DE  frontend/css/style.css
