@@ -247,3 +247,153 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
         transform: translateX(-50%) translateY(0);
     }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ★ AJOUTER À LA FIN DE  frontend/css/style.css
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Suggestions adaptives ─────────────────────────────────────────────── */
+.suggestions-wrap {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestions-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.suggestions-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.suggestion-chip {
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  border: 1px solid rgba(126, 184, 247, 0.25);
+  color: var(--accent);
+  background: rgba(126, 184, 247, 0.05);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+  max-width: 300px;
+  font-family: var(--sans);
+}
+.suggestion-chip:hover:not(:disabled) {
+  border-color: rgba(126, 184, 247, 0.5);
+  background: rgba(126, 184, 247, 0.12);
+  transform: translateY(-1px);
+}
+.suggestion-chip:active:not(:disabled) {
+  transform: translateY(0);
+}
+/* Variante violette pour commercial.js */
+.suggestions-wrap.commercial .suggestion-chip {
+  border-color: rgba(192, 132, 252, 0.25);
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.05);
+}
+.suggestions-wrap.commercial .suggestion-chip:hover:not(:disabled) {
+  border-color: rgba(192, 132, 252, 0.5);
+  background: rgba(192, 132, 252, 0.12);
+}
+/* Mini loader pendant la génération */
+.suggestions-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.mini-dots span {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: bounce 1.2s infinite;
+  margin: 0 1px;
+}
+.mini-dots span:nth-child(2) { animation-delay: 0.2s; }
+.mini-dots span:nth-child(3) { animation-delay: 0.4s; }
+.suggestions-wrap {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestions-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.suggestions-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.suggestion-chip {
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  border: 1px solid rgba(126, 184, 247, 0.25);
+  color: var(--accent);
+  background: rgba(126, 184, 247, 0.05);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+  max-width: 280px;
+}
+.suggestion-chip:hover {
+  border-color: rgba(126, 184, 247, 0.5);
+  background: rgba(126, 184, 247, 0.12);
+  transform: translateY(-1px);
+}
+.suggestion-chip:active {
+  transform: translateY(0);
+}
+
+── Pour commercial.js (chips violettes) : ──
+.suggestions-wrap.commercial .suggestion-chip {
+  border-color: rgba(192, 132, 252, 0.25);
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.05);
+}
+.suggestions-wrap.commercial .suggestion-chip:hover {
+  border-color: rgba(192, 132, 252, 0.5);
+  background: rgba(192, 132, 252, 0.12);
+}
+
+.suggestions-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.suggestions-loading .mini-dots span {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: bounce 1.2s infinite;
+  margin: 0 1px;
+}
+.suggestions-loading .mini-dots span:nth-child(2) { animation-delay: 0.2s; }
+.suggestions-loading .mini-dots span:nth-child(3) { animation-delay: 0.4s; }

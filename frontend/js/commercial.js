@@ -30,7 +30,6 @@ async function init() {
   }
 
   await window.initAvatar();
-  // No auto‑start – wait for user to click the button
 }
 
 function setStatus(state, text) {
@@ -86,41 +85,24 @@ window.startVisit = async function() {
     }
 };
 
-// ── Load and speak greeting ──────────────────────────────────
+// ── Greeting ──────────────────────────────────────────────────
 async function loadGreeting() {
-  hideEmpty();
-  addTyping();
-  setStatus('speaking', 'Greeting…');
-
+  hideEmpty(); addTyping(); setStatus('speaking', 'Greeting…');
   try {
-    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, {
-      signal: AbortSignal.timeout(60000)
-    });
+    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, { signal: AbortSignal.timeout(60000) });
     if (!res.ok) throw new Error();
-
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
-    let fullText = '';
-    let msgEl = null;
-
+    let buffer = '', fullText = '', msgEl = null;
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      const lines = buffer.split('\n\n'); buffer = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let data;
-        try {
-          data = JSON.parse(line.slice(6));
-        } catch { continue; }
+        let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
         if (data.type === 'token') {
-          if (!msgEl) {
-            removeTyping();
-            msgEl = addAIBubble(null);
-          }
+          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           fullText += data.content;
           const textSpan = document.getElementById('streaming-text');
           if (textSpan) textSpan.textContent = fullText;
@@ -128,14 +110,9 @@ async function loadGreeting() {
         } else if (data.type === 'done') break;
       }
     }
-
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, []);
-
-    if (fullText) {
-      setStatus('speaking', 'Speaking…');
-      await window.speakWithAvatar(fullText);
-    }
+    finalizeBubble(fullText, []); // greeting : pas de suggestions
+    if (fullText) { setStatus('speaking', 'Speaking…'); await window.speakWithAvatar(fullText); }
     setStatus('', 'Ready');
   } catch (err) {
     console.error('Error loading greeting:', err);
@@ -232,7 +209,7 @@ window.sendQuestion = async function() {
         });
         
         if (!msgEl) msgEl = addAIBubble(null);
-        finalizeBubble(fullText, sources);
+        finalizeBubble(fullText, sources, userText);
         
         if (fullText) {
             await window.speakWithAvatar(fullText);
@@ -394,42 +371,32 @@ window.downloadReport = function() {
     `);
     win.document.close();
     win.print();
+  
 };
 
 // ── Voice ─────────────────────────────────────────────────────
 window.toggleMic = async function() {
-  if (!visitStarted) {
-    await window.startVisit(); // ensure audio enabled
-  }
+  if (!visitStarted) await window.startVisit();
   isRecording ? stopRecording() : startRecording();
 };
 
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream); audioChunks = [];
     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-    mediaRecorder.onstop = sendAudio;
-    mediaRecorder.start();
-    isRecording = true;
+    mediaRecorder.onstop = sendAudio; mediaRecorder.start(); isRecording = true;
     document.getElementById('mic-btn').classList.add('recording');
     document.getElementById('mic-label').textContent = 'Recording… click to stop';
     document.getElementById('waveform').classList.add('recording-active');
     setStatus('listening', 'Listening…');
-    if (window._avatarReady && window._head?.audioCtx?.state !== 'running') {
-      await window._head.audioCtx.resume();
-    }
-  } catch {
-    showError('Microphone access denied.');
-  }
+    if (window._avatarReady && window._head?.audioCtx?.state !== 'running') await window._head.audioCtx.resume();
+  } catch { showError('Microphone access denied.'); }
 }
 
 function stopRecording() {
   if (mediaRecorder && isRecording) {
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(t => t.stop());
-    isRecording = false;
+    mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); isRecording = false;
     document.getElementById('mic-btn').classList.remove('recording');
     document.getElementById('mic-label').textContent = 'Hold to speak';
     document.getElementById('waveform').classList.remove('recording-active');
@@ -439,15 +406,12 @@ function stopRecording() {
 
 async function sendAudio() {
   if (!audioChunks.length) return;
-  console.log("Sending audio...");
-  isLoading = true;
-  setSend(true);
-  addTyping();
+  isLoading = true; setSend(true); addTyping();
   const blob = new Blob(audioChunks, { type: 'audio/webm' });
   const form = new FormData();
   form.append('audio', blob, 'rec.webm');
   form.append('mode', MODE);
-
+  let transcript = null;
   try {
     const res = await fetch(`${API}/voice/ask/stream`, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -462,20 +426,12 @@ async function sendAudio() {
     setStatus('speaking', 'Responding…');
 
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      const lines = buffer.split('\n\n'); buffer = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let data;
-        try {
-          data = JSON.parse(line.slice(6));
-        } catch (e) {
-          console.warn("Failed to parse SSE data:", line, e);
-          continue;
-        }
+        let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
         if (data.type === 'transcript') {
           transcript = data.text;
           addUserMsg(`🎤 ${transcript}`, true);
@@ -487,10 +443,7 @@ async function sendAudio() {
           removeTyping();
           addTyping();
         } else if (data.type === 'token') {
-          if (!msgEl) {
-            removeTyping();
-            msgEl = addAIBubble(null);
-          }
+          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           fullText += data.content;
           const textSpan = document.getElementById('streaming-text');
           if (textSpan) textSpan.textContent = fullText;
@@ -529,62 +482,43 @@ async function sendAudio() {
     setStatus('', 'Ready');
   } catch (err) {
     console.error("Voice processing error:", err);
-    removeTyping();
-    showError('Voice processing failed.');
-    setStatus('', 'Ready');
-  } finally {
-    isLoading = false;
-    setSend(false);
-  }
+    removeTyping(); showError('Voice processing failed.'); setStatus('', 'Ready');
+  } finally { isLoading = false; setSend(false); }
 }
 
-// ── Message UI Helpers (identical to main.js) ────────────────
+// ── Message UI ────────────────────────────────────────────────
 function hideEmpty() { document.getElementById('empty-state')?.remove(); }
 function addSystemMsg(text) {
-  const el = document.createElement('div');
-  el.className = 'system-msg';
+  const el = document.createElement('div'); el.className = 'system-msg';
   el.innerHTML = `<span>${esc(text)}</span>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  document.getElementById('messages').appendChild(el); scrollBottom();
 }
 function addUserMsg(text, isVoice) {
-  hideEmpty();
-  logUser(text, isVoice);
-  const el = document.createElement('div');
-  el.className = 'message user';
-  const msgId = 'msg-' + Date.now();
-  el.id = msgId;
+  hideEmpty(); logUser(text, isVoice);
+  const el = document.createElement('div'); el.className = 'message user';
+  const msgId = 'msg-' + Date.now(); el.id = msgId;
   el.innerHTML = `<div class="edit-wrap">
     <div class="bubble" data-text="${esc(text)}">${esc(text)}</div>
     <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>
   </div><div class="avatar-sm user">You</div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
-  return msgId;
+  document.getElementById('messages').appendChild(el); scrollBottom(); return msgId;
 }
 function addTyping() {
-  const el = document.createElement('div');
-  el.className = 'message ai';
-  el.id = 'typing-indicator';
+  const el = document.createElement('div'); el.className = 'message ai'; el.id = 'typing-indicator';
   el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  document.getElementById('messages').appendChild(el); scrollBottom();
 }
-function removeTyping() {
-  const t = document.getElementById('typing-indicator');
-  if (t) t.remove();
-}
+function removeTyping() { const t = document.getElementById('typing-indicator'); if (t) t.remove(); }
 function addAIBubble(transcriptText) {
   removeTyping();
-  const el = document.createElement('div');
-  el.className = 'message ai';
+  const el = document.createElement('div'); el.className = 'message ai';
   const tb = transcriptText ? `<div class="transcript-badge">Heard: "${esc(transcriptText)}"</div>` : '';
   el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
-  return el;
+  document.getElementById('messages').appendChild(el); scrollBottom(); return el;
 }
-function finalizeBubble(fullText, sources) {
+
+// ── finalizeBubble ────────────────────────────────────────────
+function finalizeBubble(fullText, sources, userQuestion) {
   logAI(fullText, sources);
   const textEl = document.getElementById('streaming-text');
   if (textEl) {
@@ -592,10 +526,22 @@ function finalizeBubble(fullText, sources) {
     textEl.outerHTML = html || '<p></p>';
   }
   const bubble = document.getElementById('streaming-bubble');
-  if (bubble && sources?.length) {
-    bubble.removeAttribute('id');
-    const tags = sources.map(s => `<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance * 100)}%</span></span>`).join('');
-    bubble.insertAdjacentHTML('beforeend', `<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+  if (bubble) {
+    if (sources?.length) {
+      bubble.removeAttribute('id');
+      const tags = sources.map(s => `<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance * 100)}%</span></span>`).join('');
+      bubble.insertAdjacentHTML('beforeend', `<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+    } else {
+      bubble.removeAttribute('id');
+    }
+    // Suggestions — seulement si une question utilisateur est fournie
+    if (fullText && userQuestion) {
+      const cleanAnswer = fullText
+        .replace(/questions?\s+compl[eé]mentaires?\s*:?[\s\S]*$/i, '')
+        .replace(/suggestions?\s*:?[\s\S]*$/i, '')
+        .trim();
+      fetchAndRenderSuggestions(userQuestion, cleanAnswer || fullText, bubble); // ← "bubble" et non "finalBubble"
+    }
   }
   scrollBottom();
 }
@@ -622,7 +568,7 @@ function showToast(message) {
   }, 3000);
 }
 
-// ── Edit & Resend (copied from main.js) ──────────────────────
+// ── Edit & Resend ─────────────────────────────────────────────
 window.startEdit = function(msgId, btn) {
   const msgEl = document.getElementById(msgId);
   const wrap = msgEl.querySelector('.edit-wrap');
@@ -633,10 +579,8 @@ window.startEdit = function(msgId, btn) {
       <button class="edit-save"   onclick="saveEdit('${msgId}')">Send</button>
     </div>`;
   const ta = document.getElementById(`edit-input-${msgId}`);
-  ta.style.height = 'auto';
-  ta.style.height = ta.scrollHeight + 'px';
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px';
+  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
   ta.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msgId); }
     if (e.key === 'Escape') cancelEdit(msgId, originalText);
@@ -649,8 +593,7 @@ window.cancelEdit = function(msgId, originalText) {
 };
 window.saveEdit = function(msgId) {
   const ta = document.getElementById(`edit-input-${msgId}`);
-  const newText = ta.value.trim();
-  if (!newText) return;
+  const newText = ta.value.trim(); if (!newText) return;
   const wrap = document.getElementById(msgId).querySelector('.edit-wrap');
   wrap.innerHTML = `<div class="bubble" data-text="${esc(newText)}">${esc(newText)}</div>
     <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
@@ -661,31 +604,23 @@ window.saveEdit = function(msgId) {
 
 async function resendQuestion(userText) {
   if (!visitStarted) await window.startVisit();
-  isLoading = true;
-  setSend(true);
-  addTyping();
-  setStatus('thinking', 'Thinking…');
+  isLoading = true; setSend(true); addTyping(); setStatus('thinking', 'Thinking…');
   try {
     const res = await fetch(`${API}/chat/ask/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
     });
     if (!res.ok) throw new Error();
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+    const reader = res.body.getReader(); const decoder = new TextDecoder();
     let buffer = '', full = '', sources = [], msgEl = null;
     setStatus('speaking', 'Responding…');
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      const lines = buffer.split('\n\n'); buffer = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let c;
-        try { c = JSON.parse(line.slice(6)); } catch { continue; }
+        let c; try { c = JSON.parse(line.slice(6)); } catch { continue; }
         if (c.type === 'token') {
           if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           full += c.content;
@@ -696,21 +631,15 @@ async function resendQuestion(userText) {
       }
     }
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(full, sources);
-    if (full) { await window.speakWithAvatar(full); }
+    finalizeBubble(full, sources, userText);
+    if (full) await window.speakWithAvatar(full);
     setStatus('', 'Ready');
   } catch {
-    removeTyping();
-    showError('Cannot reach the API.');
-    setStatus('', 'Ready');
-  } finally {
-    isLoading = false;
-    setSend(false);
-  }
+    removeTyping(); showError('Cannot reach the API.'); setStatus('', 'Ready');
+  } finally { isLoading = false; setSend(false); }
 }
 
-
-// ── Log + Report (copied from main.js, adapted to commercial) ──
+// ── Log + Report ──────────────────────────────────────────────
 const conversationLog = [];
 function logUser(text, isVoice) {
   conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
@@ -733,32 +662,25 @@ function buildReportContent() {
   const userCount = conversationLog.filter(e => e.role === 'user').length;
   const aiCount = conversationLog.filter(e => e.role === 'ai').length;
   const exchangesHtml = conversationLog.map(entry => {
-    if (entry.role === 'user') {
-      return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
-    } else {
-      const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
-      return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
-    }
+    if (entry.role === 'user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
+    const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
+    return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
   }).join('');
   const prodHtml = products.length ? `<div class="r-section-title">Products discussed</div><div class="r-products">${products.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('')}</div>` : '';
   document.getElementById('report-content').innerHTML = `
-    <div class="r-header">
-      <div class="r-logo">VITAL Commercial Visit</div>
-      <div class="r-subtitle">Session with Vita — Delegate</div>
-      <div class="r-meta">
-        <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
-        <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
-        <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
-      </div>
-    </div>
+    <div class="r-header"><div class="r-logo">VITAL Commercial Visit</div><div class="r-subtitle">Session with Vita — Delegate</div>
+    <div class="r-meta">
+      <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
+      <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
+      <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
+    </div></div>
     ${prodHtml}
-    <div class="r-section-title">Full conversation</div>
-    ${exchangesHtml}
+    <div class="r-section-title">Full conversation</div>${exchangesHtml}
     <div class="r-footer"><span>Generated by VitalAgent · VITAL SA</span><span>${dateStr}</span></div>`;
 }
+
 window.downloadReport = function() {
-  const content = document.getElementById('report-content');
-  if (!content) return;
+  const content = document.getElementById('report-content'); if (!content) return;
   const now = new Date();
   const win = window.open('', '_blank', 'width=800,height=900');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>vital-commercial-${now.toISOString().slice(0,10)}.pdf</title>
@@ -781,16 +703,15 @@ window.downloadReport = function() {
     <script>window.onload=function(){window.print();setTimeout(()=>window.close(),1000)}<\/script></body></html>`);
   win.document.close();
 };
+
 function escHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 // ── Helpers ───────────────────────────────────────────────────
 function showError(msg) {
   removeTyping();
-  const el = document.createElement('div');
-  el.className = 'message ai';
+  const el = document.createElement('div'); el.className = 'message ai';
   el.innerHTML = `<div class="avatar-sm ai" style="background:#7f1d1d">!</div><div class="bubble" style="border-color:rgba(239,68,68,0.2);background:rgba(239,68,68,0.05)"><p style="color:#fca5a5">${esc(msg)}</p></div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  document.getElementById('messages').appendChild(el); scrollBottom();
 }
 window.handleKey = function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window.sendQuestion(); } };
 window.autoResize = function(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 100) + 'px'; };
@@ -798,5 +719,71 @@ function setSend(d) { document.getElementById('send-btn').disabled = d; }
 function scrollBottom() { const el = document.getElementById('messages'); el.scrollTop = el.scrollHeight; }
 function esc(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-// Start
+// ── Suggestions adaptives (déclarées UNE SEULE FOIS) ─────────
+async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
+  if (!userQuestion || !aiAnswer || !bubbleEl) return;
+
+  const mode = MODE;
+
+  const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
+  const lang = arabicRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how|does|give|tell)\b/i.test(aiAnswer) ? 'en'
+    : 'fr';
+
+  const wrapId = 'suggest-wrap-' + Date.now();
+  bubbleEl.insertAdjacentHTML('beforeend', `
+    <div class="suggestions-wrap commercial" id="${wrapId}">
+      <div class="suggestions-label">Suggestions</div>
+      <div class="suggestions-loading">
+        <div class="mini-dots"><span></span><span></span><span></span></div>
+        <span style="font-size:11px;color:var(--text-dim)">Génération…</span>
+      </div>
+    </div>
+  `);
+  scrollBottom();
+
+  try {
+    const res = await fetch(`${API}/chat/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userQuestion, answer: aiAnswer, mode, lang, n: 3 }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = res.ok ? await res.json() : null;
+    const suggestions = data?.suggestions || [];
+    const wrapEl = document.getElementById(wrapId);
+    if (!wrapEl) return;
+    if (!suggestions.length) { wrapEl.remove(); return; }
+    const chipsHtml = suggestions
+      .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
+      .join('');
+    wrapEl.innerHTML = `
+      <div class="suggestions-label">Questions suggérées</div>
+      <div class="suggestions-chips">${chipsHtml}</div>
+    `;
+    scrollBottom();
+  } catch (err) {
+    console.warn('[suggestions]', err);
+    const wrapEl = document.getElementById(wrapId);
+    if (wrapEl) wrapEl.remove();
+  }
+}
+
+window.applySuggestion = function(btn) {
+  const text = btn.textContent.trim(); if (!text) return;
+  const input = document.getElementById('question-input');
+  if (input) { input.value = text; autoResize(input); input.focus(); }
+  const wrap = btn.closest('.suggestions-wrap');
+  if (wrap) {
+    wrap.querySelectorAll('.suggestion-chip').forEach(c => {
+      c.disabled = true; c.style.opacity = '0.4'; c.style.cursor = 'default';
+    });
+    btn.style.opacity = '1';
+    btn.style.background = 'rgba(192,132,252,0.18)';
+    btn.style.borderColor = 'rgba(192,132,252,0.6)';
+  }
+  window.sendQuestion();
+};
+
+// ── Start ─────────────────────────────────────────────────────
 init();
