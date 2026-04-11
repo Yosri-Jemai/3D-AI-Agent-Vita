@@ -7,7 +7,7 @@ MYSQL_PASSWORD=root
 MYSQL_DATABASE=vital_crm
 
 # ─── Token Factory ─────────────────────────────────
-TOKEN_FACTORY_API_KEY=sk-eba12363be2745e486aafc91d91652cc
+TOKEN_FACTORY_API_KEY=sk-fad8a2c4fde94096bb38483d43da8c90
 TOKEN_FACTORY_BASE_URL=https://tokenfactory.esprit.tn
 TOKEN_FACTORY_MODEL=hosted_vllm/Llama-3.1-70B-Instruct 
 
@@ -33,6 +33,7 @@ Chat endpoints:
   GET  /chat/greeting/stream   — opening greeting, streams token by token
   POST /chat/ask
   POST /chat/ask/stream
+  POST /chat/suggestions       — ★ NEW: adaptive follow-up questions
 """
 
 import json
@@ -47,6 +48,14 @@ class QuestionRequest(BaseModel):
     question:  str
     n_results: int = 10
     mode:      str = "medical"   # "medical" or "commercial"
+
+
+class SuggestionsRequest(BaseModel):
+    question:  str
+    answer:    str
+    mode:      str = "medical"
+    lang:      str = "fr"
+    n:         int = 3
 
 
 @router.get("/health")
@@ -138,54 +147,28 @@ def get_products():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/mode-intro/stream")
 def mode_intro_stream(mode: str = "medical"):
     """Stream a mode-specific intro message from Vita."""
     from backend.rag.engine import engine
-
-    if mode == "medical":
-        prompt = """You are Vita, a medical product training coach for a pharmaceutical company.
-A delegate just chose medical training mode. 
-Introduce yourself warmly as Vita, explain briefly what you will help them with (product indications, composition, clinical use, medical terminology, what to say to doctors and pharmacists).
-End by asking them to select a product to get started.
-Be professional and warm. 3-4 sentences max. Respond in French."""
-# Commercial mode intro
-    elif mode == "vita_commercial":
-        prompt = """You are Vita, a pharmaceutical delegate from VITAL SA.
-    You are about to have a natural conversation with a doctor.
-
-    Start with a warm, brief introduction: state your name and role.
-    Then ask the doctor which product they would like to discuss today.
-    Be open-ended: the doctor can name a product, ask for a suggestion, or ask a general question.
-    Keep it to 2-3 sentences, warm and professional.
-
-    Respond in French initially, but be ready to switch to English or Arabic based on the doctor's language."""
-    else:
-        prompt = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
-A delegate just chose commercial training mode.
-Introduce yourself with energy as Vita, explain briefly what you will help them with (sales pitches, objection handling, convincing pharmacies and clinics, competitive positioning).
-End by asking them to select a product to get started.
-Be motivating and enthusiastic. 3-4 sentences max. Respond in French."""
+    from fastapi.responses import StreamingResponse
 
     def event_generator():
         try:
-            engine.initialize()
-            for token in engine.llm.stream(prompt):
+            for chunk in engine.stream_greeting(mode):
                 import json
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
             import json
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-        finally:
-            import json
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-    from fastapi.responses import StreamingResponse
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
 
 @router.get("/gammes")
 def get_gammes():
@@ -207,7 +190,232 @@ def get_gammes():
         conn.close()
         return {"gammes": [r["gamme"] for r in rows if r.get("gamme")]}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))=== ./backend/api/routes_tts.py ===
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★ NOUVEAU : Suggestions adaptives
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Prompts de génération — un par (mode, langue)
+_SUGGEST_PROMPTS = {
+
+    # ── MEDICAL ──────────────────────────────────────────────────────────────
+    ("medical", "fr"): """Tu es Dr. Layla, formatrice en produits pharmaceutiques.
+Un délégué médical vient de poser une question et tu y as répondu.
+
+Question posée : {question}
+Réponse donnée : {answer}
+
+Génère exactement {n} questions de suivi pertinentes que le délégué pourrait poser pour approfondir sa formation.
+Ces questions doivent :
+- Être directement liées au sujet de la réponse
+- Aider le délégué à mieux comprendre le produit (mécanisme, posologie, indications, contre-indications, études cliniques…)
+- Être formulées du point de vue du délégué (questions qu'il poserait à un formateur)
+- Être courtes et claires (max 12 mots chacune)
+
+Réponds UNIQUEMENT avec un JSON valide, sans texte avant ni après :
+{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+
+    ("medical", "en"): """You are Dr. Layla, a pharmaceutical product trainer.
+A medical delegate just asked a question and you answered it.
+
+Question asked: {question}
+Answer given: {answer}
+
+Generate exactly {n} relevant follow-up questions the delegate could ask to deepen their training.
+These questions should:
+- Be directly related to the topic of the answer
+- Help the delegate better understand the product (mechanism, dosage, indications, contraindications, clinical studies…)
+- Be formulated from the delegate's perspective
+- Be short and clear (max 12 words each)
+
+Respond ONLY with valid JSON, no text before or after:
+{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+
+    ("medical", "ar"): """أنتِ الدكتورة ليلى، مدرّبة في المنتجات الصيدلانية.
+طرح مندوب طبي سؤالاً وقمتِ بالإجابة عنه.
+
+السؤال المطروح: {question}
+الإجابة المقدّمة: {answer}
+
+اقترحي بالضبط {n} أسئلة متابعة يمكن للمندوب طرحها لتعميق تدريبه.
+يجب أن تكون:
+- مرتبطة مباشرة بموضوع الإجابة
+- تساعد على فهم أعمق للمنتج
+- صياغتها من منظور المندوب
+- قصيرة وواضحة (12 كلمة كحد أقصى)
+- احتفظي بأسماء المنتجات والمصطلحات العلمية بالفرنسية أو الإنجليزية
+
+أجيبي فقط بـ JSON صحيح، بدون أي نص قبله أو بعده:
+{{"suggestions": ["سؤال 1", "سؤال 2", "سؤال 3"]}}""",
+
+    # ── COMMERCIAL ───────────────────────────────────────────────────────────
+    ("commercial", "fr"): """Tu es Vita, coach en vente pharmaceutique.
+Un délégué commercial vient de poser une question et tu y as répondu.
+
+Question posée : {question}
+Réponse donnée : {answer}
+
+Génère exactement {n} questions de suivi commerciales que le délégué pourrait poser pour progresser.
+Ces questions doivent :
+- Porter sur les techniques de vente, objections, argumentation, concurrence ou clients cibles
+- Être pratiques et orientées terrain
+- Être courtes et directes (max 12 mots chacune)
+
+Réponds UNIQUEMENT avec un JSON valide, sans texte avant ni après :
+{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+
+    ("commercial", "en"): """You are Vita, a pharmaceutical sales coach.
+A commercial delegate just asked a question and you answered it.
+
+Question asked: {question}
+Answer given: {answer}
+
+Generate exactly {n} commercial follow-up questions the delegate could ask to improve.
+These should cover sales techniques, objections, arguments, competition, or target customers.
+Be short and direct (max 12 words each).
+
+Respond ONLY with valid JSON, no text before or after:
+{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+
+    ("commercial", "ar"): """أنتِ Vita، مدرّبة مبيعات صيدلانية.
+طرح مندوب تجاري سؤالاً وقمتِ بالإجابة عنه.
+
+السؤال المطروح: {question}
+الإجابة المقدّمة: {answer}
+
+اقترحي بالضبط {n} أسئلة تجارية قصيرة (12 كلمة كحد) للمتابعة.
+
+أجيبي فقط بـ JSON صحيح:
+{{"suggestions": ["سؤال 1", "سؤال 2", "سؤال 3"]}}""",
+
+    # ── VITA COMMERCIAL ───────────────────────────────────────────────────────
+    ("vita_commercial", "fr"): """Tu es Vita, déléguée pharmaceutique de VITAL SA.
+Un médecin vient d'interagir avec toi lors d'une visite médicale.
+
+Ce que le médecin a dit : {question}
+Ta réponse en tant que déléguée : {answer}
+
+Génère exactement {n} questions ou objections que le médecin pourrait soulever ensuite.
+Ces suggestions doivent simuler des réactions réelles d'un médecin (doute, curiosité, objection, demande de preuve…).
+Courtes (max 12 mots).
+
+Réponds UNIQUEMENT avec un JSON valide :
+{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+
+    ("vita_commercial", "en"): """You are Vita, a pharmaceutical delegate from VITAL SA.
+A doctor just interacted with you during a medical visit.
+
+What the doctor said: {question}
+Your response as delegate: {answer}
+
+Generate exactly {n} questions or objections the doctor might raise next.
+Simulate real doctor reactions (doubt, curiosity, objection, request for evidence…).
+Short (max 12 words).
+
+Respond ONLY with valid JSON:
+{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+
+    ("vita_commercial", "ar"): """أنتِ Vita، مندوبة صيدلانية من VITAL SA.
+تفاعل طبيب معكِ خلال زيارة طبية.
+
+ما قاله الطبيب: {question}
+ردّك كمندوبة: {answer}
+
+اقترحي بالضبط {n} أسئلة أو اعتراضات قصيرة (12 كلمة كحد) قد يطرحها الطبيب بعد ذلك.
+
+أجيبي فقط بـ JSON صحيح:
+{{"suggestions": ["سؤال 1", "سؤال 2", "سؤال 3"]}}""",
+}
+
+# Suggestions de secours si le LLM échoue
+_FALLBACK_SUGGESTIONS = {
+    "medical": [
+        "Quelles sont les contre-indications ?",
+        "Quelle est la posologie recommandée ?",
+        "Y a-t-il des interactions médicamenteuses ?",
+    ],
+    "commercial": [
+        "Comment répondre à l'objection sur le prix ?",
+        "Quels sont les arguments différenciants ?",
+        "Quel est le profil du client idéal ?",
+    ],
+    "vita_commercial": [
+        "Avez-vous des études cliniques à l'appui ?",
+        "Comment se compare-t-il aux alternatives ?",
+        "Quelle est la posologie habituelle ?",
+    ],
+}
+
+
+@router.post("/suggestions")
+async def get_suggestions(req: SuggestionsRequest):
+    """
+    ★ Génère des questions de suivi adaptives basées sur la dernière interaction.
+
+    Appelle directement le LLM Token Factory (pas de RAG).
+    Les suggestions sont affichées dans le frontend comme chips cliquables —
+    elles ne sont PAS lues à voix haute par l'avatar.
+    """
+    import os, re
+    import json as _json
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage
+
+    if not req.question.strip() or not req.answer.strip():
+        raise HTTPException(status_code=400, detail="question and answer are required")
+
+    lang = req.lang if req.lang in ("fr", "en", "ar") else "fr"
+    mode = req.mode if req.mode in ("medical", "commercial", "vita_commercial") else "medical"
+
+    # Choisir le prompt le plus adapté
+    prompt_template = (
+        _SUGGEST_PROMPTS.get((mode, lang))
+        or _SUGGEST_PROMPTS.get((mode, "fr"))
+        or _SUGGEST_PROMPTS[("medical", "fr")]
+    )
+
+    prompt = prompt_template.format(
+        question=req.question[:600],
+        answer=req.answer[:1000],
+        n=req.n,
+    )
+
+    try:
+        llm = ChatOpenAI(
+            model=os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct"),
+            openai_api_key=os.getenv("TOKEN_FACTORY_API_KEY"),
+            openai_api_base=os.getenv("TOKEN_FACTORY_BASE_URL") + "/api",
+            temperature=0.7,
+            max_tokens=250,
+        )
+
+        response = llm.invoke([HumanMessage(content=prompt)])
+        raw = response.content.strip()
+
+        # Nettoyer les éventuels blocs markdown ```json ... ```
+        raw = re.sub(r"```(?:json)?\s*", "", raw).strip().strip("`")
+
+        # Extraire le premier objet JSON dans la réponse
+        match = re.search(r'\{.*?\}', raw, re.DOTALL)
+        if not match:
+            raise ValueError(f"No JSON in response: {raw[:150]}")
+
+        data = _json.loads(match.group())
+        suggestions = [str(s).strip() for s in data.get("suggestions", []) if str(s).strip()]
+        suggestions = suggestions[:req.n]
+
+        if not suggestions:
+            raise ValueError("Empty suggestions list")
+
+        return {"suggestions": suggestions, "lang": lang, "mode": mode}
+
+    except Exception as e:
+        print(f"[/chat/suggestions] LLM error, using fallback: {e}")
+        fallback = _FALLBACK_SUGGESTIONS.get(mode, _FALLBACK_SUGGESTIONS["medical"])[:req.n]
+        return {"suggestions": fallback, "lang": lang, "mode": mode, "fallback": True}
+=== ./backend/api/routes_tts.py ===
 """
 backend/api/routes_tts.py
 ==========================
@@ -564,7 +772,7 @@ Given a user question:
 
 import os
 from dotenv import load_dotenv
-from langchain_ollama import OllamaEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 import chromadb
@@ -572,7 +780,35 @@ import chromadb
 load_dotenv()
 
 
-# ── Greeting prompt — sent on first load, no product context needed ───────────
+# ══════════════════════════════════════════════════════════════════════════════
+# LANGUAGE DETECTION  — langdetect, local, no LLM call, no regex
+# pip install langdetect
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_language(text: str) -> str:
+    """
+    Detect language using langdetect (local, fast, no network call).
+    Returns: 'fr' | 'en' | 'ar'   — default fallback: 'fr'
+    """
+    if not text or not text.strip():
+        return "fr"
+    try:
+        from langdetect import detect
+        lang = detect(text.strip())
+        if lang == "ar":
+            return "ar"
+        if lang == "en":
+            return "en"
+        return "fr"
+    except Exception as e:
+        print(f"[detect_language] error: {e}")
+        return "fr"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GREETING PROMPT  (language-neutral — self-adapts per its own instructions)
+# ══════════════════════════════════════════════════════════════════════════════
+
 GREETING_PROMPT = """You are Vita, a professional training assistant for a pharmaceutical company.
 
 A delegate has just opened the training platform. Greet them warmly and ask them which training mode they want:
@@ -585,15 +821,18 @@ Respond in French by default. If the delegate responds in another language, imme
 Do NOT mention any products yet. Just greet and ask for the training mode."""
 
 
-# ── Medical delegate prompt ────────────────────────────────────────────────────
-MEDICAL_PROMPT = """Tu es Dr. Layla, une experte en formation produits médicaux.
+# ══════════════════════════════════════════════════════════════════════════════
+# MEDICAL PROMPTS  fr / en / ar
+# ══════════════════════════════════════════════════════════════════════════════
+
+MEDICAL_PROMPT_FR = """Tu es Dr. Layla, une experte en formation produits médicaux.
 Tu formes un DÉLÉGUÉ MÉDICAL qui présente des produits aux médecins et pharmaciens.
 
 Ton rôle :
 - Enseigner la connaissance approfondie des produits : indications, composition, mécanisme d'action, données cliniques
 - Expliquer les concepts de manière pédagogique
 - Après chaque réponse, suggérer 1-2 questions complémentaires
-- Répondre dans la même langue que le délégué
+- Répondre UNIQUEMENT en français
 
 RÈGLES IMPORTANTES :
 - Si on te demande la LISTE DES GAMMES ou les CATALOGUES, donne la liste complète avec les noms exacts
@@ -608,110 +847,228 @@ Question du délégué : {question}
 
 Réponse de formation :"""
 
-
-# ── Commercial delegate prompt ─────────────────────────────────────────────────
-COMMERCIAL_PROMPT = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
-You are training a COMMERCIAL delegate — someone who sells products to pharmacies, clinics and healthcare buyers.
+MEDICAL_PROMPT_EN = """You are Dr. Layla, an expert in pharmaceutical product training.
+You are training a MEDICAL DELEGATE who presents products to doctors and pharmacists.
 
 Your role:
-- Train sales skills: how to present the product's value, handle objections, differentiate from competitors, close a sale.
-- Translate product features into customer benefits. Example: "Contains 3x more bioavailable iron" becomes "Your clients will see results faster and come back to buy again."
-- Roleplay selling scenarios when relevant: "Here's how you would introduce this product to a pharmacy owner..."
-- After answering, suggest 1-2 sales challenges the delegate should practice: objections, comparison questions, pricing discussions.
-- Keep energy positive and motivating — a good sales coach is enthusiastic.
-- Focus on: unique selling points, target customer profile, shelf placement tips, seasonal opportunities, loyalty arguments.
-- Keep responses to 4-5 sentences max. Be punchy and direct — no long paragraphs or bullet lists.
+- Teach in-depth product knowledge: indications, composition, mechanism of action, clinical data
+- Explain concepts in a clear, educational way
+- After each answer, suggest 1-2 follow-up questions
+- Respond ONLY in English
 
-CRITICAL LANGUAGE RULE: Detect the language of the delegate's question and respond ONLY in that exact language. If they write/speak in French → respond in French. If English → respond in English. If Arabic → respond in Arabic. Never switch languages mid-response. Never respond in a different language than the one used in the question. This rule overrides everything else.
+IMPORTANT RULES:
+- If asked for a LIST OF PRODUCT LINES or CATALOGUES, give the full list with exact names
+- If asked about a specific product, only discuss that product
+- Do not mention Coenzyme Q10 unless explicitly asked
+- Be precise and concise (4-5 sentences max)
 
-If information is not in the context:
-- French: "Je n'ai pas tous les détails commerciaux de ce produit, mais voici comment je le présenterais..."
-- English: "I don't have all the commercial details yet, but here's how I'd position this product..."
-- Always reframe limited info into a sales opportunity, never just say "I don't know."
+Product context:
+{context}
 
-Context from product database:
+Delegate's question: {question}
+
+Training response:"""
+
+MEDICAL_PROMPT_AR = """أنتِ الدكتورة ليلى، خبيرة في تدريب المندوبين الطبيين.
+تقومين بتدريب مندوب طبي يقدّم المنتجات للأطباء والصيادلة.
+
+دورك:
+- تعليم المعرفة المعمّقة بالمنتجات: المؤشرات، التركيب، آلية العمل، البيانات السريرية
+- شرح المفاهيم بطريقة تربوية وواضحة
+- بعد كل إجابة، اقترح سؤالاً أو سؤالين تكميليين
+- أجيبي دائماً باللغة العربية
+
+قاعدة المصطلحات التقنية:
+- احتفظي بأسماء المنتجات والجزيئات والمكوّنات الفعّالة والمصطلحات العلمية والجرعات بالفرنسية أو الإنجليزية
+- مثال صحيح: "يحتوي LV PSOCALM على Acide salicylique وهو متوفر على شكل كريم"
+
+قواعد مهمة:
+- إذا طُلبت قائمة التشكيلات أو الكتالوجات، أعطِ القائمة الكاملة بالأسماء الدقيقة
+- إذا طُلب منتج محدد، تحدّث عن ذلك المنتج فقط
+- لا تذكر Coenzyme Q10 إلا إذا طُلب صراحةً
+- كن دقيقاً وموجزاً (4-5 جمل كحد أقصى)
+
+سياق المنتج:
+{context}
+
+سؤال المندوب: {question}
+
+إجابة التدريب:"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMMERCIAL PROMPTS  fr / en / ar
+# ══════════════════════════════════════════════════════════════════════════════
+
+COMMERCIAL_PROMPT_FR = """Tu es Vita, coach en vente pharmaceutique.
+Tu formes un DÉLÉGUÉ COMMERCIAL qui vend des produits aux pharmacies, cliniques et acheteurs de santé.
+
+Ton rôle :
+- Former aux techniques de vente : présenter la valeur du produit, gérer les objections, se différencier de la concurrence, conclure une vente
+- Transformer les caractéristiques en bénéfices clients
+- Proposer des scénarios de vente quand c'est pertinent
+- Après chaque réponse, suggérer 1-2 défis commerciaux à pratiquer
+- Ton positif et motivant
+- Réponses courtes : 4-5 phrases max, directes
+- Répondre UNIQUEMENT en français
+
+Si l'information n'est pas dans le contexte : "Je n'ai pas tous les détails commerciaux de ce produit, mais voici comment je le présenterais..."
+
+Contexte produit :
+{context}
+
+Question du délégué : {question}
+
+Réponse commerciale :"""
+
+COMMERCIAL_PROMPT_EN = """You are Vita, a pharmaceutical sales training coach.
+You are training a COMMERCIAL delegate who sells products to pharmacies, clinics and healthcare buyers.
+
+Your role:
+- Train sales skills: present product value, handle objections, differentiate from competitors, close a sale
+- Translate features into customer benefits
+- Roleplay selling scenarios when relevant
+- After each answer, suggest 1-2 sales challenges to practice
+- Keep energy positive and motivating
+- Keep responses to 4-5 sentences max — punchy and direct
+- Respond ONLY in English
+
+If information is missing: "I don't have all the commercial details yet, but here's how I'd position this product..."
+
+Product context:
 {context}
 
 Delegate question: {question}
 
-Sales training response (be motivating, practical, suggest objection handling at the end):"""
+Sales training response:"""
+
+COMMERCIAL_PROMPT_AR = """أنتِ Vita، مدرّبة مبيعات صيدلانية.
+تقومين بتدريب مندوب تجاري يبيع المنتجات للصيدليات والعيادات.
+
+دورك:
+- تدريب مهارات البيع: تقديم قيمة المنتج، التعامل مع الاعتراضات، التميّز عن المنافسين
+- تحويل المزايا إلى فوائد للعميل
+- اقتراح سيناريوهات بيع عند الاقتضاء
+- بعد كل إجابة، اقترح تحدّياً أو تحدّيين تجاريين للتدرّب
+- أسلوب إيجابي ومحفّز
+- إجابات قصيرة: 4-5 جمل كحد أقصى
+- أجيبي دائماً باللغة العربية
+- احتفظي بأسماء المنتجات والمصطلحات العلمية بالفرنسية أو الإنجليزية
+
+إذا لم تكن المعلومات متوفرة: "ليس لديّ كل التفاصيل، لكن إليك كيف سأقدّم هذا المنتج..."
+
+سياق المنتج:
+{context}
+
+سؤال المندوب: {question}
+
+إجابة تدريبية تجارية:"""
 
 
-# ── Vita Commercial prompt — Vita acts as delegate, user is the doctor ─────────
-VITA_COMMERCIAL_PROMPT = """You are Vita, a pharmaceutical delegate from VITAL SA.
-Your role is to conduct a natural, flowing medical visit with a doctor (the user). Follow the VITAL framework flexibly, not rigidly.
+# ══════════════════════════════════════════════════════════════════════════════
+# VITA COMMERCIAL PROMPTS  fr / en / ar
+# ══════════════════════════════════════════════════════════════════════════════
 
-CRITICAL LANGUAGE RULE: 
-- Detect the language of the doctor's input (French, English, or Arabic)
-- Respond ONLY in that exact language throughout the entire conversation
-- If the doctor switches language mid-conversation, you MUST switch to that new language immediately
-- Never mix languages in a single response
-- Do not explain which language you're using – just respond in that language
+VITA_COMMERCIAL_GREETING_PROMPT = """You are Vita, a pharmaceutical delegate from VITAL SA.
+A doctor has just started a conversation with you.
+
+Introduce yourself warmly in 2 sentences, state your company (VITAL SA), and ask the doctor what product or patient need they would like to discuss today.
+
+Respond in French by default. If the doctor uses English or Arabic, immediately switch to that language.
+Do not use the full VITAL framework yet – just a natural, professional opening."""
+
+VITA_COMMERCIAL_ASK_PROMPT_FR = """Tu es Vita, déléguée pharmaceutique de VITAL SA.
+Continue la visite médicale naturellement — NE te réintroduis PAS, NE demande pas la permission.
+
+COMPORTEMENT ADAPTATIF :
+- Si le médecin demande un produit par son nom → donne immédiatement 2-3 bénéfices clés, preuves, utilisation pratique
+- Si le médecin exprime un besoin → suggère le(s) produit(s) pertinent(s), bénéfices, mode d'action, puis une courte question de suivi
+- Sondage uniquement si la demande est très vague
+
+OBJECTIONS (A-C-R-V) : Accueillir → Clarifier → Répondre → Valider
+
+Style : chaleureux, professionnel, 4-5 phrases max, focus résultats patients.
+Réponds UNIQUEMENT en français.
+
+Contexte produit :
+{context}
+
+Intervention du médecin : {question}
+
+Ta réponse :"""
+
+VITA_COMMERCIAL_ASK_PROMPT_EN = """You are Vita, a pharmaceutical delegate from VITAL SA.
+Continue the medical visit naturally — do NOT re-introduce yourself, do NOT ask for permission.
 
 ADAPTIVE BEHAVIOR:
-- If the doctor directly asks for a specific product by name (e.g., "Tell me about LV PSOCALM"), provide the information immediately: 2-3 key benefits, evidence, and practical usage.
-- If the doctor expresses a need or condition (e.g., "I need a supplement for vitamin A", "What do you have for anxiety?"), suggest the most relevant product(s) from your knowledge or the context. Give its key benefits, how it works, and practical usage. Then optionally ask a short follow-up question to engage further.
-- Only use Sondage (discovery questions) when the doctor's request is very vague or you truly lack enough information to make a recommendation.
+- If the doctor asks for a product by name → immediately give 2-3 key benefits, evidence, practical usage
+- If the doctor expresses a need → suggest the most relevant product(s), benefits, mechanism, then a short follow-up question
+- Use discovery questions only if the request is very vague
 
-THE VITAL FRAMEWORK (use flexibly, repeat as needed):
+OBJECTIONS (A-C-R-V): Acknowledge → Clarify → Respond → Validate
 
-1. INTRODUCTION (Instant Zero)
-   - Start with a warm greeting, state who you are, ask for permission
-   - Be brief and respectful of time
+Style: warm, professional, 4-5 sentences max, focus on patient outcomes.
+Respond ONLY in English.
 
-2. SONDAGE (Discovery & Understanding)
-   - Ask open questions to understand the doctor's needs, practice, patient profiles
-   - Listen actively and adapt based on their answers
-   - You may return to this at any time if you need more context
-
-3. SYNTHÈSE (Reformulation)
-   - Periodically summarize what you've understood to ensure alignment
-   - Show that you're listening and value their input
-
-4. ARGUMENTATION (Benefits & Evidence)
-   - Present product benefits linked to the doctor's expressed needs
-   - Provide evidence (studies, data, clinical experience) naturally
-   - You may give multiple arguments over several exchanges
-   - Focus on patient outcomes and practical value
-
-5. OBJECTIONS (A-C-R-V)
-   - When objections arise, handle them immediately:
-        * Accueillir / Acknowledge with empathy
-        * Clarifier / Clarify to understand the real concern
-        * Répondre / Respond with facts + evidence
-        * Valider / Validate that the objection is resolved
-   - You may handle several objections throughout the conversation
-   - Never ignore or dismiss concerns
-
-6. CONCLUSION & ENGAGEMENT
-   - When the conversation reaches a natural closing point, propose a micro-commitment
-   - Look for signals: detailed questions, resolved objections, interest in samples, request for follow-up
-   - Keep it light and professional
-
-CONVERSATION STYLE:
-- Be warm, professional, and empathetic
-- Read the doctor's tone and adapt (busy → be brief; engaged → go deeper)
-- Use natural transitions, not scripts
-- Let the conversation flow organically
-- You are a trusted partner, not a salesperson
-
-If information is missing from the context database, say you don't have all the details and the department will come back to them.
-
-Context from product database:
+Product context:
 {context}
 
 Doctor's input: {question}
 
-Your response (as Vita) – have a natural conversation. Follow the VITAL framework flexibly. Respond in the EXACT SAME LANGUAGE as the doctor. Keep it warm, professional, and adaptive."""
+Your response:"""
+
+VITA_COMMERCIAL_ASK_PROMPT_AR = """أنتِ Vita، مندوبة صيدلانية من VITAL SA.
+تابعي الزيارة الطبية بشكل طبيعي — لا تُعرّفي بنفسك مجدداً، لا تطلبي إذناً.
+
+السلوك التكيّفي:
+- إذا طلب الطبيب منتجاً باسمه → قدّمي فوراً 2-3 فوائد رئيسية، أدلة، استخدام عملي
+- إذا أعرب عن حاجة → اقترحي المنتج الأنسب، الفوائد، آلية العمل، ثم سؤال متابعة قصير
+- أسئلة الاستكشاف فقط إذا كان الطلب مبهماً جداً
+
+الاعتراضات (أ-و-ر-ت): استقبال → توضيح → رد → تأكيد
+
+الأسلوب: دافئ، مهني، 4-5 جمل كحد أقصى، ركّزي على نتائج المريض.
+أجيبي دائماً باللغة العربية.
+احتفظي بأسماء المنتجات والمصطلحات العلمية بالفرنسية أو الإنجليزية.
+
+سياق المنتج:
+{context}
+
+كلام الطبيب: {question}
+
+ردّك:"""
 
 
-def get_prompt(mode: str) -> str:
-    if mode == "commercial":
-        return COMMERCIAL_PROMPT
-    elif mode == "vita_commercial":
-        return VITA_COMMERCIAL_PROMPT
-    return MEDICAL_PROMPT
+# ══════════════════════════════════════════════════════════════════════════════
+# PROMPT ROUTING
+# ══════════════════════════════════════════════════════════════════════════════
 
+_PROMPT_MAP = {
+    ("medical",         "fr"): MEDICAL_PROMPT_FR,
+    ("medical",         "en"): MEDICAL_PROMPT_EN,
+    ("medical",         "ar"): MEDICAL_PROMPT_AR,
+    ("commercial",      "fr"): COMMERCIAL_PROMPT_FR,
+    ("commercial",      "en"): COMMERCIAL_PROMPT_EN,
+    ("commercial",      "ar"): COMMERCIAL_PROMPT_AR,
+    ("vita_commercial", "fr"): VITA_COMMERCIAL_ASK_PROMPT_FR,
+    ("vita_commercial", "en"): VITA_COMMERCIAL_ASK_PROMPT_EN,
+    ("vita_commercial", "ar"): VITA_COMMERCIAL_ASK_PROMPT_AR,
+}
+
+
+def get_prompt(mode: str, for_greeting: bool = False, lang: str = "fr") -> str:
+    """Return the appropriate prompt based on mode, greeting flag, and detected language."""
+    if for_greeting:
+        if mode == "vita_commercial":
+            return VITA_COMMERCIAL_GREETING_PROMPT
+        return GREETING_PROMPT
+    return _PROMPT_MAP.get((mode, lang), _PROMPT_MAP.get((mode, "fr"), MEDICAL_PROMPT_FR))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RAG ENGINE  — original logic, untouched except the two get_prompt() calls
+#               now pass lang=lang
+# ══════════════════════════════════════════════════════════════════════════════
 
 class RAGEngine:
     """Singleton-style RAG engine. Initialize once and reuse."""
@@ -731,10 +1088,8 @@ class RAGEngine:
         persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
         coll_name   = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
 
-        # Embeddings restent sur Ollama (local)
         self.embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
 
-        # LLM → Token Factory API (compatible OpenAI)
         self.llm = ChatOpenAI(
             model=os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct"),
             openai_api_key=os.getenv("TOKEN_FACTORY_API_KEY"),
@@ -757,7 +1112,6 @@ class RAGEngine:
 
         import re
 
-        # 1. Semantic search
         question_vector = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=[question_vector],
@@ -781,7 +1135,6 @@ class RAGEngine:
             })
             seen_ids.add(meta.get("source_id", ""))
 
-        # 2. Force-inject catalogue chunks for gamme queries
         catalogue_keywords = [
             "gamme", "gammes", "catalogue", "catalogues",
             "liste", "laboratoire", "portfolio", "offre",
@@ -806,7 +1159,6 @@ class RAGEngine:
                 })
                 seen_ids.add(source_id)
 
-        # 3. Keyword search on product names
         words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
@@ -854,6 +1206,8 @@ class RAGEngine:
     def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
         self.initialize()
 
+        lang = detect_language(question)          # ← NEW: detect language
+
         question_lower = question.lower()
         is_gamme_question = any(word in question_lower for word in [
             "gamme", "gammes", "catalogue", "catalogues", "liste des gammes",
@@ -869,7 +1223,6 @@ class RAGEngine:
                     if hit["product_name"] and hit["product_name"] not in gammes_list:
                         gammes_list.append(hit["product_name"])
 
-                # Cas 1 : gamme spécifique demandée
                 specific_gamme = None
                 for gamme_name in gammes_list:
                     if gamme_name.lower() in question_lower:
@@ -907,7 +1260,6 @@ Réponse :"""
                     sources = [{"name": specific_gamme, "relevance": 0.99}]
                     return {"answer": answer.strip(), "sources": sources, "chunks_used": len(gamme_chunks["documents"])}
 
-                # Cas 2 : liste de toutes les gammes
                 else:
                     gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
                     context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
@@ -942,7 +1294,7 @@ Réponse :"""
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode).format(context=context, question=question)
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # ← NEW: lang=lang
         answer  = self.llm.invoke([HumanMessage(content=prompt)]).content
 
         seen, sources = set(), []
@@ -956,6 +1308,9 @@ Réponse :"""
     # ── Ask streaming ─────────────────────────────────────────────────────────
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
         self.initialize()
+
+        lang = detect_language(question)          # ← NEW: detect language
+
         hits = self.search(question, n_results=n_results)
 
         if not hits:
@@ -965,7 +1320,7 @@ Réponse :"""
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode).format(context=context, question=question)
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # ← NEW: lang=lang
 
         for chunk in self.llm.stream([HumanMessage(content=prompt)]):
             token = chunk.content
@@ -994,16 +1349,17 @@ Réponse :"""
         }
 
     # ── Greeting (non-streaming) ──────────────────────────────────────────────
-    def greeting(self) -> str:
-        """Generate opening greeting asking which training mode the delegate wants."""
+    def greeting(self, mode: str = "medical") -> str:
+        """Generate opening greeting for the selected mode."""
         self.initialize()
-        return self.llm.invoke([HumanMessage(content=GREETING_PROMPT)]).content.strip()
+        prompt_text = get_prompt(mode, for_greeting=True)
+        return self.llm.invoke([HumanMessage(content=prompt_text)]).content.strip()
 
-    # ── Greeting streaming ────────────────────────────────────────────────────
-    def stream_greeting(self):
+    def stream_greeting(self, mode: str = "medical"):
         """Stream the opening greeting token by token."""
         self.initialize()
-        for chunk in self.llm.stream([HumanMessage(content=GREETING_PROMPT)]):
+        prompt_text = get_prompt(mode, for_greeting=True)
+        for chunk in self.llm.stream([HumanMessage(content=prompt_text)]):
             token = chunk.content
             if token:
                 yield {"type": "token", "content": token}
@@ -1011,9 +1367,7 @@ Réponse :"""
 
 
 # ── Shared engine instance ────────────────────────────────────────────────────
-engine = RAGEngine()
-
-=== ./backend/rag/ingest.py ===
+engine = RAGEngine()=== ./backend/rag/ingest.py ===
 """
 ingest.py
 =========
@@ -1372,9 +1726,14 @@ if __name__ == "__main__":
 """
 backend/tts/synthesizer.py
 ==========================
-TTS intelligent : segmentation contextuelle 100% naturelle
-Supports : Français (Denise), Anglais (Jenny), Arabe (Zariyah)
-Prononciation fluide comme Google Translate
+TTS simple et rapide — sans transformers, sans torch
+Détection de langue : langdetect (local, < 1s)
+Voix : edge-tts  (Denise FR · Jenny EN · Zariyah AR)
+
+Cas spécial arabe mixte :
+  Les mots scientifiques/français insérés dans une réponse arabe
+  sont regroupés et lus par la voix française (Denise), puis on
+  revient à la voix arabe (Zariyah).
 """
 
 import asyncio
@@ -1382,231 +1741,211 @@ import base64
 import os
 import re
 import tempfile
-from transformers import pipeline
 
-# =====================================
-# Chargement du modèle de détection de langue
-# =====================================
-print("Chargement du modèle de détection de langue...")
-lang_classifier = pipeline(
-    "text-classification",
-    model="papluca/xlm-roberta-base-language-detection",
-    top_k=None,
-    device=-1  # CPU
-)
-
-# =====================================
-# Voix TTS
-# =====================================
+# ─────────────────────────────────────────────────────────────
+# Voix edge-tts
+# ─────────────────────────────────────────────────────────────
 VOICES = {
     "fr": "fr-FR-DeniseNeural",
     "en": "en-US-JennyNeural",
     "ar": "ar-SA-ZariyahNeural",
 }
 
-# =====================================
-# Fonction : détection langue avec fallback et score
-# =====================================
-def get_lang_from_model(text_chunk: str, fallback_lang="fr") -> str:
-    if not text_chunk.strip():
-        return fallback_lang
+# ─────────────────────────────────────────────────────────────
+# Nettoyage du texte avant TTS (supprime le markdown)
+# ─────────────────────────────────────────────────────────────
+def clean_for_tts(text: str) -> str:
+    """
+    Supprime les symboles markdown qui seraient lus à voix haute
+    par edge-tts — fonctionne pour FR, EN et AR.
+    """
+    # Gras/italique : **texte** ou *texte* → texte  (avant de toucher aux *)
+    text = re.sub(r'\*{1,3}([^*\n]+?)\*{1,3}', r'\1', text)
+    # Puces universelles en début de ligne : * - – — • ◦ ▪ › » et chiffres arabes ١. ٢.
+    text = re.sub(r'^\s*([*\-–—•◦▪›»]|[0-9٠-٩]+[.\)]|[٠-٩]+\.?)\s+', '', text, flags=re.MULTILINE)
+    # Titres markdown : ## Titre → Titre
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Backticks : `code` → code
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # Astérisques isolés restants
+    text = text.replace('*', '')
+    # Underscores italiques : _texte_ → texte
+    text = re.sub(r'_([^_]+)_', r'\1', text)
+    # Tirets de séparation (---  ===  ***) → rien
+    text = re.sub(r'^[\-=*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # Lignes vides multiples → une seule
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
-    # Détection arabe par script (très fiable)
-    if re.search(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]', text_chunk):
-        return 'ar'
 
+# ─────────────────────────────────────────────────────────────
+# Détection de langue dominante
+# ─────────────────────────────────────────────────────────────
+def detect_lang(text: str, fallback: str = "fr") -> str:
+    if not text or not text.strip():
+        return fallback
+    # Comparer les caractères arabes vs latins
+    arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
+    latin_chars  = len(re.findall(r'[A-Za-z]', text))
+    if arabic_chars > latin_chars:
+        return "ar"
     try:
-        results = lang_classifier(text_chunk[:200])
-        top = results[0][0]
-        lang = top['label']
-        score = top['score']
+        from langdetect import detect
+        lang = detect(text.strip())
+        return lang if lang in ("fr", "en", "ar") else fallback
+    except Exception:
+        return fallback
 
-        # Si confiance faible, on utilise fallback
-        if score < 0.90:
-            return fallback_lang
 
-        if lang in ["fr", "en", "ar"]:
-            return lang
+# ─────────────────────────────────────────────────────────────
+# Segmentation token par token (arabe vs latin)
+# ─────────────────────────────────────────────────────────────
+def _is_latin_token(token: str) -> bool:
+    """True si le token contient des lettres latines (mot FR/EN scientifique)."""
+    return bool(re.search(r'[A-Za-zÀ-ÿ]', token))
 
-        return fallback_lang
 
-    except:
-        return fallback_lang
+def split_arabic_latin(text: str) -> list[tuple[str, str]]:
+    """
+    Découpe le texte mot par mot et regroupe les séquences consécutives
+    de même type (arabe ou latin) en un seul segment.
 
-# =====================================
-# Fonction : segmentation intelligente
-# =====================================
-def smart_segment(text: str) -> list[tuple[str, str]]:
+    Exemple :
+      "يحتوي على Acide salicylique وهو متوفر"
+      -> [("يحتوي على", "ar"), ("Acide salicylique", "fr"), ("وهو متوفر", "ar")]
+    """
+    tokens = text.split()
     segments = []
+    current_tokens = []
+    current_type = None
 
-    # Découpage en phrases
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-
-    for sentence in sentences:
-        if not sentence.strip():
+    for token in tokens:
+        if not token.strip():
             continue
+        token_type = "fr" if _is_latin_token(token) else "ar"
 
-        # langue globale de la phrase
-        sentence_lang = get_lang_from_model(sentence)
+        if token_type == current_type:
+            current_tokens.append(token)
+        else:
+            if current_tokens and current_type:
+                chunk = " ".join(current_tokens).strip()
+                if chunk:
+                    segments.append((chunk, current_type))
+            current_tokens = [token]
+            current_type   = token_type
 
-        words = sentence.split()
+    # Dernier groupe
+    if current_tokens and current_type:
+        chunk = " ".join(current_tokens).strip()
+        if chunk:
+            segments.append((chunk, current_type))
 
-        # phrases courtes → direct
-        if len(words) <= 6:
-            segments.append((sentence, sentence_lang))
-            continue
+    return segments if segments else [(text.strip(), "ar")]
 
-        current_chunk = []
-        current_lang = sentence_lang
-        i = 0
 
-        while i < len(words):
-            # analyser petit groupe de mots (contextuel)
-            chunk_test = " ".join(words[i:i+3])
-            detected_lang = get_lang_from_model(chunk_test, fallback_lang=sentence_lang)
-
-            # si changement réel
-            if detected_lang != current_lang:
-                if current_chunk:
-                    segments.append((" ".join(current_chunk), current_lang))
-                current_chunk = [words[i]]
-                current_lang = detected_lang
-            else:
-                current_chunk.append(words[i])
-
-            i += 1
-
-        if current_chunk:
-            segments.append((" ".join(current_chunk), current_lang))
-
-    return segments
-
-# =====================================
-# Fonction : synthèse d’un segment en mp3
-# =====================================
-async def synthesize_segment_async(text: str, lang: str) -> bytes:
+# ─────────────────────────────────────────────────────────────
+# Synthèse d'un seul segment audio
+# ─────────────────────────────────────────────────────────────
+async def _synth_segment(text: str, lang: str) -> bytes:
     import edge_tts
     voice = VOICES.get(lang, VOICES["fr"])
-
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         out_path = f.name
-
     try:
-        communicate = edge_tts.Communicate(text.strip(), voice, rate="+10%")
-        await communicate.save(out_path)
+        comm = edge_tts.Communicate(text.strip(), voice, rate="+10%")
+        await comm.save(out_path)
         with open(out_path, "rb") as f:
             return f.read()
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
 
-# =====================================
-# Fonction : TTS asynchrone multi-segments
-# =====================================
+
+# ─────────────────────────────────────────────────────────────
+# Estimation des timings pour le lipsync
+# ─────────────────────────────────────────────────────────────
+def _estimate_timings(text: str, audio_b64: str) -> tuple[list, list, list]:
+    words = text.strip().split()
+    if not words:
+        return [], [], []
+    audio_bytes = len(audio_b64) * 3 / 4
+    duration_ms = max((audio_bytes / 16000) * 1000, 500)
+    unit_dur    = duration_ms / len(words)
+    wtimes      = [i * unit_dur for i in range(len(words))]
+    wdurations  = [unit_dur] * len(words)
+    return words, wtimes, wdurations
+
+
+# ─────────────────────────────────────────────────────────────
+# Synthèse principale (async)
+# ─────────────────────────────────────────────────────────────
 async def synthesize_async(text: str, lang: str = "auto") -> dict:
-    if lang != "auto" and lang in VOICES:
-        return await _single_tts(text, lang)
+    # 0. Nettoyer le markdown avant toute synthèse
+    text = clean_for_tts(text)
+    if not text:
+        return {"audio_b64": "", "voice": VOICES["fr"], "lang": "fr",
+                "format": "mp3", "segments": [], "words": [], "wtimes": [], "wdurations": []}
 
-    segments_info = smart_segment(text)
+    # 1. Détecter la langue dominante
+    detected = detect_lang(text) if lang == "auto" or lang not in VOICES else lang
 
-    print(f"🎙️ TTS intelligent → {len(segments_info)} segment(s)")
-    for seg_text, seg_lang in segments_info:
-        print(f"   [{seg_lang}] {seg_text[:80].strip()}...")
+    # 2. Cas arabe avec mots latins -> segments mixtes
+    if detected == "ar" and re.search(r'[A-Za-z]{2,}', text):
+        segments = split_arabic_latin(text)
 
-    if len(segments_info) == 1:
-        seg_text, seg_lang = segments_info[0]
-        return await _single_tts(seg_text, seg_lang)
+        print(f"🎙️ TTS arabe mixte -> {len(segments)} segment(s)")
+        for seg_text, seg_lang in segments:
+            print(f"   [{seg_lang}] {seg_text[:70]}")
 
-    audio_parts = []
-    segments_meta = []
+        audio_parts: list[bytes] = []
+        for seg_text, seg_lang in segments:
+            if not seg_text.strip():
+                continue
+            mp3 = await _synth_segment(seg_text, seg_lang)
+            audio_parts.append(mp3)
 
-    for seg_text, seg_lang in segments_info:
-        if not seg_text.strip():
-            continue
-        mp3_bytes = await synthesize_segment_async(seg_text, seg_lang)
-        audio_parts.append(mp3_bytes)
-        segments_meta.append({"text": seg_text, "lang": seg_lang})
+        if not audio_parts:
+            mp3 = await _synth_segment(text, "ar")
+            audio_parts = [mp3]
 
-    if not audio_parts:
-        return await _single_tts(text, "fr")
-
-    # ajouter pause naturelle entre segments
-    silence = b'\x00' * 2000
-    combined = silence.join(audio_parts)
-    audio_b64 = base64.b64encode(combined).decode("utf-8")
-
-    # Création des timings pour le frontend
-    all_words = []
-    all_wtimes = []
-    all_wdurations = []
-    time_offset = 0
-    total_duration_est = max(len(combined) / 16000 * 1000, 1000)
-
-    for seg in segments_meta:
-        units = seg["text"].strip().split()
-        if not units:
-            units = [" "]
-        seg_dur = total_duration_est * (len(seg["text"]) / max(len(text), 1))
-        unit_dur = seg_dur / len(units)
-
-        for w in units:
-            all_words.append(w)
-            all_wtimes.append(time_offset)
-            all_wdurations.append(unit_dur)
-            time_offset += unit_dur
-
-    dominant_lang = max(
-        set(s["lang"] for s in segments_meta),
-        key=lambda l: sum(len(s["text"]) for s in segments_meta if s["lang"] == l)
-    )
-
-    return {
-        "audio_b64": audio_b64,
-        "voice": VOICES.get(dominant_lang, VOICES["fr"]),
-        "lang": dominant_lang,
-        "format": "mp3",
-        "segments": [{"text": s["text"], "lang": s["lang"]} for s in segments_meta],
-        "words": all_words,
-        "wtimes": all_wtimes,
-        "wdurations": all_wdurations
-    }
-
-# =====================================
-# Fonction : TTS d’un texte entier (simple)
-# =====================================
-async def _single_tts(text: str, lang: str) -> dict:
-    import edge_tts
-    voice = VOICES.get(lang, VOICES["fr"])
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        out_path = f.name
-    try:
-        communicate = edge_tts.Communicate(text, voice, rate="+10%")
-        await communicate.save(out_path)
-        with open(out_path, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-        words = text.strip().split()
-        duration_est = max(len(audio_b64) / 200, 1000)
-        unit_dur = duration_est / max(len(words), 1)
+        combined  = b"".join(audio_parts)
+        audio_b64 = base64.b64encode(combined).decode("utf-8")
+        words, wtimes, wdurations = _estimate_timings(text, audio_b64)
 
         return {
-            "audio_b64": audio_b64,
-            "voice": voice,
-            "lang": lang,
-            "format": "mp3",
-            "segments": [{"text": text, "lang": lang}],
-            "words": words,
-            "wtimes": [i * unit_dur for i in range(len(words))],
-            "wdurations": [unit_dur] * len(words)
+            "audio_b64":  audio_b64,
+            "voice":      VOICES["ar"],
+            "lang":       "ar",
+            "format":     "mp3",
+            "segments":   [{"text": t, "lang": l} for t, l in segments],
+            "words":      words,
+            "wtimes":     wtimes,
+            "wdurations": wdurations,
         }
-    finally:
-        if os.path.exists(out_path):
-            os.unlink(out_path)
 
-# =====================================
-# Fonction synchrone pour appeler l’async
-# =====================================
+    # 3. Cas simple FR / EN / AR pur
+    print(f"🎙️ TTS simple [{detected}] -> {text[:70]}")
+    mp3_bytes = await _synth_segment(text, detected)
+    audio_b64 = base64.b64encode(mp3_bytes).decode("utf-8")
+    words, wtimes, wdurations = _estimate_timings(text, audio_b64)
+
+    return {
+        "audio_b64":  audio_b64,
+        "voice":      VOICES[detected],
+        "lang":       detected,
+        "format":     "mp3",
+        "segments":   [{"text": text, "lang": detected}],
+        "words":      words,
+        "wtimes":     wtimes,
+        "wdurations": wdurations,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# Interface synchrone
+# ─────────────────────────────────────────────────────────────
 def synthesize(text: str, lang: str = "auto") -> dict:
+    """Point d'entrée synchrone."""
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(asyncio.run, synthesize_async(text, lang))
@@ -1959,6 +2298,171 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 @media(max-width:700px){.app{grid-template-columns:1fr}.avatar-panel{display:none}}
 
 
+.test-dropdown-wrap{position:relative;}
+.test-btn{padding:5px 12px;border-radius:8px;font-family:var(--sans);font-size:11px;font-weight:500;cursor:pointer;transition:all .2s;border:1px solid rgba(167,139,250,0.3);background:rgba(167,139,250,0.08);color:#a78bfa;display:flex;align-items:center;gap:5px;}
+.test-btn:hover{background:rgba(167,139,250,0.15);border-color:rgba(167,139,250,0.5)}
+.chevron-icon{transition:transform .2s;flex-shrink:0}
+.test-btn.open .chevron-icon{transform:rotate(180deg)}
+.test-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:6px;min-width:220px;z-index:50;opacity:0;pointer-events:none;transform:translateY(-6px);transition:opacity .15s,transform .15s;box-shadow:0 8px 32px rgba(0,0,0,0.4);}
+.test-menu.open{opacity:1;pointer-events:all;transform:translateY(0)}
+.test-menu-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;text-decoration:none;transition:background .12s;}
+.medical-item:hover{background:rgba(126,184,247,0.08)}
+.commercial-item:hover{background:rgba(201,169,110,0.08)}
+.test-menu-icon{font-size:18px;flex-shrink:0;width:28px;text-align:center}
+.test-menu-label{font-size:13px;font-weight:500;}
+.medical-item .test-menu-label{color:var(--accent)}
+.commercial-item .test-menu-label{color:var(--gold)}
+.test-menu-sub{font-size:11px;color:var(--text-dim);margin-top:1px}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ★ AJOUTER À LA FIN DE  frontend/css/style.css
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Suggestions adaptives ─────────────────────────────────────────────── */
+.suggestions-wrap {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestions-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.suggestions-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.suggestion-chip {
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  border: 1px solid rgba(126, 184, 247, 0.25);
+  color: var(--accent);
+  background: rgba(126, 184, 247, 0.05);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+  max-width: 300px;
+  font-family: var(--sans);
+}
+.suggestion-chip:hover:not(:disabled) {
+  border-color: rgba(126, 184, 247, 0.5);
+  background: rgba(126, 184, 247, 0.12);
+  transform: translateY(-1px);
+}
+.suggestion-chip:active:not(:disabled) {
+  transform: translateY(0);
+}
+/* Variante violette pour commercial.js */
+.suggestions-wrap.commercial .suggestion-chip {
+  border-color: rgba(192, 132, 252, 0.25);
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.05);
+}
+.suggestions-wrap.commercial .suggestion-chip:hover:not(:disabled) {
+  border-color: rgba(192, 132, 252, 0.5);
+  background: rgba(192, 132, 252, 0.12);
+}
+/* Mini loader pendant la génération */
+.suggestions-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.mini-dots span {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: bounce 1.2s infinite;
+  margin: 0 1px;
+}
+.mini-dots span:nth-child(2) { animation-delay: 0.2s; }
+.mini-dots span:nth-child(3) { animation-delay: 0.4s; }
+.suggestions-wrap {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestions-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.suggestions-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.suggestion-chip {
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  border: 1px solid rgba(126, 184, 247, 0.25);
+  color: var(--accent);
+  background: rgba(126, 184, 247, 0.05);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+  max-width: 280px;
+}
+.suggestion-chip:hover {
+  border-color: rgba(126, 184, 247, 0.5);
+  background: rgba(126, 184, 247, 0.12);
+  transform: translateY(-1px);
+}
+.suggestion-chip:active {
+  transform: translateY(0);
+}
+
+── Pour commercial.js (chips violettes) : ──
+.suggestions-wrap.commercial .suggestion-chip {
+  border-color: rgba(192, 132, 252, 0.25);
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.05);
+}
+.suggestions-wrap.commercial .suggestion-chip:hover {
+  border-color: rgba(192, 132, 252, 0.5);
+  background: rgba(192, 132, 252, 0.12);
+}
+
+.suggestions-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.suggestions-loading .mini-dots span {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: bounce 1.2s infinite;
+  margin: 0 1px;
+}
+.suggestions-loading .mini-dots span:nth-child(2) { animation-delay: 0.2s; }
+.suggestions-loading .mini-dots span:nth-child(3) { animation-delay: 0.4s; }
 === ./frontend/index.html ===
 <!DOCTYPE html>
 <html lang="en">
@@ -2055,6 +2559,32 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
       </div>
       <div class="header-right" style="display:flex;align-items:center;gap:8px;">
         <span id="mode-badge" class="mode-badge" style="display:none"></span>
+        
+        <!-- TEST DROPDOWN -->
+<div class="test-dropdown-wrap" id="test-dropdown-wrap">
+  <button class="test-btn" onclick="toggleTestMenu()" id="test-btn">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Assess Knowledge
+    <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </button>
+  <div class="test-menu" id="test-menu">
+    <div class="test-menu-header">Take a certification test</div>
+    <a class="test-menu-item medical-item" href="test-medical.html" target="_blank">
+      <span class="test-menu-icon">🩺</span>
+      <div>
+        <div class="test-menu-label">Medical Representative</div>
+        <div class="test-menu-sub">Clinical knowledge assessment · 10 questions</div>
+      </div>
+    </a>
+    <a class="test-menu-item commercial-item" href="test-commercial.html" target="_blank">
+      <span class="test-menu-icon">💼</span>
+      <div>
+        <div class="test-menu-label">Commercial Representative</div>
+        <div class="test-menu-sub">Sales skills assessment · 10 questions</div>
+      </div>
+    </a>
+  </div>
+</div>
         <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           Report
@@ -2449,7 +2979,7 @@ window.sendQuestion = async function() {
     }
 
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, sources);
+    finalizeBubble(fullText, sources, userText);
 
     if (fullText) {
       await window.speakWithAvatar(fullText);
@@ -2569,7 +3099,7 @@ async function sendAudio() {
     }
 
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, sources);
+    finalizeBubble(fullText, sources, transcript);
     if (fullText) {
       await window.speakWithAvatar(fullText);
     }
@@ -2631,21 +3161,32 @@ function addAIBubble(transcriptText) {
   scrollBottom();
   return el;
 }
-function finalizeBubble(fullText, sources) {
-  logAI(fullText, sources);
-  const textEl = document.getElementById('streaming-text');
-  if (textEl) {
-    const html = fullText.split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
-    textEl.outerHTML = html || '<p></p>';
-  }
-  const bubble = document.getElementById('streaming-bubble');
-  if (bubble && sources?.length) {
-    bubble.removeAttribute('id');
-    const tags = sources.map(s => `<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance * 100)}%</span></span>`).join('');
-    bubble.insertAdjacentHTML('beforeend', `<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
-  }
-  scrollBottom();
-}
+function finalizeBubble(fullText, sources, userQuestion) {   // ← ajouter userQuestion
+     logAI(fullText, sources);
+     const textEl = document.getElementById('streaming-text');
+     if (textEl) {
+       const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
+       textEl.outerHTML = html || '<p></p>';
+     }
+     const bubble = document.getElementById('streaming-bubble');
+     if (bubble) {
+       if (sources?.length) {
+         bubble.removeAttribute('id');
+         const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
+         bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+       } else {
+         bubble.removeAttribute('id');
+       }
+
+       // ── Suggestions adaptives (sans lecture vocale) ──────────────────────
+       if (fullText && userQuestion) {
+         // Récupère la bulle finale (après removeAttribute('id'))
+         const finalBubble = bubble.id ? bubble : bubble;
+         fetchAndRenderSuggestions(userQuestion, fullText, finalBubble);
+       }
+     }
+     scrollBottom();
+   }
 
 // ── Edit & Resend (copied from main.js) ──────────────────────
 window.startEdit = function(msgId, btn) {
@@ -2721,7 +3262,7 @@ async function resendQuestion(userText) {
       }
     }
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(full, sources);
+    finalizeBubble(full, sources, userText);
     if (full) { await window.speakWithAvatar(full); }
     setStatus('', 'Ready');
   } catch {
@@ -2828,7 +3369,189 @@ function scrollBottom() { const el = document.getElementById('messages'); el.scr
 function esc(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 // Start
-init();=== ./frontend/js/main.js ===
+
+// ── Suggestions adaptives ─────────────────────────────────────────────────────
+//
+// Appelée APRÈS finalizeBubble(), une fois la réponse complète affichée.
+// Ne déclenche PAS la lecture vocale des suggestions.
+//
+async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
+  if (!userQuestion || !aiAnswer) return;
+
+  // Déterminer mode et langue courants
+  const mode = (typeof trainingMode !== 'undefined' && trainingMode)
+    ? trainingMode
+    : (typeof MODE !== 'undefined' ? MODE : 'medical');
+
+  // Détection de langue simple côté client (fallback — le backend redétectera)
+  const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
+  const lang = arabicRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how|does)\b/i.test(aiAnswer) ? 'en'
+    : 'fr';
+
+  // Créer le placeholder "chargement" dans la bulle
+  const wrapId = 'suggest-wrap-' + Date.now();
+  bubbleEl.insertAdjacentHTML('beforeend', `
+    <div class="suggestions-wrap${mode === 'vita_commercial' || mode === 'commercial' ? ' commercial' : ''}" id="${wrapId}">
+      <div class="suggestions-label">Suggestions</div>
+      <div class="suggestions-loading">
+        <div class="mini-dots"><span></span><span></span><span></span></div>
+        <span>Génération des questions…</span>
+      </div>
+    </div>
+  `);
+  scrollBottom();
+
+  try {
+    const res = await fetch(`${API}/chat/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: userQuestion,
+        answer:   aiAnswer,
+        mode:     mode,
+        lang:     lang,
+        n:        3,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const data = res.ok ? await res.json() : null;
+    const suggestions = data?.suggestions || [];
+
+    const wrapEl = document.getElementById(wrapId);
+    if (!wrapEl) return;
+
+    if (suggestions.length === 0) {
+      wrapEl.remove();
+      return;
+    }
+
+    // Rendre les chips cliquables
+    const chipsHtml = suggestions
+      .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
+      .join('');
+
+    wrapEl.innerHTML = `
+      <div class="suggestions-label">Questions suggérées</div>
+      <div class="suggestions-chips">${chipsHtml}</div>
+    `;
+    scrollBottom();
+
+  } catch (err) {
+    console.warn('[suggestions] fetch failed:', err);
+    const wrapEl = document.getElementById(wrapId);
+    if (wrapEl) wrapEl.remove();
+  }
+}
+
+// ── Clic sur une suggestion → remplit l'input et envoie ──────────────────────
+window.applySuggestion = function(btn) {
+  const text = btn.textContent.trim();
+  if (!text) return;
+
+  // Remplir l'input
+  const input = document.getElementById('question-input');
+  if (input) {
+    input.value = text;
+    autoResize(input);
+    input.focus();
+  }
+
+  // Désactiver toutes les chips de ce groupe pour éviter le double-clic
+  const wrap = btn.closest('.suggestions-wrap');
+  if (wrap) {
+    wrap.querySelectorAll('.suggestion-chip').forEach(c => {
+      c.disabled = true;
+      c.style.opacity = '0.4';
+      c.style.cursor = 'default';
+    });
+    // Marquer la chip sélectionnée
+    btn.style.opacity = '1';
+    btn.style.background = 'rgba(126,184,247,0.18)';
+    btn.style.borderColor = 'rgba(126,184,247,0.6)';
+  }
+
+  // Envoyer automatiquement
+  sendQuestion();
+};
+init();=== ./frontend/js/frontend_patch_suggestions.js ===
+
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   3. MODIFIER finalizeBubble() dans main.js ET commercial.js
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/*
+   AVANT (version actuelle) :
+   ──────────────────────────
+   function finalizeBubble(fullText, sources) {
+     logAI(fullText, sources);
+     const textEl = document.getElementById('streaming-text');
+     if (textEl) {
+       const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
+       textEl.outerHTML = html || '<p></p>';
+     }
+     const bubble = document.getElementById('streaming-bubble');
+     if (bubble && sources?.length) {
+       bubble.removeAttribute('id');
+       const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
+       bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+     }
+     scrollBottom();
+   }
+
+   APRÈS (version patchée — REMPLACER par celle-ci) :
+   ──────────────────────────────────────────────────
+   
+*/
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   4. MODIFIER les appels à finalizeBubble() dans main.js ET commercial.js
+      pour passer la question de l'utilisateur en 3ème argument
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/*
+   DANS sendQuestion() — main.js :
+   ────────────────────────────────
+   AVANT :  finalizeBubble(full, sources);
+   APRÈS :  finalizeBubble(full, sources, ragQuestion);
+
+   DANS resendQuestion() — main.js :
+   ───────────────────────────────────
+   AVANT :  finalizeBubble(full, sources);
+   APRÈS :  finalizeBubble(full, sources, ragQuestion);
+
+   DANS sendAudio() — main.js (voice) :
+   ──────────────────────────────────────
+   AVANT :  finalizeBubble(full, sources);
+   APRÈS :  finalizeBubble(full, sources, question);   // question = c.text du transcript
+
+   ─────────
+   DANS sendQuestion() — commercial.js :
+   ──────────────────────────────────────
+   AVANT :  finalizeBubble(fullText, sources);
+   APRÈS :  finalizeBubble(fullText, sources, userText);
+
+   DANS resendQuestion() — commercial.js :
+   ────────────────────────────────────────
+   AVANT :  finalizeBubble(full, sources);
+   APRÈS :  finalizeBubble(full, sources, userText);
+
+   DANS sendAudio() — commercial.js :
+   ────────────────────────────────────
+   AVANT :  finalizeBubble(fullText, sources);
+   APRÈS :  finalizeBubble(fullText, sources, transcript);
+
+   ─────────
+   DANS loadGreeting() — main.js ET commercial.js :
+   ─────────────────────────────────────────────────
+   Le greeting n'a pas de "question utilisateur" → ne pas ajouter de suggestions.
+   Laisser : finalizeBubble(fullText, []);   ← sans 3ème argument (undefined → pas de suggestions)
+*/
+=== ./frontend/js/main.js ===
 
 const API = 'http://localhost:8000';
 window._API = API;
@@ -2842,13 +3565,11 @@ let trainingMode = null;
 async function init() {
   setStatus('loading', 'Loading avatar…');
 
-  // Attendre que initAvatar soit disponible (module chargé)
   await new Promise(resolve => {
     const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
     setTimeout(() => { clearInterval(t); resolve(); }, 5000);
   });
 
-  // Lancer avatar + stats en parallèle
   const avatarP = window.initAvatar();
   try {
     const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
@@ -2888,7 +3609,7 @@ async function streamModeIntro(mode) {
       }
     }
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(full, []);
+    finalizeBubble(full, []);   // greeting : pas de suggestions
     if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch { document.getElementById('typing-indicator')?.remove(); setStatus('','Ready'); }
@@ -3080,21 +3801,34 @@ function addAIBubble(transcriptText) {
   el.innerHTML=`<div class="avatar-sm ai">L</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
   document.getElementById('messages').appendChild(el); scrollBottom(); return el;
 }
-function finalizeBubble(fullText, sources) {
-  logAI(fullText, sources);
-  const textEl = document.getElementById('streaming-text');
-  if (textEl) {
-    const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
-    textEl.outerHTML = html || '<p></p>';
-  }
-  const bubble = document.getElementById('streaming-bubble');
-  if (bubble && sources?.length) {
-    bubble.removeAttribute('id');
-    const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
-    bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
-  }
-  scrollBottom();
-}
+
+// ★ finalizeBubble — VERSION AVEC SUGGESTIONS ──────────────────────────────
+function finalizeBubble(fullText, sources, userQuestion) {   // ← ajouter userQuestion
+     logAI(fullText, sources);
+     const textEl = document.getElementById('streaming-text');
+     if (textEl) {
+       const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
+       textEl.outerHTML = html || '<p></p>';
+     }
+     const bubble = document.getElementById('streaming-bubble');
+     if (bubble) {
+       if (sources?.length) {
+         bubble.removeAttribute('id');
+         const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
+         bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+       } else {
+         bubble.removeAttribute('id');
+       }
+
+       // ── Suggestions adaptives (sans lecture vocale) ──────────────────────
+       if (fullText && userQuestion) {
+         // Récupère la bulle finale (après removeAttribute('id'))
+         const finalBubble = bubble.id ? bubble : bubble;
+         fetchAndRenderSuggestions(userQuestion, fullText, finalBubble);
+       }
+     }
+     scrollBottom();
+   }
 
 // ── Send question ─────────────────────────────────────────────
 async function sendQuestion() {
@@ -3126,7 +3860,7 @@ async function sendQuestion() {
       }
     }
     if (!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full, sources);
+    finalizeBubble(full, sources, ragQuestion);   // ★ passer ragQuestion
     if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch {
@@ -3165,6 +3899,7 @@ async function sendAudio() {
   isLoading=true; setSend(true); addTyping();
   const blob=new Blob(audioChunks,{type:'audio/webm'});
   const form=new FormData(); form.append('audio',blob,'rec.webm');
+  let voiceQuestion = '';
   try {
     const res=await fetch(`${API}/voice/ask/stream`,{method:'POST',body:form});
     if (!res.ok) throw new Error();
@@ -3180,6 +3915,7 @@ async function sendAudio() {
         let c; try{c=JSON.parse(line.slice(6))}catch{continue}
         if (c.type==='transcript') {
           detectedLang=c.language||'fr';
+          voiceQuestion = c.text;
           const heard=c.text.toLowerCase().trim();
           if (!trainingMode) {
             const isMed=/médic|medical|clinique|docteur|pharmacien|scientif/.test(heard);
@@ -3195,7 +3931,7 @@ async function sendAudio() {
       }
     }
     if (!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full,sources);
+    finalizeBubble(full, sources, question);   // ★ passer voiceQuestion
     if (full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
@@ -3261,7 +3997,7 @@ async function resendQuestion(userText) {
       }
     }
     if(!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full,sources);
+    finalizeBubble(full, sources, ragQuestion);   // ★ passer ragQuestion
     if(full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
@@ -3349,6 +4085,209 @@ function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrol
 function setSend(d){document.getElementById('send-btn').disabled=d;}
 function scrollBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
 function esc(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── Test menu ─────────────────────────────────────────────────
+function toggleTestMenu() {
+  const menu = document.getElementById('test-menu');
+  const btn  = document.getElementById('test-btn');
+  const open = menu.classList.toggle('open');
+  btn.classList.toggle('open', open);
+}
+document.addEventListener('click', function(e) {
+  const wrap = document.getElementById('test-dropdown-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('test-menu')?.classList.remove('open');
+    document.getElementById('test-btn')?.classList.remove('open');
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ★ SUGGESTIONS ADAPTIVES
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
+  if (!userQuestion || !aiAnswer || !bubbleEl) return;
+
+  const mode = trainingMode || 'medical';
+
+  // Détection de langue légère côté client (le backend re-détecte aussi)
+  const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
+  const lang = arabicRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how|does|give|tell)\b/i.test(aiAnswer) ? 'en'
+    : 'fr';
+
+  // Placeholder de chargement
+  const wrapId = 'suggest-wrap-' + Date.now();
+  bubbleEl.insertAdjacentHTML('beforeend', `
+    <div class="suggestions-wrap" id="${wrapId}">
+      <div class="suggestions-label">Suggestions</div>
+      <div class="suggestions-loading">
+        <div class="mini-dots"><span></span><span></span><span></span></div>
+        <span style="font-size:11px;color:var(--text-dim)">Génération…</span>
+      </div>
+    </div>
+  `);
+  scrollBottom();
+
+  try {
+    const res = await fetch(`${API}/chat/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userQuestion, answer: aiAnswer, mode, lang, n: 3 }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const data = res.ok ? await res.json() : null;
+    const suggestions = data?.suggestions || [];
+
+    const wrapEl = document.getElementById(wrapId);
+    if (!wrapEl) return;
+
+    if (!suggestions.length) { wrapEl.remove(); return; }
+
+    const chipsHtml = suggestions
+      .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
+      .join('');
+
+    wrapEl.innerHTML = `
+      <div class="suggestions-label">Questions suggérées</div>
+      <div class="suggestions-chips">${chipsHtml}</div>
+    `;
+    scrollBottom();
+
+  } catch (err) {
+    console.warn('[suggestions]', err);
+    const wrapEl = document.getElementById(wrapId);
+    if (wrapEl) wrapEl.remove();
+  }
+}
+
+window.applySuggestion = function(btn) {
+  const text = btn.textContent.trim();
+  if (!text) return;
+
+  const input = document.getElementById('question-input');
+  if (input) { input.value = text; autoResize(input); input.focus(); }
+
+  // Désactiver le groupe de chips
+  const wrap = btn.closest('.suggestions-wrap');
+  if (wrap) {
+    wrap.querySelectorAll('.suggestion-chip').forEach(c => {
+      c.disabled = true; c.style.opacity = '0.4'; c.style.cursor = 'default';
+    });
+    btn.style.opacity = '1';
+    btn.style.background = 'rgba(126,184,247,0.18)';
+    btn.style.borderColor = 'rgba(126,184,247,0.6)';
+  }
+
+  sendQuestion();
+};
+
+// ── Suggestions adaptives ─────────────────────────────────────────────────────
+//
+// Appelée APRÈS finalizeBubble(), une fois la réponse complète affichée.
+// Ne déclenche PAS la lecture vocale des suggestions.
+//
+async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
+  if (!userQuestion || !aiAnswer) return;
+
+  // Déterminer mode et langue courants
+  const mode = (typeof trainingMode !== 'undefined' && trainingMode)
+    ? trainingMode
+    : (typeof MODE !== 'undefined' ? MODE : 'medical');
+
+  // Détection de langue simple côté client (fallback — le backend redétectera)
+  const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
+  const lang = arabicRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how|does)\b/i.test(aiAnswer) ? 'en'
+    : 'fr';
+
+  // Créer le placeholder "chargement" dans la bulle
+  const wrapId = 'suggest-wrap-' + Date.now();
+  bubbleEl.insertAdjacentHTML('beforeend', `
+    <div class="suggestions-wrap${mode === 'vita_commercial' || mode === 'commercial' ? ' commercial' : ''}" id="${wrapId}">
+      <div class="suggestions-label">Suggestions</div>
+      <div class="suggestions-loading">
+        <div class="mini-dots"><span></span><span></span><span></span></div>
+        <span>Génération des questions…</span>
+      </div>
+    </div>
+  `);
+  scrollBottom();
+
+  try {
+    const res = await fetch(`${API}/chat/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: userQuestion,
+        answer:   aiAnswer,
+        mode:     mode,
+        lang:     lang,
+        n:        3,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const data = res.ok ? await res.json() : null;
+    const suggestions = data?.suggestions || [];
+
+    const wrapEl = document.getElementById(wrapId);
+    if (!wrapEl) return;
+
+    if (suggestions.length === 0) {
+      wrapEl.remove();
+      return;
+    }
+
+    // Rendre les chips cliquables
+    const chipsHtml = suggestions
+      .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
+      .join('');
+
+    wrapEl.innerHTML = `
+      <div class="suggestions-label">Questions suggérées</div>
+      <div class="suggestions-chips">${chipsHtml}</div>
+    `;
+    scrollBottom();
+
+  } catch (err) {
+    console.warn('[suggestions] fetch failed:', err);
+    const wrapEl = document.getElementById(wrapId);
+    if (wrapEl) wrapEl.remove();
+  }
+}
+
+// ── Clic sur une suggestion → remplit l'input et envoie ──────────────────────
+window.applySuggestion = function(btn) {
+  const text = btn.textContent.trim();
+  if (!text) return;
+
+  // Remplir l'input
+  const input = document.getElementById('question-input');
+  if (input) {
+    input.value = text;
+    autoResize(input);
+    input.focus();
+  }
+
+  // Désactiver toutes les chips de ce groupe pour éviter le double-clic
+  const wrap = btn.closest('.suggestions-wrap');
+  if (wrap) {
+    wrap.querySelectorAll('.suggestion-chip').forEach(c => {
+      c.disabled = true;
+      c.style.opacity = '0.4';
+      c.style.cursor = 'default';
+    });
+    // Marquer la chip sélectionnée
+    btn.style.opacity = '1';
+    btn.style.background = 'rgba(126,184,247,0.18)';
+    btn.style.borderColor = 'rgba(126,184,247,0.6)';
+  }
+
+  // Envoyer automatiquement
+  sendQuestion();
+};
 
 init();
 === ./frontend/package-lock.json ===
@@ -3473,6 +4412,8 @@ init();
   },
   "homepage": "https://github.com/met4citizen/TalkingHead#readme"
 }
+=== ./frontend/test-commercial.html ===
+=== ./frontend/test-medical.html ===
 === ./instructions.txt ===
 terminal 1 : 
 venv\Scripts\activate
@@ -3578,8 +4519,8 @@ sqlalchemy==2.0.32
 
 # ── TTS (add when ready) ──────────────────────────────────────
 edge-tts
-transformers
-torch=== ./scripts/import_catalogues.py ===
+langdetect
+=== ./scripts/import_catalogues.py ===
 """
 import_catalogues.py
 ====================
