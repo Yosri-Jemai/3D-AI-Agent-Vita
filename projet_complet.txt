@@ -1,36 +1,25 @@
-=== ./.env ===
-# ─── MySQL ───────────────────────────────────────────────────
-MYSQL_HOST=localhost
-MYSQL_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=root
-MYSQL_DATABASE=vital_crm
+﻿
 
-# ─── Token Factory ─────────────────────────────────
-TOKEN_FACTORY_API_KEY=sk-eba12363be2745e486aafc91d91652cc
-TOKEN_FACTORY_BASE_URL=https://tokenfactory.esprit.tn
-TOKEN_FACTORY_MODEL=hosted_vllm/Llama-3.1-70B-Instruct 
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\__init__.py
+========================================
+# backend package
 
-# ─── Ollama ──────────────────────────────────────────────────
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_LLM_MODEL=llama3.1
-OLLAMA_EMBED_MODEL=nomic-embed-text
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\api\__init__.py
+========================================
+# api package
 
-# ─── ChromaDB ────────────────────────────────────────────────
-CHROMA_PERSIST_DIR=./chroma_db
-CHROMA_COLLECTION_NAME=medical_products
-
-# ─── API ─────────────────────────────────────────────────────
-API_HOST=0.0.0.0
-API_PORT=8000
-=== ./backend/api/routes_chat.py ===
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\api\routes_chat.py
+========================================
 """
 backend/api/routes_chat.py
 ===========================
 Chat endpoints:
   GET  /chat/health
   GET  /chat/stats
-  GET  /chat/greeting/stream   — opening greeting, streams token by token
+  GET  /chat/greeting/stream   â€” opening greeting, streams token by token
   POST /chat/ask
   POST /chat/ask/stream
 """
@@ -142,45 +131,18 @@ def get_products():
 def mode_intro_stream(mode: str = "medical"):
     """Stream a mode-specific intro message from Vita."""
     from backend.rag.engine import engine
-
-    if mode == "medical":
-        prompt = """You are Vita, a medical product training coach for a pharmaceutical company.
-A delegate just chose medical training mode. 
-Introduce yourself warmly as Vita, explain briefly what you will help them with (product indications, composition, clinical use, medical terminology, what to say to doctors and pharmacists).
-End by asking them to select a product to get started.
-Be professional and warm. 3-4 sentences max. Respond in French."""
-# Commercial mode intro
-    elif mode == "vita_commercial":
-        prompt = """You are Vita, a pharmaceutical delegate from VITAL SA.
-    You are about to have a natural conversation with a doctor.
-
-    Start with a warm, brief introduction: state your name and role.
-    Then ask the doctor which product they would like to discuss today.
-    Be open-ended: the doctor can name a product, ask for a suggestion, or ask a general question.
-    Keep it to 2-3 sentences, warm and professional.
-
-    Respond in French initially, but be ready to switch to English or Arabic based on the doctor's language."""
-    else:
-        prompt = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
-A delegate just chose commercial training mode.
-Introduce yourself with energy as Vita, explain briefly what you will help them with (sales pitches, objection handling, convincing pharmacies and clinics, competitive positioning).
-End by asking them to select a product to get started.
-Be motivating and enthusiastic. 3-4 sentences max. Respond in French."""
+    from fastapi.responses import StreamingResponse
 
     def event_generator():
         try:
-            engine.initialize()
-            for token in engine.llm.stream(prompt):
+            # stream_greeting yields {"type": "token", "content": ...} then {"type": "done"}
+            for chunk in engine.stream_greeting(mode):
                 import json
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
             import json
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-        finally:
-            import json
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-    from fastapi.responses import StreamingResponse
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -207,15 +169,19 @@ def get_gammes():
         conn.close()
         return {"gammes": [r["gamme"] for r in rows if r.get("gamme")]}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))=== ./backend/api/routes_tts.py ===
+        raise HTTPException(status_code=500, detail=str(e))
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\api\routes_tts.py
+========================================
 """
 backend/api/routes_tts.py
 ==========================
 TTS endpoint:
-  POST /tts/speak   — text → MP3 audio (base64) via Edge TTS
+  POST /tts/speak   â€” text â†’ MP3 audio (base64) via Edge TTS
 
-lang="auto" (défaut) → détection automatique de la langue du texte.
-lang="fr/en/ar"      → forcer une langue spécifique.
+lang="auto" (dÃ©faut) â†’ dÃ©tection automatique de la langue du texte.
+lang="fr/en/ar"      â†’ forcer une langue spÃ©cifique.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -232,8 +198,8 @@ class SpeakRequest(BaseModel):
 async def speak(req: SpeakRequest):
     """
     Convert text to speech.
-    Détecte automatiquement la langue si lang="auto".
-    Gère les textes mixtes (arabe + français + anglais).
+    DÃ©tecte automatiquement la langue si lang="auto".
+    GÃ¨re les textes mixtes (arabe + franÃ§ais + anglais).
     Returns JSON: { audio_b64, voice, lang, format, segments }
     """
     from backend.tts.synthesizer import synthesize_async
@@ -246,14 +212,17 @@ async def speak(req: SpeakRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
-=== ./backend/api/routes_voice.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\api\routes_voice.py
+========================================
 """
 backend/api/routes_voice.py
 ============================
 Voice endpoints:
-  POST /voice/transcribe   — audio file → text (Whisper large-v3)
-  POST /voice/ask          — audio file → transcribe → RAG → text answer
-  POST /voice/ask/stream   — audio file → transcribe → RAG → streamed answer
+  POST /voice/transcribe   â€” audio file â†’ text (Whisper large-v3)
+  POST /voice/ask          â€” audio file â†’ transcribe â†’ RAG â†’ text answer
+  POST /voice/ask/stream   â€” audio file â†’ transcribe â†’ RAG â†’ streamed answer
 """
 
 import json
@@ -294,7 +263,7 @@ async def voice_ask(
 ):
     """
     Full voice pipeline:
-      audio → STT (Whisper) → RAG (ChromaDB + LLM) → text answer
+      audio â†’ STT (Whisper) â†’ RAG (ChromaDB + LLM) â†’ text answer
     """
     from backend.stt.transcriber import transcribe_audio_file
     from backend.rag.engine import engine
@@ -361,9 +330,10 @@ async def voice_ask_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-=== ./backend/api/__init__.py ===
-# api package
-=== ./backend/main.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\main.py
+========================================
 """
 backend/main.py
 ===============
@@ -462,7 +432,15 @@ def product_detail(name: str):
         return {k: (str(v) if v is not None else "") for k, v in row.items()}
     except Exception as e:
         return {"name": name, "description": "", "error": str(e)}
-=== ./backend/rag/config.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\rag\__init__.py
+========================================
+# rag package
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\rag\config.py
+========================================
 """
 mysql_columns.py
 ================
@@ -477,7 +455,7 @@ The system will concatenate the columns you specify into a single text
 document per row, which gets embedded and stored in the vector DB.
 """
 
-# ─── TABLE DEFINITIONS ──────────────────────────────────────────────────────
+# â”€â”€â”€ TABLE DEFINITIONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Each entry in this list defines one MySQL table to ingest.
 #
 # Fields:
@@ -485,7 +463,7 @@ document per row, which gets embedded and stored in the vector DB.
 #   id_column   : primary key column (used to track updates)
 #   name_column : human-readable name shown in source citations
 #   text_columns: list of columns whose text will be fed to the AI
-#                 Order matters — put the most important columns first.
+#                 Order matters â€” put the most important columns first.
 
 TABLES = [
     {
@@ -530,7 +508,7 @@ TABLES = [
         ],
     },
 
-    # ── Add more tables below if needed ──────────────────────────────────
+    # â”€â”€ Add more tables below if needed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # {
     #     "table": "clinical_studies",
     #     "id_column": "study_id",
@@ -544,12 +522,15 @@ TABLES = [
     # },
 ]
 
-# ─── CHUNKING SETTINGS ──────────────────────────────────────────────────────
+# â”€â”€â”€ CHUNKING SETTINGS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # How to split long text into pieces for the vector DB.
 # Each "chunk" is one searchable unit.
 CHUNK_SIZE    = 800   # characters per chunk (800 works well for medical text)
 CHUNK_OVERLAP = 150   # overlap between chunks (keeps context at boundaries)
-=== ./backend/rag/engine.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\rag\engine.py
+========================================
 """
 rag_engine.py
 =============
@@ -564,7 +545,7 @@ Given a user question:
 
 import os
 from dotenv import load_dotenv
-from langchain_ollama import OllamaEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 import chromadb
@@ -572,146 +553,295 @@ import chromadb
 load_dotenv()
 
 
-# ── Greeting prompt — sent on first load, no product context needed ───────────
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# LANGUAGE DETECTION  â€” langdetect, local, no LLM call, no regex
+# pip install langdetect
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+def detect_language(text: str) -> str:
+    """
+    Detect language using langdetect (local, fast, no network call).
+    Returns: 'fr' | 'en' | 'ar'   â€” default fallback: 'fr'
+    """
+    if not text or not text.strip():
+        return "fr"
+    try:
+        from langdetect import detect
+        lang = detect(text.strip())
+        if lang == "ar":
+            return "ar"
+        if lang == "en":
+            return "en"
+        return "fr"
+    except Exception as e:
+        print(f"[detect_language] error: {e}")
+        return "fr"
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# GREETING PROMPT  (language-neutral â€” self-adapts per its own instructions)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
 GREETING_PROMPT = """You are Vita, a professional training assistant for a pharmaceutical company.
 
 A delegate has just opened the training platform. Greet them warmly and ask them which training mode they want:
 
-1. Medical delegate training — deep product knowledge: indications, composition, mechanism, clinical use, medical terminology. For delegates who speak with doctors and pharmacists.
-2. Commercial delegate training — sales skills: how to present the product convincingly, handle objections, highlight benefits over competitors, build trust with clients. For delegates who sell to pharmacies and clinics.
+1. Medical delegate training â€” deep product knowledge: indications, composition, mechanism, clinical use, medical terminology. For delegates who speak with doctors and pharmacists.
+2. Commercial delegate training â€” sales skills: how to present the product convincingly, handle objections, highlight benefits over competitors, build trust with clients. For delegates who sell to pharmacies and clinics.
 
 Keep the greeting short, friendly and professional. Ask clearly which mode they prefer. 
 Respond in French by default. If the delegate responds in another language, immediately switch to that language.
 Do NOT mention any products yet. Just greet and ask for the training mode."""
 
 
-# ── Medical delegate prompt ────────────────────────────────────────────────────
-MEDICAL_PROMPT = """Tu es Dr. Layla, une experte en formation produits médicaux.
-Tu formes un DÉLÉGUÉ MÉDICAL qui présente des produits aux médecins et pharmaciens.
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# MEDICAL PROMPTS  fr / en / ar
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-Ton rôle :
-- Enseigner la connaissance approfondie des produits : indications, composition, mécanisme d'action, données cliniques
-- Expliquer les concepts de manière pédagogique
-- Après chaque réponse, suggérer 1-2 questions complémentaires
-- Répondre dans la même langue que le délégué
+MEDICAL_PROMPT_FR = """Tu es Dr. Layla, une experte en formation produits mÃ©dicaux.
+Tu formes un DÃ‰LÃ‰GUÃ‰ MÃ‰DICAL qui prÃ©sente des produits aux mÃ©decins et pharmaciens.
 
-RÈGLES IMPORTANTES :
-- Si on te demande la LISTE DES GAMMES ou les CATALOGUES, donne la liste complète avec les noms exacts
-- Si on te demande un produit spécifique, ne parle que de ce produit
-- Ne mentionne pas Coenzyme Q10 sauf si explicitement demandé
-- Sois précis et concis (4-5 phrases max)
+Ton rÃ´le :
+- Enseigner la connaissance approfondie des produits : indications, composition, mÃ©canisme d'action, donnÃ©es cliniques
+- Expliquer les concepts de maniÃ¨re pÃ©dagogique
+- AprÃ¨s chaque rÃ©ponse, suggÃ©rer 1-2 questions complÃ©mentaires
+- RÃ©pondre UNIQUEMENT en franÃ§ais
+
+RÃˆGLES IMPORTANTES :
+- Si on te demande la LISTE DES GAMMES ou les CATALOGUES, donne la liste complÃ¨te avec les noms exacts
+- Si on te demande un produit spÃ©cifique, ne parle que de ce produit
+- Ne mentionne pas Coenzyme Q10 sauf si explicitement demandÃ©
+- Sois prÃ©cis et concis (4-5 phrases max)
 
 Contexte produit :
 {context}
 
-Question du délégué : {question}
+Question du dÃ©lÃ©guÃ© : {question}
 
-Réponse de formation :"""
+RÃ©ponse de formation :"""
 
-
-# ── Commercial delegate prompt ─────────────────────────────────────────────────
-COMMERCIAL_PROMPT = """You are Vita, a pharmaceutical sales training coach for a pharmaceutical company.
-You are training a COMMERCIAL delegate — someone who sells products to pharmacies, clinics and healthcare buyers.
+MEDICAL_PROMPT_EN = """You are Dr. Layla, an expert in pharmaceutical product training.
+You are training a MEDICAL DELEGATE who presents products to doctors and pharmacists.
 
 Your role:
-- Train sales skills: how to present the product's value, handle objections, differentiate from competitors, close a sale.
-- Translate product features into customer benefits. Example: "Contains 3x more bioavailable iron" becomes "Your clients will see results faster and come back to buy again."
-- Roleplay selling scenarios when relevant: "Here's how you would introduce this product to a pharmacy owner..."
-- After answering, suggest 1-2 sales challenges the delegate should practice: objections, comparison questions, pricing discussions.
-- Keep energy positive and motivating — a good sales coach is enthusiastic.
-- Focus on: unique selling points, target customer profile, shelf placement tips, seasonal opportunities, loyalty arguments.
-- Keep responses to 4-5 sentences max. Be punchy and direct — no long paragraphs or bullet lists.
+- Teach in-depth product knowledge: indications, composition, mechanism of action, clinical data
+- Explain concepts in a clear, educational way
+- After each answer, suggest 1-2 follow-up questions
+- Respond ONLY in English
 
-CRITICAL LANGUAGE RULE: Detect the language of the delegate's question and respond ONLY in that exact language. If they write/speak in French → respond in French. If English → respond in English. If Arabic → respond in Arabic. Never switch languages mid-response. Never respond in a different language than the one used in the question. This rule overrides everything else.
+IMPORTANT RULES:
+- If asked for a LIST OF PRODUCT LINES or CATALOGUES, give the full list with exact names
+- If asked about a specific product, only discuss that product
+- Do not mention Coenzyme Q10 unless explicitly asked
+- Be precise and concise (4-5 sentences max)
 
-If information is not in the context:
-- French: "Je n'ai pas tous les détails commerciaux de ce produit, mais voici comment je le présenterais..."
-- English: "I don't have all the commercial details yet, but here's how I'd position this product..."
-- Always reframe limited info into a sales opportunity, never just say "I don't know."
+Product context:
+{context}
 
-Context from product database:
+Delegate's question: {question}
+
+Training response:"""
+
+MEDICAL_PROMPT_AR = """Ø£Ù†ØªÙ Ø§Ù„Ø¯ÙƒØªÙˆØ±Ø© Ù„ÙŠÙ„Ù‰ØŒ Ø®Ø¨ÙŠØ±Ø© ÙÙŠ ØªØ¯Ø±ÙŠØ¨ Ø§Ù„Ù…Ù†Ø¯ÙˆØ¨ÙŠÙ† Ø§Ù„Ø·Ø¨ÙŠÙŠÙ†.
+ØªÙ‚ÙˆÙ…ÙŠÙ† Ø¨ØªØ¯Ø±ÙŠØ¨ Ù…Ù†Ø¯ÙˆØ¨ Ø·Ø¨ÙŠ ÙŠÙ‚Ø¯Ù‘Ù… Ø§Ù„Ù…Ù†ØªØ¬Ø§Øª Ù„Ù„Ø£Ø·Ø¨Ø§Ø¡ ÙˆØ§Ù„ØµÙŠØ§Ø¯Ù„Ø©.
+
+Ø¯ÙˆØ±Ùƒ:
+- ØªØ¹Ù„ÙŠÙ… Ø§Ù„Ù…Ø¹Ø±ÙØ© Ø§Ù„Ù…Ø¹Ù…Ù‘Ù‚Ø© Ø¨Ø§Ù„Ù…Ù†ØªØ¬Ø§Øª: Ø§Ù„Ù…Ø¤Ø´Ø±Ø§ØªØŒ Ø§Ù„ØªØ±ÙƒÙŠØ¨ØŒ Ø¢Ù„ÙŠØ© Ø§Ù„Ø¹Ù…Ù„ØŒ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø³Ø±ÙŠØ±ÙŠØ©
+- Ø´Ø±Ø­ Ø§Ù„Ù…ÙØ§Ù‡ÙŠÙ… Ø¨Ø·Ø±ÙŠÙ‚Ø© ØªØ±Ø¨ÙˆÙŠØ© ÙˆÙˆØ§Ø¶Ø­Ø©
+- Ø¨Ø¹Ø¯ ÙƒÙ„ Ø¥Ø¬Ø§Ø¨Ø©ØŒ Ø§Ù‚ØªØ±Ø­ Ø³Ø¤Ø§Ù„Ø§Ù‹ Ø£Ùˆ Ø³Ø¤Ø§Ù„ÙŠÙ† ØªÙƒÙ…ÙŠÙ„ÙŠÙŠÙ†
+- Ø£Ø¬ÙŠØ¨ÙŠ Ø¯Ø§Ø¦Ù…Ø§Ù‹ Ø¨Ø§Ù„Ù„ØºØ© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©
+
+Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ù…ØµØ·Ù„Ø­Ø§Øª Ø§Ù„ØªÙ‚Ù†ÙŠØ©:
+- Ø§Ø­ØªÙØ¸ÙŠ Ø¨Ø£Ø³Ù…Ø§Ø¡ Ø§Ù„Ù…Ù†ØªØ¬Ø§Øª ÙˆØ§Ù„Ø¬Ø²ÙŠØ¦Ø§Øª ÙˆØ§Ù„Ù…ÙƒÙˆÙ‘Ù†Ø§Øª Ø§Ù„ÙØ¹Ù‘Ø§Ù„Ø© ÙˆØ§Ù„Ù…ØµØ·Ù„Ø­Ø§Øª Ø§Ù„Ø¹Ù„Ù…ÙŠØ© ÙˆØ§Ù„Ø¬Ø±Ø¹Ø§Øª Ø¨Ø§Ù„ÙØ±Ù†Ø³ÙŠØ© Ø£Ùˆ Ø§Ù„Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ©
+- Ù…Ø«Ø§Ù„ ØµØ­ÙŠØ­: "ÙŠØ­ØªÙˆÙŠ LV PSOCALM Ø¹Ù„Ù‰ Acide salicylique ÙˆÙ‡Ùˆ Ù…ØªÙˆÙØ± Ø¹Ù„Ù‰ Ø´ÙƒÙ„ ÙƒØ±ÙŠÙ…"
+
+Ù‚ÙˆØ§Ø¹Ø¯ Ù…Ù‡Ù…Ø©:
+- Ø¥Ø°Ø§ Ø·ÙÙ„Ø¨Øª Ù‚Ø§Ø¦Ù…Ø© Ø§Ù„ØªØ´ÙƒÙŠÙ„Ø§Øª Ø£Ùˆ Ø§Ù„ÙƒØªØ§Ù„ÙˆØ¬Ø§ØªØŒ Ø£Ø¹Ø·Ù Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ø§Ù„ÙƒØ§Ù…Ù„Ø© Ø¨Ø§Ù„Ø£Ø³Ù…Ø§Ø¡ Ø§Ù„Ø¯Ù‚ÙŠÙ‚Ø©
+- Ø¥Ø°Ø§ Ø·ÙÙ„Ø¨ Ù…Ù†ØªØ¬ Ù…Ø­Ø¯Ø¯ØŒ ØªØ­Ø¯Ù‘Ø« Ø¹Ù† Ø°Ù„Ùƒ Ø§Ù„Ù…Ù†ØªØ¬ ÙÙ‚Ø·
+- Ù„Ø§ ØªØ°ÙƒØ± Coenzyme Q10 Ø¥Ù„Ø§ Ø¥Ø°Ø§ Ø·ÙÙ„Ø¨ ØµØ±Ø§Ø­Ø©Ù‹
+- ÙƒÙ† Ø¯Ù‚ÙŠÙ‚Ø§Ù‹ ÙˆÙ…ÙˆØ¬Ø²Ø§Ù‹ (4-5 Ø¬Ù…Ù„ ÙƒØ­Ø¯ Ø£Ù‚ØµÙ‰)
+
+Ø³ÙŠØ§Ù‚ Ø§Ù„Ù…Ù†ØªØ¬:
+{context}
+
+Ø³Ø¤Ø§Ù„ Ø§Ù„Ù…Ù†Ø¯ÙˆØ¨: {question}
+
+Ø¥Ø¬Ø§Ø¨Ø© Ø§Ù„ØªØ¯Ø±ÙŠØ¨:"""
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# COMMERCIAL PROMPTS  fr / en / ar
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+COMMERCIAL_PROMPT_FR = """Tu es Vita, coach en vente pharmaceutique.
+Tu formes un DÃ‰LÃ‰GUÃ‰ COMMERCIAL qui vend des produits aux pharmacies, cliniques et acheteurs de santÃ©.
+
+Ton rÃ´le :
+- Former aux techniques de vente : prÃ©senter la valeur du produit, gÃ©rer les objections, se diffÃ©rencier de la concurrence, conclure une vente
+- Transformer les caractÃ©ristiques en bÃ©nÃ©fices clients
+- Proposer des scÃ©narios de vente quand c'est pertinent
+- AprÃ¨s chaque rÃ©ponse, suggÃ©rer 1-2 dÃ©fis commerciaux Ã  pratiquer
+- Ton positif et motivant
+- RÃ©ponses courtes : 4-5 phrases max, directes
+- RÃ©pondre UNIQUEMENT en franÃ§ais
+
+Si l'information n'est pas dans le contexte : "Je n'ai pas tous les dÃ©tails commerciaux de ce produit, mais voici comment je le prÃ©senterais..."
+
+Contexte produit :
+{context}
+
+Question du dÃ©lÃ©guÃ© : {question}
+
+RÃ©ponse commerciale :"""
+
+COMMERCIAL_PROMPT_EN = """You are Vita, a pharmaceutical sales training coach.
+You are training a COMMERCIAL delegate who sells products to pharmacies, clinics and healthcare buyers.
+
+Your role:
+- Train sales skills: present product value, handle objections, differentiate from competitors, close a sale
+- Translate features into customer benefits
+- Roleplay selling scenarios when relevant
+- After each answer, suggest 1-2 sales challenges to practice
+- Keep energy positive and motivating
+- Keep responses to 4-5 sentences max â€” punchy and direct
+- Respond ONLY in English
+
+If information is missing: "I don't have all the commercial details yet, but here's how I'd position this product..."
+
+Product context:
 {context}
 
 Delegate question: {question}
 
-Sales training response (be motivating, practical, suggest objection handling at the end):"""
+Sales training response:"""
+
+COMMERCIAL_PROMPT_AR = """Ø£Ù†ØªÙ VitaØŒ Ù…Ø¯Ø±Ù‘Ø¨Ø© Ù…Ø¨ÙŠØ¹Ø§Øª ØµÙŠØ¯Ù„Ø§Ù†ÙŠØ©.
+ØªÙ‚ÙˆÙ…ÙŠÙ† Ø¨ØªØ¯Ø±ÙŠØ¨ Ù…Ù†Ø¯ÙˆØ¨ ØªØ¬Ø§Ø±ÙŠ ÙŠØ¨ÙŠØ¹ Ø§Ù„Ù…Ù†ØªØ¬Ø§Øª Ù„Ù„ØµÙŠØ¯Ù„ÙŠØ§Øª ÙˆØ§Ù„Ø¹ÙŠØ§Ø¯Ø§Øª.
+
+Ø¯ÙˆØ±Ùƒ:
+- ØªØ¯Ø±ÙŠØ¨ Ù…Ù‡Ø§Ø±Ø§Øª Ø§Ù„Ø¨ÙŠØ¹: ØªÙ‚Ø¯ÙŠÙ… Ù‚ÙŠÙ…Ø© Ø§Ù„Ù…Ù†ØªØ¬ØŒ Ø§Ù„ØªØ¹Ø§Ù…Ù„ Ù…Ø¹ Ø§Ù„Ø§Ø¹ØªØ±Ø§Ø¶Ø§ØªØŒ Ø§Ù„ØªÙ…ÙŠÙ‘Ø² Ø¹Ù† Ø§Ù„Ù…Ù†Ø§ÙØ³ÙŠÙ†
+- ØªØ­ÙˆÙŠÙ„ Ø§Ù„Ù…Ø²Ø§ÙŠØ§ Ø¥Ù„Ù‰ ÙÙˆØ§Ø¦Ø¯ Ù„Ù„Ø¹Ù…ÙŠÙ„
+- Ø§Ù‚ØªØ±Ø§Ø­ Ø³ÙŠÙ†Ø§Ø±ÙŠÙˆÙ‡Ø§Øª Ø¨ÙŠØ¹ Ø¹Ù†Ø¯ Ø§Ù„Ø§Ù‚ØªØ¶Ø§Ø¡
+- Ø¨Ø¹Ø¯ ÙƒÙ„ Ø¥Ø¬Ø§Ø¨Ø©ØŒ Ø§Ù‚ØªØ±Ø­ ØªØ­Ø¯Ù‘ÙŠØ§Ù‹ Ø£Ùˆ ØªØ­Ø¯Ù‘ÙŠÙŠÙ† ØªØ¬Ø§Ø±ÙŠÙŠÙ† Ù„Ù„ØªØ¯Ø±Ù‘Ø¨
+- Ø£Ø³Ù„ÙˆØ¨ Ø¥ÙŠØ¬Ø§Ø¨ÙŠ ÙˆÙ…Ø­ÙÙ‘Ø²
+- Ø¥Ø¬Ø§Ø¨Ø§Øª Ù‚ØµÙŠØ±Ø©: 4-5 Ø¬Ù…Ù„ ÙƒØ­Ø¯ Ø£Ù‚ØµÙ‰
+- Ø£Ø¬ÙŠØ¨ÙŠ Ø¯Ø§Ø¦Ù…Ø§Ù‹ Ø¨Ø§Ù„Ù„ØºØ© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©
+- Ø§Ø­ØªÙØ¸ÙŠ Ø¨Ø£Ø³Ù…Ø§Ø¡ Ø§Ù„Ù…Ù†ØªØ¬Ø§Øª ÙˆØ§Ù„Ù…ØµØ·Ù„Ø­Ø§Øª Ø§Ù„Ø¹Ù„Ù…ÙŠØ© Ø¨Ø§Ù„ÙØ±Ù†Ø³ÙŠØ© Ø£Ùˆ Ø§Ù„Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ©
+
+Ø¥Ø°Ø§ Ù„Ù… ØªÙƒÙ† Ø§Ù„Ù…Ø¹Ù„ÙˆÙ…Ø§Øª Ù…ØªÙˆÙØ±Ø©: "Ù„ÙŠØ³ Ù„Ø¯ÙŠÙ‘ ÙƒÙ„ Ø§Ù„ØªÙØ§ØµÙŠÙ„ØŒ Ù„ÙƒÙ† Ø¥Ù„ÙŠÙƒ ÙƒÙŠÙ Ø³Ø£Ù‚Ø¯Ù‘Ù… Ù‡Ø°Ø§ Ø§Ù„Ù…Ù†ØªØ¬..."
+
+Ø³ÙŠØ§Ù‚ Ø§Ù„Ù…Ù†ØªØ¬:
+{context}
+
+Ø³Ø¤Ø§Ù„ Ø§Ù„Ù…Ù†Ø¯ÙˆØ¨: {question}
+
+Ø¥Ø¬Ø§Ø¨Ø© ØªØ¯Ø±ÙŠØ¨ÙŠØ© ØªØ¬Ø§Ø±ÙŠØ©:"""
 
 
-# ── Vita Commercial prompt — Vita acts as delegate, user is the doctor ─────────
-VITA_COMMERCIAL_PROMPT = """You are Vita, a pharmaceutical delegate from VITAL SA.
-Your role is to conduct a natural, flowing medical visit with a doctor (the user). Follow the VITAL framework flexibly, not rigidly.
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# VITA COMMERCIAL PROMPTS  fr / en / ar
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-CRITICAL LANGUAGE RULE: 
-- Detect the language of the doctor's input (French, English, or Arabic)
-- Respond ONLY in that exact language throughout the entire conversation
-- If the doctor switches language mid-conversation, you MUST switch to that new language immediately
-- Never mix languages in a single response
-- Do not explain which language you're using – just respond in that language
+VITA_COMMERCIAL_GREETING_PROMPT = """You are Vita, a pharmaceutical delegate from VITAL SA.
+A doctor has just started a conversation with you.
+
+Introduce yourself warmly in 2 sentences, state your company (VITAL SA), and ask the doctor what product or patient need they would like to discuss today.
+
+Respond in French by default. If the doctor uses English or Arabic, immediately switch to that language.
+Do not use the full VITAL framework yet â€“ just a natural, professional opening."""
+
+VITA_COMMERCIAL_ASK_PROMPT_FR = """Tu es Vita, dÃ©lÃ©guÃ©e pharmaceutique de VITAL SA.
+Continue la visite mÃ©dicale naturellement â€” NE te rÃ©introduis PAS, NE demande pas la permission.
+
+COMPORTEMENT ADAPTATIF :
+- Si le mÃ©decin demande un produit par son nom â†’ donne immÃ©diatement 2-3 bÃ©nÃ©fices clÃ©s, preuves, utilisation pratique
+- Si le mÃ©decin exprime un besoin â†’ suggÃ¨re le(s) produit(s) pertinent(s), bÃ©nÃ©fices, mode d'action, puis une courte question de suivi
+- Sondage uniquement si la demande est trÃ¨s vague
+
+OBJECTIONS (A-C-R-V) : Accueillir â†’ Clarifier â†’ RÃ©pondre â†’ Valider
+
+Style : chaleureux, professionnel, 4-5 phrases max, focus rÃ©sultats patients.
+RÃ©ponds UNIQUEMENT en franÃ§ais.
+
+Contexte produit :
+{context}
+
+Intervention du mÃ©decin : {question}
+
+Ta rÃ©ponse :"""
+
+VITA_COMMERCIAL_ASK_PROMPT_EN = """You are Vita, a pharmaceutical delegate from VITAL SA.
+Continue the medical visit naturally â€” do NOT re-introduce yourself, do NOT ask for permission.
 
 ADAPTIVE BEHAVIOR:
-- If the doctor directly asks for a specific product by name (e.g., "Tell me about LV PSOCALM"), provide the information immediately: 2-3 key benefits, evidence, and practical usage.
-- If the doctor expresses a need or condition (e.g., "I need a supplement for vitamin A", "What do you have for anxiety?"), suggest the most relevant product(s) from your knowledge or the context. Give its key benefits, how it works, and practical usage. Then optionally ask a short follow-up question to engage further.
-- Only use Sondage (discovery questions) when the doctor's request is very vague or you truly lack enough information to make a recommendation.
+- If the doctor asks for a product by name â†’ immediately give 2-3 key benefits, evidence, practical usage
+- If the doctor expresses a need â†’ suggest the most relevant product(s), benefits, mechanism, then a short follow-up question
+- Use discovery questions only if the request is very vague
 
-THE VITAL FRAMEWORK (use flexibly, repeat as needed):
+OBJECTIONS (A-C-R-V): Acknowledge â†’ Clarify â†’ Respond â†’ Validate
 
-1. INTRODUCTION (Instant Zero)
-   - Start with a warm greeting, state who you are, ask for permission
-   - Be brief and respectful of time
+Style: warm, professional, 4-5 sentences max, focus on patient outcomes.
+Respond ONLY in English.
 
-2. SONDAGE (Discovery & Understanding)
-   - Ask open questions to understand the doctor's needs, practice, patient profiles
-   - Listen actively and adapt based on their answers
-   - You may return to this at any time if you need more context
-
-3. SYNTHÈSE (Reformulation)
-   - Periodically summarize what you've understood to ensure alignment
-   - Show that you're listening and value their input
-
-4. ARGUMENTATION (Benefits & Evidence)
-   - Present product benefits linked to the doctor's expressed needs
-   - Provide evidence (studies, data, clinical experience) naturally
-   - You may give multiple arguments over several exchanges
-   - Focus on patient outcomes and practical value
-
-5. OBJECTIONS (A-C-R-V)
-   - When objections arise, handle them immediately:
-        * Accueillir / Acknowledge with empathy
-        * Clarifier / Clarify to understand the real concern
-        * Répondre / Respond with facts + evidence
-        * Valider / Validate that the objection is resolved
-   - You may handle several objections throughout the conversation
-   - Never ignore or dismiss concerns
-
-6. CONCLUSION & ENGAGEMENT
-   - When the conversation reaches a natural closing point, propose a micro-commitment
-   - Look for signals: detailed questions, resolved objections, interest in samples, request for follow-up
-   - Keep it light and professional
-
-CONVERSATION STYLE:
-- Be warm, professional, and empathetic
-- Read the doctor's tone and adapt (busy → be brief; engaged → go deeper)
-- Use natural transitions, not scripts
-- Let the conversation flow organically
-- You are a trusted partner, not a salesperson
-
-If information is missing from the context database, say you don't have all the details and the department will come back to them.
-
-Context from product database:
+Product context:
 {context}
 
 Doctor's input: {question}
 
-Your response (as Vita) – have a natural conversation. Follow the VITAL framework flexibly. Respond in the EXACT SAME LANGUAGE as the doctor. Keep it warm, professional, and adaptive."""
+Your response:"""
+
+VITA_COMMERCIAL_ASK_PROMPT_AR = """Ø£Ù†ØªÙ VitaØŒ Ù…Ù†Ø¯ÙˆØ¨Ø© ØµÙŠØ¯Ù„Ø§Ù†ÙŠØ© Ù…Ù† VITAL SA.
+ØªØ§Ø¨Ø¹ÙŠ Ø§Ù„Ø²ÙŠØ§Ø±Ø© Ø§Ù„Ø·Ø¨ÙŠØ© Ø¨Ø´ÙƒÙ„ Ø·Ø¨ÙŠØ¹ÙŠ â€” Ù„Ø§ ØªÙØ¹Ø±Ù‘ÙÙŠ Ø¨Ù†ÙØ³Ùƒ Ù…Ø¬Ø¯Ø¯Ø§Ù‹ØŒ Ù„Ø§ ØªØ·Ù„Ø¨ÙŠ Ø¥Ø°Ù†Ø§Ù‹.
+
+Ø§Ù„Ø³Ù„ÙˆÙƒ Ø§Ù„ØªÙƒÙŠÙ‘ÙÙŠ:
+- Ø¥Ø°Ø§ Ø·Ù„Ø¨ Ø§Ù„Ø·Ø¨ÙŠØ¨ Ù…Ù†ØªØ¬Ø§Ù‹ Ø¨Ø§Ø³Ù…Ù‡ â†’ Ù‚Ø¯Ù‘Ù…ÙŠ ÙÙˆØ±Ø§Ù‹ 2-3 ÙÙˆØ§Ø¦Ø¯ Ø±Ø¦ÙŠØ³ÙŠØ©ØŒ Ø£Ø¯Ù„Ø©ØŒ Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø¹Ù…Ù„ÙŠ
+- Ø¥Ø°Ø§ Ø£Ø¹Ø±Ø¨ Ø¹Ù† Ø­Ø§Ø¬Ø© â†’ Ø§Ù‚ØªØ±Ø­ÙŠ Ø§Ù„Ù…Ù†ØªØ¬ Ø§Ù„Ø£Ù†Ø³Ø¨ØŒ Ø§Ù„ÙÙˆØ§Ø¦Ø¯ØŒ Ø¢Ù„ÙŠØ© Ø§Ù„Ø¹Ù…Ù„ØŒ Ø«Ù… Ø³Ø¤Ø§Ù„ Ù…ØªØ§Ø¨Ø¹Ø© Ù‚ØµÙŠØ±
+- Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ø§Ø³ØªÙƒØ´Ø§Ù ÙÙ‚Ø· Ø¥Ø°Ø§ ÙƒØ§Ù† Ø§Ù„Ø·Ù„Ø¨ Ù…Ø¨Ù‡Ù…Ø§Ù‹ Ø¬Ø¯Ø§Ù‹
+
+Ø§Ù„Ø§Ø¹ØªØ±Ø§Ø¶Ø§Øª (Ø£-Ùˆ-Ø±-Øª): Ø§Ø³ØªÙ‚Ø¨Ø§Ù„ â†’ ØªÙˆØ¶ÙŠØ­ â†’ Ø±Ø¯ â†’ ØªØ£ÙƒÙŠØ¯
+
+Ø§Ù„Ø£Ø³Ù„ÙˆØ¨: Ø¯Ø§ÙØ¦ØŒ Ù…Ù‡Ù†ÙŠØŒ 4-5 Ø¬Ù…Ù„ ÙƒØ­Ø¯ Ø£Ù‚ØµÙ‰ØŒ Ø±ÙƒÙ‘Ø²ÙŠ Ø¹Ù„Ù‰ Ù†ØªØ§Ø¦Ø¬ Ø§Ù„Ù…Ø±ÙŠØ¶.
+Ø£Ø¬ÙŠØ¨ÙŠ Ø¯Ø§Ø¦Ù…Ø§Ù‹ Ø¨Ø§Ù„Ù„ØºØ© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©.
+Ø§Ø­ØªÙØ¸ÙŠ Ø¨Ø£Ø³Ù…Ø§Ø¡ Ø§Ù„Ù…Ù†ØªØ¬Ø§Øª ÙˆØ§Ù„Ù…ØµØ·Ù„Ø­Ø§Øª Ø§Ù„Ø¹Ù„Ù…ÙŠØ© Ø¨Ø§Ù„ÙØ±Ù†Ø³ÙŠØ© Ø£Ùˆ Ø§Ù„Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ©.
+
+Ø³ÙŠØ§Ù‚ Ø§Ù„Ù…Ù†ØªØ¬:
+{context}
+
+ÙƒÙ„Ø§Ù… Ø§Ù„Ø·Ø¨ÙŠØ¨: {question}
+
+Ø±Ø¯Ù‘Ùƒ:"""
 
 
-def get_prompt(mode: str) -> str:
-    if mode == "commercial":
-        return COMMERCIAL_PROMPT
-    elif mode == "vita_commercial":
-        return VITA_COMMERCIAL_PROMPT
-    return MEDICAL_PROMPT
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# PROMPT ROUTING
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+_PROMPT_MAP = {
+    ("medical",         "fr"): MEDICAL_PROMPT_FR,
+    ("medical",         "en"): MEDICAL_PROMPT_EN,
+    ("medical",         "ar"): MEDICAL_PROMPT_AR,
+    ("commercial",      "fr"): COMMERCIAL_PROMPT_FR,
+    ("commercial",      "en"): COMMERCIAL_PROMPT_EN,
+    ("commercial",      "ar"): COMMERCIAL_PROMPT_AR,
+    ("vita_commercial", "fr"): VITA_COMMERCIAL_ASK_PROMPT_FR,
+    ("vita_commercial", "en"): VITA_COMMERCIAL_ASK_PROMPT_EN,
+    ("vita_commercial", "ar"): VITA_COMMERCIAL_ASK_PROMPT_AR,
+}
+
+
+def get_prompt(mode: str, for_greeting: bool = False, lang: str = "fr") -> str:
+    """Return the appropriate prompt based on mode, greeting flag, and detected language."""
+    if for_greeting:
+        if mode == "vita_commercial":
+            return VITA_COMMERCIAL_GREETING_PROMPT
+        return GREETING_PROMPT
+    return _PROMPT_MAP.get((mode, lang), _PROMPT_MAP.get((mode, "fr"), MEDICAL_PROMPT_FR))
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# RAG ENGINE  â€” original logic, untouched except the two get_prompt() calls
+#               now pass lang=lang
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class RAGEngine:
     """Singleton-style RAG engine. Initialize once and reuse."""
@@ -731,10 +861,8 @@ class RAGEngine:
         persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
         coll_name   = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
 
-        # Embeddings restent sur Ollama (local)
         self.embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
 
-        # LLM → Token Factory API (compatible OpenAI)
         self.llm = ChatOpenAI(
             model=os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct"),
             openai_api_key=os.getenv("TOKEN_FACTORY_API_KEY"),
@@ -751,13 +879,12 @@ class RAGEngine:
 
         self._initialized = True
 
-    # ── Recherche sémantique + keyword ────────────────────────────────────────
+    # â”€â”€ Recherche sÃ©mantique + keyword â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def search(self, question: str, n_results: int = 10) -> list[dict]:
         self.initialize()
 
         import re
 
-        # 1. Semantic search
         question_vector = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=[question_vector],
@@ -781,7 +908,6 @@ class RAGEngine:
             })
             seen_ids.add(meta.get("source_id", ""))
 
-        # 2. Force-inject catalogue chunks for gamme queries
         catalogue_keywords = [
             "gamme", "gammes", "catalogue", "catalogues",
             "liste", "laboratoire", "portfolio", "offre",
@@ -806,7 +932,6 @@ class RAGEngine:
                 })
                 seen_ids.add(source_id)
 
-        # 3. Keyword search on product names
         words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
@@ -827,9 +952,9 @@ class RAGEngine:
         hits.sort(key=lambda x: x["relevance"], reverse=True)
         return hits[:n_results]
 
-    # ── Recherche spécifique gammes/catalogues ────────────────────────────────
+    # â”€â”€ Recherche spÃ©cifique gammes/catalogues â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def search_gammes(self, question: str, n_results: int = 10) -> list[dict]:
-        """Recherche spécifique pour les gammes/catalogues."""
+        """Recherche spÃ©cifique pour les gammes/catalogues."""
         self.initialize()
 
         all_docs = self.collection.get(
@@ -850,9 +975,11 @@ class RAGEngine:
 
         return list(gammes_dict.values())[:n_results]
 
-    # ── Ask (non-streaming) ───────────────────────────────────────────────────
+    # â”€â”€ Ask (non-streaming) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def ask(self, question: str, n_results: int = 10, mode: str = "medical") -> dict:
         self.initialize()
+
+        lang = detect_language(question)          # â† NEW: detect language
 
         question_lower = question.lower()
         is_gamme_question = any(word in question_lower for word in [
@@ -869,7 +996,6 @@ class RAGEngine:
                     if hit["product_name"] and hit["product_name"] not in gammes_list:
                         gammes_list.append(hit["product_name"])
 
-                # Cas 1 : gamme spécifique demandée
                 specific_gamme = None
                 for gamme_name in gammes_list:
                     if gamme_name.lower() in question_lower:
@@ -889,7 +1015,7 @@ class RAGEngine:
                         produits_text += doc + "\n\n"
 
                     prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
-Le délégué te demande des informations sur la gamme {specific_gamme}.
+Le dÃ©lÃ©guÃ© te demande des informations sur la gamme {specific_gamme}.
 
 La gamme {specific_gamme} comprend les produits suivants :
 {produits_text[:2000]}
@@ -899,32 +1025,31 @@ IMPORTANT :
 - Ne mentionne aucun autre produit ou gamme
 - Donne une description claire de ce que propose cette gamme
 - Liste les produits principaux qu'elle contient
-- Réponds dans la même langue que la question
+- RÃ©ponds dans la mÃªme langue que la question
 
-Réponse :"""
+RÃ©ponse :"""
 
                     answer = self.llm.invoke([HumanMessage(content=prompt)]).content
                     sources = [{"name": specific_gamme, "relevance": 0.99}]
                     return {"answer": answer.strip(), "sources": sources, "chunks_used": len(gamme_chunks["documents"])}
 
-                # Cas 2 : liste de toutes les gammes
                 else:
                     gammes_text = "\n".join([f"- {g}" for g in sorted(gammes_list)])
-                    context = f"Voici la liste des gammes proposées par notre laboratoire :\n{gammes_text}"
+                    context = f"Voici la liste des gammes proposÃ©es par notre laboratoire :\n{gammes_text}"
 
                     prompt = f"""Tu es Dr. Layla, une experte en formation pharmaceutique.
-Le délégué te demande la liste des gammes offertes par le laboratoire.
+Le dÃ©lÃ©guÃ© te demande la liste des gammes offertes par le laboratoire.
 
 {context}
 
 IMPORTANT :
 - Donne uniquement la liste des gammes
-- Ne parle d'aucun produit spécifique
-- Réponds dans la même langue que la question
-- Termine en demandant s'il souhaite des détails sur une gamme spécifique
-- Sois précis : il y a {len(gammes_list)} gammes au total.
+- Ne parle d'aucun produit spÃ©cifique
+- RÃ©ponds dans la mÃªme langue que la question
+- Termine en demandant s'il souhaite des dÃ©tails sur une gamme spÃ©cifique
+- Sois prÃ©cis : il y a {len(gammes_list)} gammes au total.
 
-Réponse :"""
+RÃ©ponse :"""
 
                     answer = self.llm.invoke([HumanMessage(content=prompt)]).content
                     sources = [{"name": g, "relevance": 0.99} for g in sorted(gammes_list)]
@@ -935,14 +1060,14 @@ Réponse :"""
 
         if not hits:
             return {
-                "answer": "Je n'ai pas trouvé d'information pertinente.",
+                "answer": "Je n'ai pas trouvÃ© d'information pertinente.",
                 "sources": [],
                 "chunks_used": 0,
             }
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode).format(context=context, question=question)
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # â† NEW: lang=lang
         answer  = self.llm.invoke([HumanMessage(content=prompt)]).content
 
         seen, sources = set(), []
@@ -953,19 +1078,22 @@ Réponse :"""
 
         return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 
-    # ── Ask streaming ─────────────────────────────────────────────────────────
+    # â”€â”€ Ask streaming â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
         self.initialize()
+
+        lang = detect_language(question)          # â† NEW: detect language
+
         hits = self.search(question, n_results=n_results)
 
         if not hits:
-            yield {"type": "token", "content": "Je n'ai pas trouvé d'information pertinente."}
+            yield {"type": "token", "content": "Je n'ai pas trouvÃ© d'information pertinente."}
             yield {"type": "sources", "sources": []}
             return
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode).format(context=context, question=question)
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # â† NEW: lang=lang
 
         for chunk in self.llm.stream([HumanMessage(content=prompt)]):
             token = chunk.content
@@ -981,7 +1109,7 @@ Réponse :"""
 
         yield {"type": "sources", "sources": sources}
 
-    # ── Stats ─────────────────────────────────────────────────────────────────
+    # â”€â”€ Stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def get_stats(self) -> dict:
         self.initialize()
         count = self.collection.count()
@@ -993,33 +1121,36 @@ Réponse :"""
             "ready":        count > 0,
         }
 
-    # ── Greeting (non-streaming) ──────────────────────────────────────────────
-    def greeting(self) -> str:
-        """Generate opening greeting asking which training mode the delegate wants."""
+    # â”€â”€ Greeting (non-streaming) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    def greeting(self, mode: str = "medical") -> str:
+        """Generate opening greeting for the selected mode."""
         self.initialize()
-        return self.llm.invoke([HumanMessage(content=GREETING_PROMPT)]).content.strip()
+        prompt_text = get_prompt(mode, for_greeting=True)
+        return self.llm.invoke([HumanMessage(content=prompt_text)]).content.strip()
 
-    # ── Greeting streaming ────────────────────────────────────────────────────
-    def stream_greeting(self):
+    def stream_greeting(self, mode: str = "medical"):
         """Stream the opening greeting token by token."""
         self.initialize()
-        for chunk in self.llm.stream([HumanMessage(content=GREETING_PROMPT)]):
+        prompt_text = get_prompt(mode, for_greeting=True)
+        for chunk in self.llm.stream([HumanMessage(content=prompt_text)]):
             token = chunk.content
             if token:
                 yield {"type": "token", "content": token}
         yield {"type": "done"}
 
 
-# ── Shared engine instance ────────────────────────────────────────────────────
+# â”€â”€ Shared engine instance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 engine = RAGEngine()
 
-=== ./backend/rag/ingest.py ===
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\rag\ingest.py
+========================================
 """
 ingest.py
 =========
 Step 1 of the pipeline.
 
-Reads product data from MySQL → splits into chunks → embeds with Ollama →
+Reads product data from MySQL â†’ splits into chunks â†’ embeds with Ollama â†’
 stores in ChromaDB vector database.
 
 Run once to set up, then re-run whenever your MySQL data changes.
@@ -1039,10 +1170,10 @@ from langchain_ollama import OllamaEmbeddings
 import chromadb
 from chromadb.config import Settings
 
-# ── Load .env ────────────────────────────────────────────────────────────────
+# â”€â”€ Load .env â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 load_dotenv()
 
-# ── Import your table config ─────────────────────────────────────────────────
+# â”€â”€ Import your table config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 sys.path.insert(0, os.path.dirname(__file__))
 from mysql_columns import TABLES, CHUNK_SIZE, CHUNK_OVERLAP
 
@@ -1078,7 +1209,7 @@ def fetch_rows_from_mysql(conn, table_config: dict) -> list[dict]:
         cur.execute(f"SELECT {col_list} FROM `{table}`")
         rows = cur.fetchall()
 
-    print(f"  → Fetched {len(rows)} rows from `{table}`")
+    print(f"  â†’ Fetched {len(rows)} rows from `{table}`")
     return rows
 
 
@@ -1099,8 +1230,8 @@ def row_to_document(row: dict, table_config: dict) -> tuple[str, dict]:
             # Clean up the pipe-separated format
             cleaned = str(val).strip()
             cleaned = cleaned.replace(" | ", "\n")
-            cleaned = cleaned.replace("• ", "\n- ")
-            cleaned = cleaned.replace("– ", "\n- ")
+            cleaned = cleaned.replace("â€¢ ", "\n- ")
+            cleaned = cleaned.replace("â€“ ", "\n- ")
             label = col.replace("_", " ").title()
             parts.append(f"{label}: {cleaned}")
 
@@ -1134,17 +1265,17 @@ def chunk_document(text: str, metadata: dict, chunk_idx: int) -> list[tuple]:
 def main(reset: bool = False):
     print("\n=== MedRAG Ingestion Pipeline ===\n")
 
-    # ── 1. Connect to MySQL ──────────────────────────────────────────────────
+    # â”€â”€ 1. Connect to MySQL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("1. Connecting to MySQL...")
     try:
         conn = get_mysql_connection()
-        print("   ✓ Connected to MySQL")
+        print("   âœ“ Connected to MySQL")
     except Exception as e:
-        print(f"   ✗ MySQL connection failed: {e}")
+        print(f"   âœ— MySQL connection failed: {e}")
         print("   Check your .env file credentials.")
         sys.exit(1)
 
-    # ── 2. Load embedding model ──────────────────────────────────────────────
+    # â”€â”€ 2. Load embedding model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("\n2. Loading embedding model from Ollama...")
     embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -1152,13 +1283,13 @@ def main(reset: bool = False):
         embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
         # Quick test
         _ = embeddings.embed_query("test")
-        print(f"   ✓ Embedding model '{embed_model}' ready")
+        print(f"   âœ“ Embedding model '{embed_model}' ready")
     except Exception as e:
-        print(f"   ✗ Ollama not reachable: {e}")
+        print(f"   âœ— Ollama not reachable: {e}")
         print("   Make sure Ollama is running: open a terminal and type 'ollama serve'")
         sys.exit(1)
 
-    # ── 3. Set up ChromaDB ───────────────────────────────────────────────────
+    # â”€â”€ 3. Set up ChromaDB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("\n3. Setting up ChromaDB...")
     persist_dir     = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
     collection_name = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
@@ -1177,9 +1308,9 @@ def main(reset: bool = False):
         name=collection_name,
         metadata={"hnsw:space": "cosine"},
     )
-    print(f"   ✓ Collection '{collection_name}' ready")
+    print(f"   âœ“ Collection '{collection_name}' ready")
 
-    # ── 4. Process each table ────────────────────────────────────────────────
+    # â”€â”€ 4. Process each table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("\n4. Reading MySQL data and ingesting into vector DB...\n")
 
     total_chunks = 0
@@ -1204,7 +1335,7 @@ def main(reset: bool = False):
                 all_metas.append(chunk_meta)
 
         if not all_docs:
-            print(f"  ! No text found in table '{table_name}' — check your column names")
+            print(f"  ! No text found in table '{table_name}' â€” check your column names")
             continue
 
         # Embed in batches of 50 (avoids memory issues)
@@ -1226,17 +1357,17 @@ def main(reset: bool = False):
                 embeddings=vectors,
                 metadatas=batch_metas,
             )
-            print(" ✓")
+            print(" âœ“")
 
         total_chunks += len(all_docs)
-        print(f"  ✓ {table_name}: {len(rows)} rows → {len(all_docs)} chunks stored\n")
+        print(f"  âœ“ {table_name}: {len(rows)} rows â†’ {len(all_docs)} chunks stored\n")
 
     conn.close()
 
-    # ── 5. Summary ───────────────────────────────────────────────────────────
+    # â”€â”€ 5. Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     final_count = collection.count()
     print("=" * 40)
-    print(f"✓ Ingestion complete!")
+    print(f"âœ“ Ingestion complete!")
     print(f"  Total chunks in vector DB: {final_count}")
     print(f"  Database stored at: {persist_dir}")
     print("\nNext step: run the API with:")
@@ -1252,9 +1383,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(reset=args.reset)
-=== ./backend/rag/__init__.py ===
-# rag package
-=== ./backend/stt/transcriber.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\stt\__init__.py
+========================================
+# stt package
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\stt\transcriber.py
+========================================
 """
 backend/stt/transcriber.py
 ==========================
@@ -1304,7 +1441,7 @@ def transcribe_audio_file(audio_bytes: bytes, language: str = None) -> dict:
         beam_size=5,
         vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=500),
-        initial_prompt="Produits médicaux Vital Healthcare: LV PSOCALM, LV Psolcalm, FerBiotic Lipo, Pulmax Kids, Pulmax Anti-Tussif, Pédiakids, Pédiakids trio, Pédiakids Varispray, Pédiakids Apigrip, Pédiakids APITOU, Pédiakids COLIGAZ, Pédiakids Immunovit, Pédiakids Oméga 3, PHYTOFANE, PHYTOFANE Anti Chute, PHYTOFANE Antipelliculaire, PHYTOFANE Fortifiant Phanères, FONGIDERM, FONGIDERM Antifongique, VASELINE Urée, VITONIC, VITONIC Grossesse, OLIGOVIT, OLIGOVIT Trio, Oligovit magnésium, Vitosine Eosine, VITAL HEALTHCARE FERTICARE, VITAL HEALTHCARE SKINCARE, LV GINKO Extra, LV PHYTOVEINE, LV CYSPROTECT, LV Arthroforce, LV Fersang, LV Hemostop, LV Spasvit, LV Vitamine A, LV Vitamine D3, LV Tetra B, LV Sesa, LV Diabemin, LV Phytocalm, LV Mélatonuit, LV Migrainal, LV Normaprost, LV Tabastop, LV Lanorose, LV Crème Dalibour, HYDRAscreen, HYDRAfine, HYDRAVERA, HYDRA GEL, Hydra eau micellaire, Planthérapie Allergiplant, Planthérapie Planthiol, Planthérapie Plantexil, Plantex, Plantalgic, Plantyl, Angiplant, Rhinoplant, MULTIBON SOMMEIL, MULTIBON VITAMINE C Acérola, MULTIBON CALCIUM, MULTIBON OMEGA 3, MULTIBON APIGORGE, MULTIBON IMMUNITÉ, SWEET slim, SWEET health fer, SWEET bronzage, Minciligne, Minciligne Postnatale, Minciligne Homme, Mincivit, Mincivit Detox, Mincicare, Omevie Omega 3, Omevie Articulation, Omevie Cardio, Omevie Grossesse, Dermacné, Dermagyn, DermaGyn, Dermalo, DERMADOUCE, Dermasoufre, ARGIDERM, Uniderme, Uniderm, Grossivit, Grossivit vitaminé, Gelée Royale, Spiruline, Millepertuis, Guarana, Coenzyme Q10, Phytofibres, Phytodraine, LiftCaféine, TC 2000, CALMO dent, Ventre Plat, Ventre Ultra Plat, Levure de Riz Rouge, Levure de bière, Pectine de pomme, Lécithine de Soja, Vinaigre de cidre, Pollen d'abeilles, Stimul plus",
+        initial_prompt="Produits mÃ©dicaux Vital Healthcare: LV PSOCALM, LV Psolcalm, FerBiotic Lipo, Pulmax Kids, Pulmax Anti-Tussif, PÃ©diakids, PÃ©diakids trio, PÃ©diakids Varispray, PÃ©diakids Apigrip, PÃ©diakids APITOU, PÃ©diakids COLIGAZ, PÃ©diakids Immunovit, PÃ©diakids OmÃ©ga 3, PHYTOFANE, PHYTOFANE Anti Chute, PHYTOFANE Antipelliculaire, PHYTOFANE Fortifiant PhanÃ¨res, FONGIDERM, FONGIDERM Antifongique, VASELINE UrÃ©e, VITONIC, VITONIC Grossesse, OLIGOVIT, OLIGOVIT Trio, Oligovit magnÃ©sium, Vitosine Eosine, VITAL HEALTHCARE FERTICARE, VITAL HEALTHCARE SKINCARE, LV GINKO Extra, LV PHYTOVEINE, LV CYSPROTECT, LV Arthroforce, LV Fersang, LV Hemostop, LV Spasvit, LV Vitamine A, LV Vitamine D3, LV Tetra B, LV Sesa, LV Diabemin, LV Phytocalm, LV MÃ©latonuit, LV Migrainal, LV Normaprost, LV Tabastop, LV Lanorose, LV CrÃ¨me Dalibour, HYDRAscreen, HYDRAfine, HYDRAVERA, HYDRA GEL, Hydra eau micellaire, PlanthÃ©rapie Allergiplant, PlanthÃ©rapie Planthiol, PlanthÃ©rapie Plantexil, Plantex, Plantalgic, Plantyl, Angiplant, Rhinoplant, MULTIBON SOMMEIL, MULTIBON VITAMINE C AcÃ©rola, MULTIBON CALCIUM, MULTIBON OMEGA 3, MULTIBON APIGORGE, MULTIBON IMMUNITÃ‰, SWEET slim, SWEET health fer, SWEET bronzage, Minciligne, Minciligne Postnatale, Minciligne Homme, Mincivit, Mincivit Detox, Mincicare, Omevie Omega 3, Omevie Articulation, Omevie Cardio, Omevie Grossesse, DermacnÃ©, Dermagyn, DermaGyn, Dermalo, DERMADOUCE, Dermasoufre, ARGIDERM, Uniderme, Uniderm, Grossivit, Grossivit vitaminÃ©, GelÃ©e Royale, Spiruline, Millepertuis, Guarana, Coenzyme Q10, Phytofibres, Phytodraine, LiftCafÃ©ine, TC 2000, CALMO dent, Ventre Plat, Ventre Ultra Plat, Levure de Riz Rouge, Levure de biÃ¨re, Pectine de pomme, LÃ©cithine de Soja, Vinaigre de cidre, Pollen d'abeilles, Stimul plus",
         )
 
         full_text    = []
@@ -1366,15 +1503,26 @@ if __name__ == "__main__":
     result = transcribe_microphone(duration_seconds=5)
     print(f"Transcribed: {result['text']}")
     print(f"Language:    {result['language']}")
-=== ./backend/stt/__init__.py ===
-# stt package
-=== ./backend/tts/synthesizer.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\tts\__init__.py
+========================================
+# tts package
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\backend\tts\synthesizer.py
+========================================
 """
 backend/tts/synthesizer.py
 ==========================
-TTS intelligent : segmentation contextuelle 100% naturelle
-Supports : Français (Denise), Anglais (Jenny), Arabe (Zariyah)
-Prononciation fluide comme Google Translate
+TTS simple et rapide â€” sans transformers, sans torch
+DÃ©tection de langue : langdetect (local, < 1s)
+Voix : edge-tts  (Denise FR Â· Jenny EN Â· Zariyah AR)
+
+Cas spÃ©cial arabe mixte :
+  Les mots scientifiques/franÃ§ais insÃ©rÃ©s dans une rÃ©ponse arabe
+  sont regroupÃ©s et lus par la voix franÃ§aise (Denise), puis on
+  revient Ã  la voix arabe (Zariyah).
 """
 
 import asyncio
@@ -1382,246 +1530,229 @@ import base64
 import os
 import re
 import tempfile
-from transformers import pipeline
 
-# =====================================
-# Chargement du modèle de détection de langue
-# =====================================
-print("Chargement du modèle de détection de langue...")
-lang_classifier = pipeline(
-    "text-classification",
-    model="papluca/xlm-roberta-base-language-detection",
-    top_k=None,
-    device=-1  # CPU
-)
-
-# =====================================
-# Voix TTS
-# =====================================
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Voix edge-tts
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 VOICES = {
     "fr": "fr-FR-DeniseNeural",
     "en": "en-US-JennyNeural",
     "ar": "ar-SA-ZariyahNeural",
 }
 
-# =====================================
-# Fonction : détection langue avec fallback et score
-# =====================================
-def get_lang_from_model(text_chunk: str, fallback_lang="fr") -> str:
-    if not text_chunk.strip():
-        return fallback_lang
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Nettoyage du texte avant TTS (supprime le markdown)
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def clean_for_tts(text: str) -> str:
+    """
+    Supprime les symboles markdown qui seraient lus Ã  voix haute
+    par edge-tts â€” fonctionne pour FR, EN et AR.
+    """
+    # Gras/italique : **texte** ou *texte* â†’ texte  (avant de toucher aux *)
+    text = re.sub(r'\*{1,3}([^*\n]+?)\*{1,3}', r'\1', text)
+    # Puces universelles en dÃ©but de ligne : * - â€“ â€” â€¢ â—¦ â–ª â€º Â» et chiffres arabes Ù¡. Ù¢.
+    text = re.sub(r'^\s*([*\-â€“â€”â€¢â—¦â–ªâ€ºÂ»]|[0-9Ù -Ù©]+[.\)]|[Ù -Ù©]+\.?)\s+', '', text, flags=re.MULTILINE)
+    # Titres markdown : ## Titre â†’ Titre
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Backticks : `code` â†’ code
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # AstÃ©risques isolÃ©s restants
+    text = text.replace('*', '')
+    # Underscores italiques : _texte_ â†’ texte
+    text = re.sub(r'_([^_]+)_', r'\1', text)
+    # Tirets de sÃ©paration (---  ===  ***) â†’ rien
+    text = re.sub(r'^[\-=*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # Lignes vides multiples â†’ une seule
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
-    # Détection arabe par script (très fiable)
-    if re.search(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]', text_chunk):
-        return 'ar'
 
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# DÃ©tection de langue dominante
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def detect_lang(text: str, fallback: str = "fr") -> str:
+    if not text or not text.strip():
+        return fallback
+    # Comparer les caractÃ¨res arabes vs latins
+    arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
+    latin_chars  = len(re.findall(r'[A-Za-z]', text))
+    if arabic_chars > latin_chars:
+        return "ar"
     try:
-        results = lang_classifier(text_chunk[:200])
-        top = results[0][0]
-        lang = top['label']
-        score = top['score']
+        from langdetect import detect
+        lang = detect(text.strip())
+        return lang if lang in ("fr", "en", "ar") else fallback
+    except Exception:
+        return fallback
 
-        # Si confiance faible, on utilise fallback
-        if score < 0.90:
-            return fallback_lang
 
-        if lang in ["fr", "en", "ar"]:
-            return lang
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Segmentation token par token (arabe vs latin)
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _is_latin_token(token: str) -> bool:
+    """True si le token contient des lettres latines (mot FR/EN scientifique)."""
+    return bool(re.search(r'[A-Za-zÃ€-Ã¿]', token))
 
-        return fallback_lang
 
-    except:
-        return fallback_lang
+def split_arabic_latin(text: str) -> list[tuple[str, str]]:
+    """
+    DÃ©coupe le texte mot par mot et regroupe les sÃ©quences consÃ©cutives
+    de mÃªme type (arabe ou latin) en un seul segment.
 
-# =====================================
-# Fonction : segmentation intelligente
-# =====================================
-def smart_segment(text: str) -> list[tuple[str, str]]:
+    Exemple :
+      "ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰ Acide salicylique ÙˆÙ‡Ùˆ Ù…ØªÙˆÙØ±"
+      -> [("ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰", "ar"), ("Acide salicylique", "fr"), ("ÙˆÙ‡Ùˆ Ù…ØªÙˆÙØ±", "ar")]
+    """
+    tokens = text.split()
     segments = []
+    current_tokens = []
+    current_type = None
 
-    # Découpage en phrases
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-
-    for sentence in sentences:
-        if not sentence.strip():
+    for token in tokens:
+        if not token.strip():
             continue
+        token_type = "fr" if _is_latin_token(token) else "ar"
 
-        # langue globale de la phrase
-        sentence_lang = get_lang_from_model(sentence)
+        if token_type == current_type:
+            current_tokens.append(token)
+        else:
+            if current_tokens and current_type:
+                chunk = " ".join(current_tokens).strip()
+                if chunk:
+                    segments.append((chunk, current_type))
+            current_tokens = [token]
+            current_type   = token_type
 
-        words = sentence.split()
+    # Dernier groupe
+    if current_tokens and current_type:
+        chunk = " ".join(current_tokens).strip()
+        if chunk:
+            segments.append((chunk, current_type))
 
-        # phrases courtes → direct
-        if len(words) <= 6:
-            segments.append((sentence, sentence_lang))
-            continue
+    return segments if segments else [(text.strip(), "ar")]
 
-        current_chunk = []
-        current_lang = sentence_lang
-        i = 0
 
-        while i < len(words):
-            # analyser petit groupe de mots (contextuel)
-            chunk_test = " ".join(words[i:i+3])
-            detected_lang = get_lang_from_model(chunk_test, fallback_lang=sentence_lang)
-
-            # si changement réel
-            if detected_lang != current_lang:
-                if current_chunk:
-                    segments.append((" ".join(current_chunk), current_lang))
-                current_chunk = [words[i]]
-                current_lang = detected_lang
-            else:
-                current_chunk.append(words[i])
-
-            i += 1
-
-        if current_chunk:
-            segments.append((" ".join(current_chunk), current_lang))
-
-    return segments
-
-# =====================================
-# Fonction : synthèse d’un segment en mp3
-# =====================================
-async def synthesize_segment_async(text: str, lang: str) -> bytes:
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# SynthÃ¨se d'un seul segment audio
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+async def _synth_segment(text: str, lang: str) -> bytes:
     import edge_tts
     voice = VOICES.get(lang, VOICES["fr"])
-
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         out_path = f.name
-
     try:
-        communicate = edge_tts.Communicate(text.strip(), voice, rate="+10%")
-        await communicate.save(out_path)
+        comm = edge_tts.Communicate(text.strip(), voice, rate="+10%")
+        await comm.save(out_path)
         with open(out_path, "rb") as f:
             return f.read()
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
 
-# =====================================
-# Fonction : TTS asynchrone multi-segments
-# =====================================
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Estimation des timings pour le lipsync
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _estimate_timings(text: str, audio_b64: str) -> tuple[list, list, list]:
+    words = text.strip().split()
+    if not words:
+        return [], [], []
+    audio_bytes = len(audio_b64) * 3 / 4
+    duration_ms = max((audio_bytes / 16000) * 1000, 500)
+    unit_dur    = duration_ms / len(words)
+    wtimes      = [i * unit_dur for i in range(len(words))]
+    wdurations  = [unit_dur] * len(words)
+    return words, wtimes, wdurations
+
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# SynthÃ¨se principale (async)
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async def synthesize_async(text: str, lang: str = "auto") -> dict:
-    if lang != "auto" and lang in VOICES:
-        return await _single_tts(text, lang)
+    # 0. Nettoyer le markdown avant toute synthÃ¨se
+    text = clean_for_tts(text)
+    if not text:
+        return {"audio_b64": "", "voice": VOICES["fr"], "lang": "fr",
+                "format": "mp3", "segments": [], "words": [], "wtimes": [], "wdurations": []}
 
-    segments_info = smart_segment(text)
+    # 1. DÃ©tecter la langue dominante
+    detected = detect_lang(text) if lang == "auto" or lang not in VOICES else lang
 
-    print(f"🎙️ TTS intelligent → {len(segments_info)} segment(s)")
-    for seg_text, seg_lang in segments_info:
-        print(f"   [{seg_lang}] {seg_text[:80].strip()}...")
+    # 2. Cas arabe avec mots latins -> segments mixtes
+    if detected == "ar" and re.search(r'[A-Za-z]{2,}', text):
+        segments = split_arabic_latin(text)
 
-    if len(segments_info) == 1:
-        seg_text, seg_lang = segments_info[0]
-        return await _single_tts(seg_text, seg_lang)
+        print(f"ðŸŽ™ï¸ TTS arabe mixte -> {len(segments)} segment(s)")
+        for seg_text, seg_lang in segments:
+            print(f"   [{seg_lang}] {seg_text[:70]}")
 
-    audio_parts = []
-    segments_meta = []
+        audio_parts: list[bytes] = []
+        for seg_text, seg_lang in segments:
+            if not seg_text.strip():
+                continue
+            mp3 = await _synth_segment(seg_text, seg_lang)
+            audio_parts.append(mp3)
 
-    for seg_text, seg_lang in segments_info:
-        if not seg_text.strip():
-            continue
-        mp3_bytes = await synthesize_segment_async(seg_text, seg_lang)
-        audio_parts.append(mp3_bytes)
-        segments_meta.append({"text": seg_text, "lang": seg_lang})
+        if not audio_parts:
+            mp3 = await _synth_segment(text, "ar")
+            audio_parts = [mp3]
 
-    if not audio_parts:
-        return await _single_tts(text, "fr")
-
-    # ajouter pause naturelle entre segments
-    silence = b'\x00' * 2000
-    combined = silence.join(audio_parts)
-    audio_b64 = base64.b64encode(combined).decode("utf-8")
-
-    # Création des timings pour le frontend
-    all_words = []
-    all_wtimes = []
-    all_wdurations = []
-    time_offset = 0
-    total_duration_est = max(len(combined) / 16000 * 1000, 1000)
-
-    for seg in segments_meta:
-        units = seg["text"].strip().split()
-        if not units:
-            units = [" "]
-        seg_dur = total_duration_est * (len(seg["text"]) / max(len(text), 1))
-        unit_dur = seg_dur / len(units)
-
-        for w in units:
-            all_words.append(w)
-            all_wtimes.append(time_offset)
-            all_wdurations.append(unit_dur)
-            time_offset += unit_dur
-
-    dominant_lang = max(
-        set(s["lang"] for s in segments_meta),
-        key=lambda l: sum(len(s["text"]) for s in segments_meta if s["lang"] == l)
-    )
-
-    return {
-        "audio_b64": audio_b64,
-        "voice": VOICES.get(dominant_lang, VOICES["fr"]),
-        "lang": dominant_lang,
-        "format": "mp3",
-        "segments": [{"text": s["text"], "lang": s["lang"]} for s in segments_meta],
-        "words": all_words,
-        "wtimes": all_wtimes,
-        "wdurations": all_wdurations
-    }
-
-# =====================================
-# Fonction : TTS d’un texte entier (simple)
-# =====================================
-async def _single_tts(text: str, lang: str) -> dict:
-    import edge_tts
-    voice = VOICES.get(lang, VOICES["fr"])
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        out_path = f.name
-    try:
-        communicate = edge_tts.Communicate(text, voice, rate="+10%")
-        await communicate.save(out_path)
-        with open(out_path, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-        words = text.strip().split()
-        duration_est = max(len(audio_b64) / 200, 1000)
-        unit_dur = duration_est / max(len(words), 1)
+        combined  = b"".join(audio_parts)
+        audio_b64 = base64.b64encode(combined).decode("utf-8")
+        words, wtimes, wdurations = _estimate_timings(text, audio_b64)
 
         return {
-            "audio_b64": audio_b64,
-            "voice": voice,
-            "lang": lang,
-            "format": "mp3",
-            "segments": [{"text": text, "lang": lang}],
-            "words": words,
-            "wtimes": [i * unit_dur for i in range(len(words))],
-            "wdurations": [unit_dur] * len(words)
+            "audio_b64":  audio_b64,
+            "voice":      VOICES["ar"],
+            "lang":       "ar",
+            "format":     "mp3",
+            "segments":   [{"text": t, "lang": l} for t, l in segments],
+            "words":      words,
+            "wtimes":     wtimes,
+            "wdurations": wdurations,
         }
-    finally:
-        if os.path.exists(out_path):
-            os.unlink(out_path)
 
-# =====================================
-# Fonction synchrone pour appeler l’async
-# =====================================
+    # 3. Cas simple FR / EN / AR pur
+    print(f"ðŸŽ™ï¸ TTS simple [{detected}] -> {text[:70]}")
+    mp3_bytes = await _synth_segment(text, detected)
+    audio_b64 = base64.b64encode(mp3_bytes).decode("utf-8")
+    words, wtimes, wdurations = _estimate_timings(text, audio_b64)
+
+    return {
+        "audio_b64":  audio_b64,
+        "voice":      VOICES[detected],
+        "lang":       detected,
+        "format":     "mp3",
+        "segments":   [{"text": text, "lang": detected}],
+        "words":      words,
+        "wtimes":     wtimes,
+        "wdurations": wdurations,
+    }
+
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Interface synchrone
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def synthesize(text: str, lang: str = "auto") -> dict:
+    """Point d'entrÃ©e synchrone."""
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(asyncio.run, synthesize_async(text, lang))
-        return future.result()=== ./backend/tts/__init__.py ===
-# tts package
-=== ./backend/__init__.py ===
-# backend package
-=== ./docker-compose.yml ===
-=== ./frontend/commercial.html ===
+        return future.result()
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\docker-compose.yml
+========================================
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\commercial.html
+========================================
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>VITAL Commercial – Vita</title>
+<title>VITAL Commercial â€“ Vita</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/style.css"/>
@@ -1658,7 +1789,7 @@ def synthesize(text: str, lang: str = "auto") -> dict:
       <div id="avatarDiv"></div>
       <div id="avatar-loading">
         <div class="spin"></div>
-        <span>Loading avatar…</span>
+        <span>Loading avatarâ€¦</span>
       </div>
     </div>
     <div class="agent-info">
@@ -1666,7 +1797,7 @@ def synthesize(text: str, lang: str = "auto") -> dict:
       <div class="agent-role">Pharmaceutical Delegate</div>
       <div class="agent-status">
         <div class="status-dot loading" id="status-dot"></div>
-        <span id="status-text">Loading…</span>
+        <span id="status-text">Loadingâ€¦</span>
       </div>
     </div>
     <div class="voice-controls">
@@ -1679,7 +1810,7 @@ def synthesize(text: str, lang: str = "auto") -> dict:
         <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
       </div>
       <div class="stats-mini">
-        <span>Products</span><span id="chunk-count">—</span>
+        <span>Products</span><span id="chunk-count">â€”</span>
       </div>
     </div>
   </aside>
@@ -1706,7 +1837,7 @@ def synthesize(text: str, lang: str = "auto") -> dict:
         </svg>
         <h2>Bonjour Docteur</h2>
         <p>Cliquez pour commencer la visite avec Vita.</p>
-        <button class="pick-product-cta" onclick="startVisit()">Commencer la visite →</button>
+        <button class="pick-product-cta" onclick="startVisit()">Commencer la visite â†’</button>
       </div>
     </div>
 
@@ -1721,7 +1852,7 @@ def synthesize(text: str, lang: str = "auto") -> dict:
           </svg>
         </button>
       </div>
-      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
+      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;Â·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
     </div>
   </main>
 </div>
@@ -1738,7 +1869,11 @@ def synthesize(text: str, lang: str = "auto") -> dict:
 <script type="module" src="js/avatar.js"></script>
 <script type="module" src="js/commercial.js"></script>
 </body>
-</html>=== ./frontend/css/style.css ===
+</html>
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\css\style.css
+========================================
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -1762,7 +1897,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .avatar-panel::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(126,184,247,0.06) 0%,transparent 70%);pointer-events:none;}
 .avatar-scene{flex:1;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;overflow:hidden;}
 
-/* ── TalkingHead div ── */
+/* â”€â”€ TalkingHead div â”€â”€ */
 #avatarDiv{
   position:absolute;
   inset:0;
@@ -1959,13 +2094,31 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 @media(max-width:700px){.app{grid-template-columns:1fr}.avatar-panel{display:none}}
 
 
-=== ./frontend/index.html ===
+.test-dropdown-wrap{position:relative;}
+.test-btn{padding:5px 12px;border-radius:8px;font-family:var(--sans);font-size:11px;font-weight:500;cursor:pointer;transition:all .2s;border:1px solid rgba(167,139,250,0.3);background:rgba(167,139,250,0.08);color:#a78bfa;display:flex;align-items:center;gap:5px;}
+.test-btn:hover{background:rgba(167,139,250,0.15);border-color:rgba(167,139,250,0.5)}
+.chevron-icon{transition:transform .2s;flex-shrink:0}
+.test-btn.open .chevron-icon{transform:rotate(180deg)}
+.test-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:6px;min-width:220px;z-index:50;opacity:0;pointer-events:none;transform:translateY(-6px);transition:opacity .15s,transform .15s;box-shadow:0 8px 32px rgba(0,0,0,0.4);}
+.test-menu.open{opacity:1;pointer-events:all;transform:translateY(0)}
+.test-menu-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;text-decoration:none;transition:background .12s;}
+.medical-item:hover{background:rgba(126,184,247,0.08)}
+.commercial-item:hover{background:rgba(201,169,110,0.08)}
+.test-menu-icon{font-size:18px;flex-shrink:0;width:28px;text-align:center}
+.test-menu-label{font-size:13px;font-weight:500;}
+.medical-item .test-menu-label{color:var(--accent)}
+.commercial-item .test-menu-label{color:var(--gold)}
+.test-menu-sub{font-size:11px;color:var(--text-dim);margin-top:1px}
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\index.html
+========================================
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>VitalAgent — Medical AI Trainer</title>
+<title>VitalAgent â€” Medical AI Trainer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/style.css"/>
@@ -1980,10 +2133,10 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
   <div class="modal">
     <div class="modal-header">
       <h2>Choose a product</h2>
-      <button class="modal-close" onclick="closeModal()">✕</button>
+      <button class="modal-close" onclick="closeModal()">âœ•</button>
     </div>
     <div class="search-wrap">
-      <input class="search-input" id="product-search" placeholder="Search by name…" oninput="filterProducts(this.value)" autocomplete="off"/>
+      <input class="search-input" id="product-search" placeholder="Search by nameâ€¦" oninput="filterProducts(this.value)" autocomplete="off"/>
     </div>
     <div class="product-list" id="product-list"></div>
     <div class="product-count" id="product-count"></div>
@@ -1996,7 +2149,7 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
     <div class="report-modal-header">
       <h2>Session Report</h2>
       <div class="report-modal-actions">
-        <button class="report-download-btn" onclick="downloadReport()">⬇ Download PDF</button>
+        <button class="report-download-btn" onclick="downloadReport()">â¬‡ Download PDF</button>
         <button class="report-close-btn" onclick="closeReport()">Close</button>
       </div>
     </div>
@@ -2014,13 +2167,13 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
       <div class="speak-ring r3"></div>
       <div class="avatar-glow"></div>
 
-      <!-- ★ TalkingHead s'injecte ici ★ -->
+      <!-- â˜… TalkingHead s'injecte ici â˜… -->
       <div id="avatarDiv"></div>
 
       <!-- Spinner pendant le chargement du .glb -->
       <div id="avatar-loading">
         <div class="spin"></div>
-        <span>Loading avatar…</span>
+        <span>Loading avatarâ€¦</span>
       </div>
     </div>
 
@@ -2029,7 +2182,7 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
       <div class="agent-role">Medical Product Trainer</div>
       <div class="agent-status">
         <div class="status-dot loading" id="status-dot"></div>
-        <span id="status-text">Loading…</span>
+        <span id="status-text">Loadingâ€¦</span>
       </div>
     </div>
     <div class="voice-controls">
@@ -2042,7 +2195,7 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
         <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
       </div>
       <div class="stats-mini">
-        <span>Products</span><span id="chunk-count">—</span>
+        <span>Products</span><span id="chunk-count">â€”</span>
       </div>
     </div>
   </aside>
@@ -2055,18 +2208,44 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
       </div>
       <div class="header-right" style="display:flex;align-items:center;gap:8px;">
         <span id="mode-badge" class="mode-badge" style="display:none"></span>
+        
+        <!-- TEST DROPDOWN -->
+<div class="test-dropdown-wrap" id="test-dropdown-wrap">
+  <button class="test-btn" onclick="toggleTestMenu()" id="test-btn">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Assess Knowledge
+    <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </button>
+  <div class="test-menu" id="test-menu">
+    <div class="test-menu-header">Take a certification test</div>
+    <a class="test-menu-item medical-item" href="test-medical.html" target="_blank">
+      <span class="test-menu-icon">ðŸ©º</span>
+      <div>
+        <div class="test-menu-label">Medical Representative</div>
+        <div class="test-menu-sub">Clinical knowledge assessment Â· 10 questions</div>
+      </div>
+    </a>
+    <a class="test-menu-item commercial-item" href="test-commercial.html" target="_blank">
+      <span class="test-menu-icon">ðŸ’¼</span>
+      <div>
+        <div class="test-menu-label">Commercial Representative</div>
+        <div class="test-menu-sub">Sales skills assessment Â· 10 questions</div>
+      </div>
+    </a>
+  </div>
+</div>
         <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           Report
         </button>
         <div id="product-badge" class="no-product-badge" onclick="openModal()">
-          <span>⬡</span><span id="badge-text">Select a product</span>
+          <span>â¬¡</span><span id="badge-text">Select a product</span>
         </div>
       </div>
     </div>
 
     <div class="product-context-bar hidden" id="context-bar">
-      <div><span class="ctx-label">Asking about: </span><span class="ctx-name" id="ctx-product-name">—</span></div>
+      <div><span class="ctx-label">Asking about: </span><span class="ctx-name" id="ctx-product-name">â€”</span></div>
       <button class="ctx-change" onclick="openModal()">Change product</button>
     </div>
 
@@ -2080,14 +2259,14 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
         </svg>
         <h2>Bonjour, je suis Dr. Layla</h2>
         <p>Start by selecting a product from your database, then ask me anything about it.</p>
-        <button class="pick-product-cta" onclick="openModal()">Browse products →</button>
+        <button class="pick-product-cta" onclick="openModal()">Browse products â†’</button>
       </div>
     </div>
 
     <div class="input-area">
       <div class="input-wrap">
         <textarea id="question-input" rows="1"
-          placeholder="Select a product first, or type a question…"
+          placeholder="Select a product first, or type a questionâ€¦"
           onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="send-btn" id="send-btn" onclick="sendQuestion()">
           <svg viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2095,12 +2274,12 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
           </svg>
         </button>
       </div>
-      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
+      <div class="input-hint"><kbd>Enter</kbd> send &nbsp;Â·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
     </div>
   </main>
 </div>
 
-<!-- ★ importmap : résout "three" pour TalkingHead ★ -->
+<!-- â˜… importmap : rÃ©sout "three" pour TalkingHead â˜… -->
 <script type="importmap">
 {
   "imports": {
@@ -2118,21 +2297,24 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 
 </body>
 </html>
-=== ./frontend/js/avatar.js ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\js\avatar.js
+========================================
 
   import { TalkingHead } from '/TalkingHead-main/modules/talkinghead.mjs';
 
   window._avatarReady = false;
   window._head        = null;
 
-  // ── Initialisation de l'avatar ─────────────────────────────────────
+  // â”€â”€ Initialisation de l'avatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   window.initAvatar = async function () {
     try {
       window._head = new TalkingHead(document.getElementById('avatarDiv'), {
         ttsEndpoint   : null,
         cameraView    : 'upper',
-        lipsyncLang   : 'fr',                    // langue par défaut au démarrage
-        lipsyncModules: ['fr', 'en', 'ar'],      // IMPORTANT : ar doit être là
+        lipsyncLang   : 'fr',                    // langue par dÃ©faut au dÃ©marrage
+        lipsyncModules: ['fr', 'en', 'ar'],      // IMPORTANT : ar doit Ãªtre lÃ 
       });
 
       await window._head.showAvatar({
@@ -2156,13 +2338,13 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
     }
   };
 
-  // ── Mapping langue pour lipsync ───────────────────────────────────
+  // â”€â”€ Mapping langue pour lipsync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function getLipsyncLang(lang) {
     const map = { fr: 'fr', en: 'en', ar: 'ar' };
     return map[lang] || 'fr';
   }
 
-  // ── Fonction principale de parole avec lip-sync (utilisée partout) ──
+  // â”€â”€ Fonction principale de parole avec lip-sync (utilisÃ©e partout) â”€â”€
   window.speakWithAvatar = async function (text, forcedLang = null) {
     if (!window._avatarReady || !window._head || !text?.trim()) return;
 
@@ -2170,7 +2352,7 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
     const API  = window._API;
 
     try {
-      // 1. Appel à ton TTS intelligent (lang = "auto" ou langue forcée)
+      // 1. Appel Ã  ton TTS intelligent (lang = "auto" ou langue forcÃ©e)
       const res = await fetch(`${API}/tts/speak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2185,10 +2367,10 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 
       if (!data.audio_b64) throw new Error("No audio_b64");
 
-      // Langue détectée par ton backend (très important pour l'arabe)
+      // Langue dÃ©tectÃ©e par ton backend (trÃ¨s important pour l'arabe)
       const detectedLang = data.lang || forcedLang || 'fr';
 
-      // 2. Préparer l'audio
+      // 2. PrÃ©parer l'audio
       if (head.audioCtx.state !== "running") {
         await head.audioCtx.resume();
       }
@@ -2201,11 +2383,11 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
       const audioBuffer = await head.audioCtx.decodeAudioData(buf);
       const durationMs  = audioBuffer.duration * 1000;
 
-      // 3. Timing intelligent selon la langue (clé pour une synchro naturelle)
+      // 3. Timing intelligent selon la langue (clÃ© pour une synchro naturelle)
       let words, wtimes, wdurations;
 
       if (detectedLang === 'ar') {
-        // Pour l'arabe : timing par caractères (plus précis que par mots)
+        // Pour l'arabe : timing par caractÃ¨res (plus prÃ©cis que par mots)
         const arabicChars = [...text.replace(/\s+/g, '')].filter(c => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(c));
         if (arabicChars.length > 3) {
           const charDuration = durationMs / arabicChars.length;
@@ -2213,21 +2395,21 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
           wtimes     = arabicChars.map((_, i) => i * charDuration);
           wdurations = arabicChars.map(() => charDuration);
         } else {
-          // fallback mots si très peu de caractères
+          // fallback mots si trÃ¨s peu de caractÃ¨res
           words = text.trim().split(/\s+/);
           const wd = durationMs / Math.max(words.length, 1);
           wtimes = words.map((_, i) => i * wd);
           wdurations = words.map(() => wd);
         }
       } else {
-        // Français & Anglais : timing par mots (plus naturel)
+        // FranÃ§ais & Anglais : timing par mots (plus naturel)
         words = text.trim().split(/\s+/);
         const wordDuration = durationMs / Math.max(words.length, 1);
         wtimes     = words.map((_, i) => i * wordDuration);
         wdurations = words.map(() => wordDuration);
       }
 
-      console.log(`🗣️ Speaking [${detectedLang.toUpperCase()}] → ${words.length} units | duration ${durationMs.toFixed(0)}ms`);
+      console.log(`ðŸ—£ï¸ Speaking [${detectedLang.toUpperCase()}] â†’ ${words.length} units | duration ${durationMs.toFixed(0)}ms`);
 
       // 4. Lancer le lip-sync
       const lipsyncLang = getLipsyncLang(detectedLang);
@@ -2250,7 +2432,7 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
             clearInterval(checkInterval);
             resolve();
           }
-          if (Date.now() - startTime > durationMs + 1500) { // sécurité
+          if (Date.now() - startTime > durationMs + 1500) { // sÃ©curitÃ©
             clearInterval(checkInterval);
             resolve();
           }
@@ -2258,13 +2440,16 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
       });
 
     } catch (e) {
-      console.error("❌ speakWithAvatar error:", e);
-      // En cas d'erreur, on essaie quand même de lire l'audio sans timing parfait
+      console.error("âŒ speakWithAvatar error:", e);
+      // En cas d'erreur, on essaie quand mÃªme de lire l'audio sans timing parfait
       console.warn("Falling back to simple audio playback");
     }
   };
 
-=== ./frontend/js/commercial.js ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\js\commercial.js
+========================================
 const API = 'http://localhost:8000';
 window._API = API;
 
@@ -2276,9 +2461,9 @@ let audioChunks = [];
 const MODE = 'vita_commercial';
 let visitStarted = false;
 
-// ── Init ──────────────────────────────────────────────────────
+// â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function init() {
-  setStatus('loading', 'Loading avatar…');
+  setStatus('loading', 'Loading avatarâ€¦');
 
   await new Promise(resolve => {
     const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
@@ -2288,13 +2473,13 @@ async function init() {
   try {
     const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
     const d = await res.json();
-    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? '—';
+    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? 'â€”';
   } catch {
     document.getElementById('chunk-count').textContent = 'offline';
   }
 
   await window.initAvatar();
-  // No auto‑start – wait for user to click the button
+  // No autoâ€‘start â€“ wait for user to click the button
 }
 
 function setStatus(state, text) {
@@ -2305,7 +2490,7 @@ function setStatus(state, text) {
 }
 window.setStatus = setStatus;
 
-// ── Start Visit (called by button) ──────────────────────────
+// â”€â”€ Start Visit (called by button) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 window.startVisit = async function() {
   if (visitStarted) return;
   visitStarted = true;
@@ -2322,11 +2507,11 @@ window.startVisit = async function() {
   await loadGreeting();
 };
 
-// ── Load and speak greeting ──────────────────────────────────
+// â”€â”€ Load and speak greeting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function loadGreeting() {
   hideEmpty();
   addTyping();
-  setStatus('speaking', 'Greeting…');
+  setStatus('speaking', 'Greetingâ€¦');
 
   try {
     const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, {
@@ -2369,14 +2554,14 @@ async function loadGreeting() {
     finalizeBubble(fullText, []);
 
     if (fullText) {
-      setStatus('speaking', 'Speaking…');
+      setStatus('speaking', 'Speakingâ€¦');
       await window.speakWithAvatar(fullText);
     }
     setStatus('', 'Ready');
   } catch (err) {
     console.error('Error loading greeting:', err);
     removeTyping();
-    const fallback = "Bonjour Docteur, je suis Vita de VITAL SA. Je suis votre déléguée pharmaceutique. Je suis prête à discuter de nos produits avec vous. Quel produit souhaitez-vous aborder aujourd'hui ?";
+    const fallback = "Bonjour Docteur, je suis Vita de VITAL SA. Je suis votre dÃ©lÃ©guÃ©e pharmaceutique. Je suis prÃªte Ã  discuter de nos produits avec vous. Quel produit souhaitez-vous aborder aujourd'hui ?";
     addAIBubble(null);
     const textSpan = document.getElementById('streaming-text');
     if (textSpan) textSpan.textContent = fallback;
@@ -2386,7 +2571,7 @@ async function loadGreeting() {
   }
 }
 
-// ── Send Question (doctor input) ────────────────────────────
+// â”€â”€ Send Question (doctor input) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 window.sendQuestion = async function() {
   if (!visitStarted) {
     await window.startVisit(); // ensure visit started before sending
@@ -2403,7 +2588,7 @@ window.sendQuestion = async function() {
 
   addUserMsg(userText);
   addTyping();
-  setStatus('thinking', 'Thinking…');
+  setStatus('thinking', 'Thinkingâ€¦');
 
   try {
     const res = await fetch(`${API}/chat/ask/stream`, {
@@ -2419,7 +2604,7 @@ window.sendQuestion = async function() {
     let fullText = '';
     let sources = [];
     let msgEl = null;
-    setStatus('speaking', 'Responding…');
+    setStatus('speaking', 'Respondingâ€¦');
 
     while (true) {
       const { value, done } = await reader.read();
@@ -2466,7 +2651,7 @@ window.sendQuestion = async function() {
   }
 };
 
-// ── Voice ─────────────────────────────────────────────────────
+// â”€â”€ Voice â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 window.toggleMic = async function() {
   if (!visitStarted) {
     await window.startVisit(); // ensure audio enabled
@@ -2484,9 +2669,9 @@ async function startRecording() {
     mediaRecorder.start();
     isRecording = true;
     document.getElementById('mic-btn').classList.add('recording');
-    document.getElementById('mic-label').textContent = 'Recording… click to stop';
+    document.getElementById('mic-label').textContent = 'Recordingâ€¦ click to stop';
     document.getElementById('waveform').classList.add('recording-active');
-    setStatus('listening', 'Listening…');
+    setStatus('listening', 'Listeningâ€¦');
     if (window._avatarReady && window._head?.audioCtx?.state !== 'running') {
       await window._head.audioCtx.resume();
     }
@@ -2503,7 +2688,7 @@ function stopRecording() {
     document.getElementById('mic-btn').classList.remove('recording');
     document.getElementById('mic-label').textContent = 'Hold to speak';
     document.getElementById('waveform').classList.remove('recording-active');
-    setStatus('thinking', 'Processing…');
+    setStatus('thinking', 'Processingâ€¦');
   }
 }
 
@@ -2548,7 +2733,7 @@ async function sendAudio() {
         }
         if (data.type === 'transcript') {
           transcript = data.text;
-          addUserMsg(`🎤 ${transcript}`, true);
+          addUserMsg(`ðŸŽ¤ ${transcript}`, true);
           removeTyping();
           addTyping();
         } else if (data.type === 'token') {
@@ -2585,7 +2770,7 @@ async function sendAudio() {
   }
 }
 
-// ── Message UI Helpers (identical to main.js) ────────────────
+// â”€â”€ Message UI Helpers (identical to main.js) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function hideEmpty() { document.getElementById('empty-state')?.remove(); }
 function addSystemMsg(text) {
   const el = document.createElement('div');
@@ -2647,7 +2832,7 @@ function finalizeBubble(fullText, sources) {
   scrollBottom();
 }
 
-// ── Edit & Resend (copied from main.js) ──────────────────────
+// â”€â”€ Edit & Resend (copied from main.js) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 window.startEdit = function(msgId, btn) {
   const msgEl = document.getElementById(msgId);
   const wrap = msgEl.querySelector('.edit-wrap');
@@ -2689,7 +2874,7 @@ async function resendQuestion(userText) {
   isLoading = true;
   setSend(true);
   addTyping();
-  setStatus('thinking', 'Thinking…');
+  setStatus('thinking', 'Thinkingâ€¦');
   try {
     const res = await fetch(`${API}/chat/ask/stream`, {
       method: 'POST',
@@ -2700,7 +2885,7 @@ async function resendQuestion(userText) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '', full = '', sources = [], msgEl = null;
-    setStatus('speaking', 'Responding…');
+    setStatus('speaking', 'Respondingâ€¦');
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -2734,7 +2919,7 @@ async function resendQuestion(userText) {
   }
 }
 
-// ── Log + Report (copied from main.js, adapted to commercial) ──
+// â”€â”€ Log + Report (copied from main.js, adapted to commercial) â”€â”€
 const conversationLog = [];
 function logUser(text, isVoice) {
   conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
@@ -2763,7 +2948,7 @@ function buildReportContent() {
   const aiCount = conversationLog.filter(e => e.role === 'ai').length;
   const exchangesHtml = conversationLog.map(entry => {
     if (entry.role === 'user') {
-      return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
+      return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? 'ðŸŽ¤ ' : ''}${escHtml(entry.text)}</div></div>`;
     } else {
       const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
       return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
@@ -2773,17 +2958,17 @@ function buildReportContent() {
   document.getElementById('report-content').innerHTML = `
     <div class="r-header">
       <div class="r-logo">VITAL Commercial Visit</div>
-      <div class="r-subtitle">Session with Vita — Delegate</div>
+      <div class="r-subtitle">Session with Vita â€” Delegate</div>
       <div class="r-meta">
         <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
-        <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
+        <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor Â· ${aiCount} Vita</span></div>
         <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
       </div>
     </div>
     ${prodHtml}
     <div class="r-section-title">Full conversation</div>
     ${exchangesHtml}
-    <div class="r-footer"><span>Generated by VitalAgent · VITAL SA</span><span>${dateStr}</span></div>`;
+    <div class="r-footer"><span>Generated by VitalAgent Â· VITAL SA</span><span>${dateStr}</span></div>`;
 }
 window.downloadReport = function() {
   const content = document.getElementById('report-content');
@@ -2812,7 +2997,7 @@ window.downloadReport = function() {
 };
 function escHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-// ── Helpers ───────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function showError(msg) {
   removeTyping();
   const el = document.createElement('div');
@@ -2828,7 +3013,11 @@ function scrollBottom() { const el = document.getElementById('messages'); el.scr
 function esc(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 // Start
-init();=== ./frontend/js/main.js ===
+init();
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\js\main.js
+========================================
 
 const API = 'http://localhost:8000';
 window._API = API;
@@ -2838,22 +3027,22 @@ let mediaRecorder = null, audioChunks = [];
 let allProducts = [], selectedProduct = null, selectedProductData = null;
 let trainingMode = null;
 
-// ── Init ──────────────────────────────────────────────────────
+// â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function init() {
-  setStatus('loading', 'Loading avatar…');
+  setStatus('loading', 'Loading avatarâ€¦');
 
-  // Attendre que initAvatar soit disponible (module chargé)
+  // Attendre que initAvatar soit disponible (module chargÃ©)
   await new Promise(resolve => {
     const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
     setTimeout(() => { clearInterval(t); resolve(); }, 5000);
   });
 
-  // Lancer avatar + stats en parallèle
+  // Lancer avatar + stats en parallÃ¨le
   const avatarP = window.initAvatar();
   try {
     const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
     const d   = await res.json();
-    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? '—';
+    document.getElementById('chunk-count').textContent = d.total_chunks?.toLocaleString() ?? 'â€”';
   } catch { document.getElementById('chunk-count').textContent = 'offline'; }
 
   await loadProducts();
@@ -2868,9 +3057,9 @@ function setStatus(state, text) {
   state === 'speaking' ? scene.classList.add('speaking') : scene.classList.remove('speaking');
 }
 
-// ── Mode intro ────────────────────────────────────────────────
+// â”€â”€ Mode intro â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function streamModeIntro(mode) {
-  addTyping(); setStatus('speaking', 'Responding…');
+  addTyping(); setStatus('speaking', 'Respondingâ€¦');
   try {
     const res = await fetch(`${API}/chat/mode-intro/stream?mode=${mode}`);
     if (!res.ok) throw new Error();
@@ -2889,14 +3078,14 @@ async function streamModeIntro(mode) {
     }
     if (!msgEl) msgEl = addAIBubble(null);
     finalizeBubble(full, []);
-    if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
+    if (full) { setStatus('speaking','Speakingâ€¦'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch { document.getElementById('typing-indicator')?.remove(); setStatus('','Ready'); }
 }
 
-// ── Greeting ──────────────────────────────────────────────────
+// â”€â”€ Greeting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function loadGreeting() {
-  hideEmpty(); addTyping(); setStatus('speaking','Greeting…');
+  hideEmpty(); addTyping(); setStatus('speaking','Greetingâ€¦');
   try {
     const res = await fetch(`${API}/chat/greeting/stream`, {signal:AbortSignal.timeout(60000)});
     if (!res.ok) throw new Error();
@@ -2923,11 +3112,11 @@ async function loadGreeting() {
       bubble.removeAttribute('id');
       bubble.insertAdjacentHTML('beforeend',`
         <div class="mode-select-btns">
-          <button class="mode-btn medical"    onclick="setMode('medical')">🩺 Medical delegate</button>
-          <button class="mode-btn commercial" onclick="setMode('commercial')">💼 Commercial delegate</button>
+          <button class="mode-btn medical"    onclick="setMode('medical')">ðŸ©º Medical delegate</button>
+          <button class="mode-btn commercial" onclick="setMode('commercial')">ðŸ’¼ Commercial delegate</button>
         </div>`);
     }
-    if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
+    if (full) { setStatus('speaking','Speakingâ€¦'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch {
     document.getElementById('typing-indicator')?.remove();
@@ -2937,8 +3126,8 @@ async function loadGreeting() {
       bubble.removeAttribute('id');
       bubble.innerHTML = `<p>Bonjour ! Je suis Dr. Layla, votre assistante de formation produits. Comment souhaitez-vous apprendre aujourd'hui ?</p>
         <div class="mode-select-btns">
-          <button class="mode-btn medical"    onclick="setMode('medical')">🩺 Medical delegate</button>
-          <button class="mode-btn commercial" onclick="setMode('commercial')">💼 Commercial delegate</button>
+          <button class="mode-btn medical"    onclick="setMode('medical')">ðŸ©º Medical delegate</button>
+          <button class="mode-btn commercial" onclick="setMode('commercial')">ðŸ’¼ Commercial delegate</button>
         </div>`;
     }
     setStatus('','Ready');
@@ -2950,24 +3139,24 @@ function setMode(mode) {
   const badge = document.getElementById('mode-badge');
   badge.style.display = 'inline-block';
   badge.className = `mode-badge ${mode}`;
-  badge.textContent = mode==='medical' ? '🩺 Medical' : '💼 Commercial';
+  badge.textContent = mode==='medical' ? 'ðŸ©º Medical' : 'ðŸ’¼ Commercial';
   document.querySelectorAll('.mode-select-btns').forEach(el=>el.remove());
   addSystemMsg(mode==='medical'
-    ? 'Mode: Medical delegate — deep product knowledge training'
-    : 'Mode: Commercial delegate — sales & persuasion training');
+    ? 'Mode: Medical delegate â€” deep product knowledge training'
+    : 'Mode: Commercial delegate â€” sales & persuasion training');
   if (selectedProduct) renderChips(buildDynamicChips(selectedProduct, selectedProductData));
-  document.getElementById('question-input').placeholder = 'Select a product to begin…';
+  document.getElementById('question-input').placeholder = 'Select a product to beginâ€¦';
   streamModeIntro(mode);
 }
 
-// ── Produits ──────────────────────────────────────────────────
+// â”€â”€ Produits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function loadProducts() {
   try {
     const res = await fetch(`${API}/products`, {signal:AbortSignal.timeout(5000)});
     if (res.ok) { const d = await res.json(); allProducts = d.products || []; }
   } catch {
-    allProducts = ["LV PSOCALM","FerBiotic Lipo","Pulmax Kids","Pulmax Anti-Tussif","Pédiakids trio",
-      "PHYTOFANE Antipelliculaire","MULTIBON VITAMINE C Acérola","Allergiplant","LV Vitamine D3",
+    allProducts = ["LV PSOCALM","FerBiotic Lipo","Pulmax Kids","Pulmax Anti-Tussif","PÃ©diakids trio",
+      "PHYTOFANE Antipelliculaire","MULTIBON VITAMINE C AcÃ©rola","Allergiplant","LV Vitamine D3",
       "DermaGyn","Uniderme peau sensible","Mincivit Detox"].sort();
   }
   renderProductList(allProducts);
@@ -2988,11 +3177,11 @@ function buildDynamicChips(name, productData) {
     const chips = [`What is ${name} used for?`, `Tell me everything about ${name}`];
     if (desc.includes('composition')||desc.includes('extrait')||desc.includes('vitamine')||desc.includes('mg'))
       chips.push(`What is the composition of ${name}?`);
-    if (desc.includes('forme')||desc.includes('gélule')||desc.includes('sirop')||desc.includes('crème'))
+    if (desc.includes('forme')||desc.includes('gÃ©lule')||desc.includes('sirop')||desc.includes('crÃ¨me'))
       chips.push(`What form is ${name} available in?`);
     if (desc.includes('enfant')||desc.includes('nourrisson')||desc.includes('adulte'))
       chips.push(`Who can use ${name}?`);
-    if (desc.includes('sans sucre')||desc.includes('diabétique'))
+    if (desc.includes('sans sucre')||desc.includes('diabÃ©tique'))
       chips.push(`Is ${name} suitable for diabetics?`);
     chips.push(`What medical questions should I expect about ${name}?`);
     return chips.slice(0,6).map(l=>({label:l}));
@@ -3014,7 +3203,7 @@ function renderChips(chips) {
   c.classList.remove('hidden');
 }
 
-// ── Modal produit ─────────────────────────────────────────────
+// â”€â”€ Modal produit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function openModal() {
   document.getElementById('modal-overlay').classList.add('open');
   document.getElementById('product-search').value = '';
@@ -3036,10 +3225,10 @@ async function selectProduct(name) {
   selectedProduct = name; closeModal();
   const badge = document.getElementById('product-badge');
   badge.className = 'active-product-badge';
-  badge.innerHTML = `<span>◈</span><span class="badge-name">${esc(name)}</span><span style="color:var(--text-dim);font-size:10px;flex-shrink:0">change</span>`;
+  badge.innerHTML = `<span>â—ˆ</span><span class="badge-name">${esc(name)}</span><span style="color:var(--text-dim);font-size:10px;flex-shrink:0">change</span>`;
   document.getElementById('context-bar').classList.remove('hidden');
   document.getElementById('ctx-product-name').textContent = name;
-  document.getElementById('question-input').placeholder = `Ask about ${name}…`;
+  document.getElementById('question-input').placeholder = `Ask about ${name}â€¦`;
   hideEmpty(); addSystemMsg(`Now asking about: ${name}`);
   const pd = await fetchProductData(name); selectedProductData = pd;
   renderChips(buildDynamicChips(name, pd));
@@ -3051,7 +3240,7 @@ function askQuick(btn) {
   sendQuestion();
 }
 
-// ── Messages ──────────────────────────────────────────────────
+// â”€â”€ Messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function hideEmpty() { document.getElementById('empty-state')?.remove(); }
 function addSystemMsg(text) {
   const el = document.createElement('div'); el.className='system-msg';
@@ -3096,15 +3285,15 @@ function finalizeBubble(fullText, sources) {
   scrollBottom();
 }
 
-// ── Send question ─────────────────────────────────────────────
+// â”€â”€ Send question â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function sendQuestion() {
   const input = document.getElementById('question-input');
   const userText = input.value.trim(); if (!userText||isLoading) return;
   let ragQuestion = userText;
   if (selectedProduct && !userText.toLowerCase().includes(selectedProduct.toLowerCase()))
-    ragQuestion = `${userText} — product: ${selectedProduct}`;
+    ragQuestion = `${userText} â€” product: ${selectedProduct}`;
   isLoading=true; setSend(true); input.value=''; input.style.height='auto';
-  addUserMsg(userText); addTyping(); setStatus('thinking','Thinking…');
+  addUserMsg(userText); addTyping(); setStatus('thinking','Thinkingâ€¦');
   try {
     const res = await fetch(`${API}/chat/ask/stream`,{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -3113,7 +3302,7 @@ async function sendQuestion() {
     if (!res.ok) throw new Error();
     const reader=res.body.getReader(), dec=new TextDecoder();
     let buf='', msgEl=null, full='', sources=[];
-    setStatus('speaking','Responding…');
+    setStatus('speaking','Respondingâ€¦');
     while (true) {
       const {value,done}=await reader.read(); if(done) break;
       buf+=dec.decode(value,{stream:true});
@@ -3127,7 +3316,7 @@ async function sendQuestion() {
     }
     if (!msgEl) msgEl=addAIBubble(null);
     finalizeBubble(full, sources);
-    if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
+    if (full) { setStatus('speaking','Speakingâ€¦'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch {
     document.getElementById('typing-indicator')?.remove();
@@ -3136,7 +3325,7 @@ async function sendQuestion() {
   } finally { isLoading=false; setSend(false); document.getElementById('question-input').focus(); }
 }
 
-// ── Voice ─────────────────────────────────────────────────────
+// â”€â”€ Voice â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function toggleMic() { isRecording ? stopRecording() : startRecording(); }
 async function startRecording() {
   try {
@@ -3145,9 +3334,9 @@ async function startRecording() {
     mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);
     mediaRecorder.onstop=sendAudio; mediaRecorder.start(); isRecording=true;
     document.getElementById('mic-btn').classList.add('recording');
-    document.getElementById('mic-label').textContent='Recording… click to stop';
+    document.getElementById('mic-label').textContent='Recordingâ€¦ click to stop';
     document.getElementById('waveform').classList.add('recording-active');
-    setStatus('listening','Listening…');
+    setStatus('listening','Listeningâ€¦');
     if (window._avatarReady && window._head?.audioCtx?.state!=='running') await window._head.audioCtx.resume();
   } catch { showError('Microphone access denied.'); }
 }
@@ -3157,7 +3346,7 @@ function stopRecording() {
     document.getElementById('mic-btn').classList.remove('recording');
     document.getElementById('mic-label').textContent='Hold to speak';
     document.getElementById('waveform').classList.remove('recording-active');
-    setStatus('thinking','Processing…');
+    setStatus('thinking','Processingâ€¦');
   }
 }
 async function sendAudio() {
@@ -3170,7 +3359,7 @@ async function sendAudio() {
     if (!res.ok) throw new Error();
     const reader=res.body.getReader(), dec=new TextDecoder();
     let buf='', msgEl=null, full='', sources=[], detectedLang='fr';
-    setStatus('speaking','Responding…');
+    setStatus('speaking','Respondingâ€¦');
     while (true) {
       const {value,done}=await reader.read(); if(done) break;
       buf+=dec.decode(value,{stream:true});
@@ -3182,12 +3371,12 @@ async function sendAudio() {
           detectedLang=c.language||'fr';
           const heard=c.text.toLowerCase().trim();
           if (!trainingMode) {
-            const isMed=/médic|medical|clinique|docteur|pharmacien|scientif/.test(heard);
+            const isMed=/mÃ©dic|medical|clinique|docteur|pharmacien|scientif/.test(heard);
             const isCom=/commerc|vente|vend|client|convaincre|sales|business/.test(heard);
-            if (isMed){addUserMsg(`🎤 ${c.text}`,true);document.getElementById('typing-indicator')?.remove();setMode('medical');addTyping();return;}
-            if (isCom){addUserMsg(`🎤 ${c.text}`,true);document.getElementById('typing-indicator')?.remove();setMode('commercial');addTyping();return;}
+            if (isMed){addUserMsg(`ðŸŽ¤ ${c.text}`,true);document.getElementById('typing-indicator')?.remove();setMode('medical');addTyping();return;}
+            if (isCom){addUserMsg(`ðŸŽ¤ ${c.text}`,true);document.getElementById('typing-indicator')?.remove();setMode('commercial');addTyping();return;}
           }
-          addUserMsg(`🎤 ${c.text}`,true);
+          addUserMsg(`ðŸŽ¤ ${c.text}`,true);
           document.getElementById('typing-indicator')?.remove(); addTyping();
         } else if (c.type==='token'){
           if(!msgEl)msgEl=addAIBubble(null);const el=document.getElementById('streaming-text');if(el){full+=c.content;el.textContent=full;scrollBottom();}
@@ -3196,7 +3385,7 @@ async function sendAudio() {
     }
     if (!msgEl) msgEl=addAIBubble(null);
     finalizeBubble(full,sources);
-    if (full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
+    if (full){setStatus('speaking','Speakingâ€¦');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
     document.getElementById('typing-indicator')?.remove();
@@ -3204,7 +3393,7 @@ async function sendAudio() {
   } finally { isLoading=false; setSend(false); }
 }
 
-// ── Edit ──────────────────────────────────────────────────────
+// â”€â”€ Edit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function startEdit(msgId, btn) {
   const msgEl=document.getElementById(msgId);
   const wrap=msgEl.querySelector('.edit-wrap');
@@ -3240,15 +3429,15 @@ function saveEdit(msgId) {
 async function resendQuestion(userText) {
   let ragQuestion=userText;
   if(selectedProduct&&!userText.toLowerCase().includes(selectedProduct.toLowerCase()))
-    ragQuestion=`${userText} — product: ${selectedProduct}`;
-  isLoading=true; setSend(true); addTyping(); setStatus('thinking','Thinking…');
+    ragQuestion=`${userText} â€” product: ${selectedProduct}`;
+  isLoading=true; setSend(true); addTyping(); setStatus('thinking','Thinkingâ€¦');
   try {
     const res=await fetch(`${API}/chat/ask/stream`,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical'})});
     if(!res.ok) throw new Error();
     const reader=res.body.getReader(),dec=new TextDecoder();
     let buf='',msgEl=null,full='',sources=[];
-    setStatus('speaking','Responding…');
+    setStatus('speaking','Respondingâ€¦');
     while(true){
       const {value,done}=await reader.read();if(done)break;
       buf+=dec.decode(value,{stream:true});
@@ -3262,7 +3451,7 @@ async function resendQuestion(userText) {
     }
     if(!msgEl) msgEl=addAIBubble(null);
     finalizeBubble(full,sources);
-    if(full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
+    if(full){setStatus('speaking','Speakingâ€¦');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
     document.getElementById('typing-indicator')?.remove();
@@ -3270,7 +3459,7 @@ async function resendQuestion(userText) {
   } finally { isLoading=false; setSend(false); }
 }
 
-// ── Log + Rapport ─────────────────────────────────────────────
+// â”€â”€ Log + Rapport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const conversationLog=[];
 function logUser(text,isVoice){
   conversationLog.push({role:'user',text,isVoice:!!isVoice,time:new Date()});
@@ -3292,22 +3481,22 @@ function buildReportContent(){
   const userCount=conversationLog.filter(e=>e.role==='user').length;
   const aiCount=conversationLog.filter(e=>e.role==='ai').length;
   const exchangesHtml=conversationLog.map(entry=>{
-    if(entry.role==='user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Delegate ${entry.isVoice?'(voice)':'(text)'}</div><div class="r-text">${entry.isVoice?'🎤 ':''}${escHtml(entry.text)}</div></div>`;
+    if(entry.role==='user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Delegate ${entry.isVoice?'(voice)':'(text)'}</div><div class="r-text">${entry.isVoice?'ðŸŽ¤ ':''}${escHtml(entry.text)}</div></div>`;
     const tags=entry.sources?.length?`<div class="r-products">${entry.sources.map(s=>`<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>`:'';
     return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
   }).join('');
   const prodHtml=products.length?`<div class="r-section-title">Products covered</div><div class="r-products">${products.map(p=>`<span class="r-product-tag">${escHtml(p)}</span>`).join('')}</div>`:'';
   document.getElementById('report-content').innerHTML=`
-    <div class="r-header"><div class="r-logo">VitalAgent</div><div class="r-subtitle">Training Session Report — Powered by Vita AI</div>
+    <div class="r-header"><div class="r-logo">VitalAgent</div><div class="r-subtitle">Training Session Report â€” Powered by Vita AI</div>
     <div class="r-meta">
       <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
       <div class="r-meta-item"><strong>Training mode</strong><span style="color:${modeColor};font-weight:600">${modeLabel}</span></div>
-      <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} questions · ${aiCount} responses</span></div>
+      <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} questions Â· ${aiCount} responses</span></div>
       <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length||'None selected'}</span></div>
     </div></div>
     ${prodHtml}
     <div class="r-section-title">Full conversation</div>${exchangesHtml}
-    <div class="r-footer"><span>Generated by VitalAgent · Vita AI Trainer</span><span>${dateStr}</span></div>`;
+    <div class="r-footer"><span>Generated by VitalAgent Â· Vita AI Trainer</span><span>${dateStr}</span></div>`;
 }
 
 function downloadReport(){
@@ -3337,7 +3526,7 @@ function downloadReport(){
 
 function escHtml(str){return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-// ── Helpers ───────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function showError(msg){
   document.getElementById('typing-indicator')?.remove();
   const el=document.createElement('div');el.className='message ai';
@@ -3350,8 +3539,46 @@ function setSend(d){document.getElementById('send-btn').disabled=d;}
 function scrollBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
 function esc(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+
+
+function toggleTestMenu() {
+  const menu = document.getElementById('test-menu');
+  const btn  = document.getElementById('test-btn');
+  const open = menu.classList.toggle('open');
+  btn.classList.toggle('open', open);
+}
+document.addEventListener('click', function(e) {
+  const wrap = document.getElementById('test-dropdown-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('test-menu')?.classList.remove('open');
+    document.getElementById('test-btn')?.classList.remove('open');
+  }
+});
 init();
-=== ./frontend/package-lock.json ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\package.json
+========================================
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "three": "^0.183.2"
+  }
+}
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\package-lock.json
+========================================
 {
   "name": "frontend",
   "version": "1.0.0",
@@ -3374,24 +3601,10 @@ init();
     }
   }
 }
-=== ./frontend/package.json ===
-{
-  "name": "frontend",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "three": "^0.183.2"
-  }
-}
-=== ./frontend/serve.json ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\serve.json
+========================================
 {
   "headers": [
     {
@@ -3414,30 +3627,10 @@ init();
     }
   ]
 }
-=== ./frontend/TalkingHead-main/package-lock.json ===
-{
-  "name": "@met4citizen/talkinghead",
-  "version": "1.7.0",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
-    "": {
-      "name": "@met4citizen/talkinghead",
-      "version": "1.7.0",
-      "license": "MIT",
-      "dependencies": {
-        "three": "^0.180.0"
-      }
-    },
-    "node_modules/three": {
-      "version": "0.180.0",
-      "resolved": "https://registry.npmjs.org/three/-/three-0.180.0.tgz",
-      "integrity": "sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==",
-      "license": "MIT"
-    }
-  }
-}
-=== ./frontend/TalkingHead-main/package.json ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\TalkingHead-main\package.json
+========================================
 {
   "name": "@met4citizen/talkinghead",
   "version": "1.7.0",
@@ -3473,124 +3666,55 @@ init();
   },
   "homepage": "https://github.com/met4citizen/TalkingHead#readme"
 }
-=== ./instructions.txt ===
-terminal 1 : 
-venv\Scripts\activate
-python scripts/ingest.py
 
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\TalkingHead-main\package-lock.json
+========================================
+{
+  "name": "@met4citizen/talkinghead",
+  "version": "1.7.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "@met4citizen/talkinghead",
+      "version": "1.7.0",
+      "license": "MIT",
+      "dependencies": {
+        "three": "^0.180.0"
+      }
+    },
+    "node_modules/three": {
+      "version": "0.180.0",
+      "resolved": "https://registry.npmjs.org/three/-/three-0.180.0.tgz",
+      "integrity": "sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==",
+      "license": "MIT"
+    }
+  }
+}
 
-terminal 2 : 
-venv\Scripts\activate
-python backend/main.py
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\test-commercial.html
+========================================
 
-terminal 3 : 
-serve . --config serve.json
-=== ./README.md ===
-# VitalAgent — 3D AI Medical Delegate Training Agent
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\frontend\test-medical.html
+========================================
 
-A voice-enabled AI agent that trains medical delegates on pharmaceutical products.
-
-## Pipeline
-Microphone → STT (Whisper large-v3) → RAG (ChromaDB + Ollama) → LLM → TTS → 3D Avatar
-
-## Stack
-| Layer | Technology |
-|---|---|
-| STT | Whisper large-v3 (free, local) |
-| RAG | ChromaDB + nomic-embed-text |
-| LLM | Ollama (llama3.1 / llama3.2) |
-| TTS | Coqui TTS (coming soon) |
-| Avatar | Three.js + VRM (coming soon) |
-| API | FastAPI |
-| DB | MySQL + ChromaDB |
-
-## Setup
-
-```bash
-# 1. Clone and enter project
-git clone https://github.com/yourname/vital-agent
-cd vital-agent
-
-# 2. Create virtual environment
-python -m venv venv
-venv\Scripts\activate       # Windows
-source venv/bin/activate    # Mac/Linux
-
-# 3. Install dependencies
-pip install -r backend/requirements.txt
-
-# 4. Configure environment
-cp .env.example .env
-# Edit .env with your MySQL credentials
-
-# 5. Install and start Ollama
-# Download: https://ollama.com/download
-ollama pull llama3.1
-ollama pull nomic-embed-text
-
-# 6. Ingest your product data
-python scripts/ingest.py
-
-# 7. Start the API
-python backend/main.py
-
-# 8. Open frontend
-# Open frontend/index.html in browser
-```
-
-## Team Structure
-| Member | Module |
-|---|---|
-| - | `backend/rag/` — RAG pipeline (done) |
-| - | `backend/stt/` — Whisper STT (done) |
-| - | `backend/tts/` — Text to Speech |
-| - | `frontend/avatar/` — 3D Avatar |
-| - | `frontend/voice/` — Mic UI |
-
-## Git LFS (for 3D avatar files)
-```bash
-git lfs install
-git lfs track "*.glb"
-git lfs track "*.vrm"
-```
-=== ./requirements.txt ===
-# ── RAG ──────────────────────────────────────────────────────
-langchain==0.2.16
-langchain-community==0.2.16
-langchain-ollama==0.1.3
-chromadb==0.5.5
-pymysql==1.1.1
-cryptography==42.0.8
-
-# ── API ──────────────────────────────────────────────────────
-fastapi==0.112.2
-uvicorn==0.30.6
-pydantic==2.8.2
-python-multipart==0.0.9
-
-# ── STT ──────────────────────────────────────────────────────
-faster-whisper==1.0.3
-pyaudio==0.2.14
-
-# ── Utils ────────────────────────────────────────────────────
-python-dotenv==1.0.1
-sqlalchemy==2.0.32
-
-# ── TTS (add when ready) ──────────────────────────────────────
-edge-tts
-transformers
-torch=== ./scripts/import_catalogues.py ===
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\scripts\import_catalogues.py
+========================================
 """
 import_catalogues.py
 ====================
 Lit tous les fichiers PPTX du dossier catalogue,
 extrait le texte slide par slide,
-et insère tout dans la table `catalogues` de MySQL.
+et insÃ¨re tout dans la table `catalogues` de MySQL.
 
 Usage:
     python import_catalogues.py
 
-Prérequis:
+PrÃ©requis:
     pip install markitdown[pptx] pymysql python-dotenv
 """
 
@@ -3600,23 +3724,23 @@ import sys
 import pymysql
 from dotenv import load_dotenv
 
-# ── markitdown pour extraire le texte des PPTX ──────────────────────────────
+# â”€â”€ markitdown pour extraire le texte des PPTX â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try:
     from markitdown import MarkItDown
 except ImportError:
-    print("❌ markitdown non installé. Lance : pip install markitdown[pptx]")
+    print("âŒ markitdown non installÃ©. Lance : pip install markitdown[pptx]")
     sys.exit(1)
 
-# ── Charger les variables d'environnement (.env) ─────────────────────────────
+# â”€â”€ Charger les variables d'environnement (.env) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 load_dotenv()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ⚙️  CONFIGURATION — Modifie ce chemin si nécessaire
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# âš™ï¸  CONFIGURATION â€” Modifie ce chemin si nÃ©cessaire
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 CATALOGUE_DIR = r"C:\Users\ASUS\OneDrive\Bureau\ESPRIT\4EME\Semestre 2\Projet DS\data\catalogue"
 
 
-# ── Connexion MySQL ───────────────────────────────────────────────────────────
+# â”€â”€ Connexion MySQL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def get_connection():
     return pymysql.connect(
         host=os.getenv("MYSQL_HOST", "localhost"),
@@ -3629,7 +3753,7 @@ def get_connection():
     )
 
 
-# ── Créer la table catalogues si elle n'existe pas ───────────────────────────
+# â”€â”€ CrÃ©er la table catalogues si elle n'existe pas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def create_table(conn):
     with conn.cursor() as cur:
         cur.execute("""
@@ -3643,34 +3767,34 @@ def create_table(conn):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
         conn.commit()
-    print("   ✓ Table `catalogues` prête")
+    print("   âœ“ Table `catalogues` prÃªte")
 
 
-# ── Vider la table avant réimport (évite les doublons) ───────────────────────
+# â”€â”€ Vider la table avant rÃ©import (Ã©vite les doublons) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def clear_table(conn):
     with conn.cursor() as cur:
         cur.execute("DELETE FROM `catalogues`")
         conn.commit()
-    print("   ✓ Table `catalogues` vidée")
+    print("   âœ“ Table `catalogues` vidÃ©e")
 
 
-# ── Extraire le nom de la gamme depuis le nom de fichier ─────────────────────
+# â”€â”€ Extraire le nom de la gamme depuis le nom de fichier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def extract_gamme_name(filename):
-    # Ex: "Gamme BACTOL.pptx" → "BACTOL"
+    # Ex: "Gamme BACTOL.pptx" â†’ "BACTOL"
     name = os.path.splitext(filename)[0]         # enlever .pptx
     name = re.sub(r'^Gamme\s*', '', name, flags=re.IGNORECASE).strip()
     return name
 
 
-# ── Parser les slides depuis le markdown extrait ─────────────────────────────
+# â”€â”€ Parser les slides depuis le markdown extrait â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def parse_slides(markdown_text):
     """
-    Découpe le markdown en slides.
+    DÃ©coupe le markdown en slides.
     Retourne une liste de dicts: {slide_number, titre_slide, contenu}
     """
     slides = []
 
-    # Séparer par "<!-- Slide number: N -->"
+    # SÃ©parer par "<!-- Slide number: N -->"
     parts = re.split(r'<!--\s*Slide number:\s*(\d+)\s*-->', markdown_text)
 
     # parts = ['', '1', 'contenu slide 1', '2', 'contenu slide 2', ...]
@@ -3679,7 +3803,7 @@ def parse_slides(markdown_text):
         slide_num = int(parts[i])
         raw_content = parts[i + 1].strip()
 
-        # Extraire le titre (première ligne non vide qui n'est pas une image)
+        # Extraire le titre (premiÃ¨re ligne non vide qui n'est pas une image)
         lines = [l.strip() for l in raw_content.split('\n') if l.strip()]
         lines = [l for l in lines if not l.startswith('![')]  # enlever images
         lines = [l for l in lines if not l.startswith('###')]  # enlever notes
@@ -3710,7 +3834,7 @@ def parse_slides(markdown_text):
     return slides
 
 
-# ── Insérer les slides d'une gamme dans MySQL ─────────────────────────────────
+# â”€â”€ InsÃ©rer les slides d'une gamme dans MySQL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def insert_slides(conn, gamme, slides):
     with conn.cursor() as cur:
         for slide in slides:
@@ -3726,33 +3850,33 @@ def insert_slides(conn, gamme, slides):
         conn.commit()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def main():
-    print("\n=== Import Catalogues PPTX → MySQL ===\n")
+    print("\n=== Import Catalogues PPTX â†’ MySQL ===\n")
 
     # 1. Connexion MySQL
-    print("1. Connexion à MySQL...")
+    print("1. Connexion Ã  MySQL...")
     try:
         conn = get_connection()
-        print("   ✓ Connecté")
+        print("   âœ“ ConnectÃ©")
     except Exception as e:
-        print(f"   ✗ Erreur connexion: {e}")
+        print(f"   âœ— Erreur connexion: {e}")
         sys.exit(1)
 
-    # 2. Préparer la table
-    print("\n2. Préparation de la table...")
+    # 2. PrÃ©parer la table
+    print("\n2. PrÃ©paration de la table...")
     create_table(conn)
     clear_table(conn)
 
-    # 3. Vérifier le dossier
+    # 3. VÃ©rifier le dossier
     print(f"\n3. Lecture du dossier: {CATALOGUE_DIR}")
     if not os.path.exists(CATALOGUE_DIR):
-        print(f"   ✗ Dossier introuvable: {CATALOGUE_DIR}")
-        print("   → Modifie la variable CATALOGUE_DIR dans le script")
+        print(f"   âœ— Dossier introuvable: {CATALOGUE_DIR}")
+        print("   â†’ Modifie la variable CATALOGUE_DIR dans le script")
         sys.exit(1)
 
     pptx_files = [f for f in os.listdir(CATALOGUE_DIR) if f.endswith('.pptx')]
-    print(f"   ✓ {len(pptx_files)} fichiers PPTX trouvés")
+    print(f"   âœ“ {len(pptx_files)} fichiers PPTX trouvÃ©s")
 
     # 4. Traiter chaque PPTX
     print("\n4. Extraction et import...\n")
@@ -3763,50 +3887,53 @@ def main():
         filepath = os.path.join(CATALOGUE_DIR, filename)
         gamme    = extract_gamme_name(filename)
 
-        print(f"  📂 {filename}  →  Gamme: {gamme}")
+        print(f"  ðŸ“‚ {filename}  â†’  Gamme: {gamme}")
 
         try:
             result   = md.convert(filepath)
             slides   = parse_slides(result.text_content)
             insert_slides(conn, gamme, slides)
             total_slides += len(slides)
-            print(f"     ✓ {len(slides)} slides importées")
+            print(f"     âœ“ {len(slides)} slides importÃ©es")
 
         except Exception as e:
-            print(f"     ✗ Erreur: {e}")
+            print(f"     âœ— Erreur: {e}")
 
     conn.close()
 
-    # 5. Résumé
+    # 5. RÃ©sumÃ©
     print(f"\n{'='*45}")
-    print(f"✓ Import terminé !")
-    print(f"  {len(pptx_files)} fichiers PPTX traités")
-    print(f"  {total_slides} slides insérées dans `catalogues`")
-    print(f"\nProchaine étape:")
+    print(f"âœ“ Import terminÃ© !")
+    print(f"  {len(pptx_files)} fichiers PPTX traitÃ©s")
+    print(f"  {total_slides} slides insÃ©rÃ©es dans `catalogues`")
+    print(f"\nProchaine Ã©tape:")
     print(f"  Ajouter `catalogues` dans backend/rag/config.py")
     print(f"  puis : python scripts/ingest.py --reset")
 
 
 if __name__ == "__main__":
     main()
-=== ./scripts/import_catalogues_v2.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\scripts\import_catalogues_v2.py
+========================================
 """
 import_catalogues_v2.py
 =======================
 Lit tous les fichiers PPTX du dossier catalogue,
 extrait TOUT le texte du PPTX en un seul bloc,
-et insère UNE SEULE LIGNE par gamme dans la table `catalogues`.
+et insÃ¨re UNE SEULE LIGNE par gamme dans la table `catalogues`.
 
 Structure de la table:
   id    | gamme   | contenu
-  1     | BACTOL  | tout le texte du pptx concatené...
-  2     | HYDRA   | tout le texte du pptx concatené...
+  1     | BACTOL  | tout le texte du pptx concatenÃ©...
+  2     | HYDRA   | tout le texte du pptx concatenÃ©...
   ...
 
 Usage:
     python scripts/import_catalogues_v2.py
 
-Prérequis:
+PrÃ©requis:
     pip install "markitdown[pptx]" pymysql python-dotenv
 """
 
@@ -3819,14 +3946,14 @@ from dotenv import load_dotenv
 try:
     from markitdown import MarkItDown
 except ImportError:
-    print("❌ markitdown non installé. Lance : pip install markitdown[pptx]")
+    print("âŒ markitdown non installÃ©. Lance : pip install markitdown[pptx]")
     sys.exit(1)
 
 load_dotenv()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ⚙️  CONFIGURATION — Modifie ce chemin si nécessaire
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# âš™ï¸  CONFIGURATION â€” Modifie ce chemin si nÃ©cessaire
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 CATALOGUE_DIR = r"C:\Users\ASUS\OneDrive\Bureau\ESPRIT\4EME\Semestre 2\Projet DS\data\catalogue"
 
 
@@ -3843,12 +3970,12 @@ def get_connection():
 
 
 def fix_table(conn):
-    """Recrée la table catalogues avec la nouvelle structure simplifiée."""
+    """RecrÃ©e la table catalogues avec la nouvelle structure simplifiÃ©e."""
     with conn.cursor() as cur:
         # Supprimer l'ancienne table
         cur.execute("DROP TABLE IF EXISTS `catalogues`;")
 
-        # Créer la nouvelle structure : une ligne par gamme
+        # CrÃ©er la nouvelle structure : une ligne par gamme
         cur.execute("""
             CREATE TABLE `catalogues` (
               `id`      INT NOT NULL AUTO_INCREMENT,
@@ -3858,18 +3985,18 @@ def fix_table(conn):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """)
         conn.commit()
-    print("   ✓ Table `catalogues` recréée (id, gamme, contenu)")
+    print("   âœ“ Table `catalogues` recrÃ©Ã©e (id, gamme, contenu)")
 
 
 def extract_gamme_name(filename):
-    """Ex: 'Gamme BACTOL.pptx' → 'BACTOL'"""
+    """Ex: 'Gamme BACTOL.pptx' â†’ 'BACTOL'"""
     name = os.path.splitext(filename)[0]
     name = re.sub(r'^Gamme\s*', '', name, flags=re.IGNORECASE).strip()
     return name
 
 
 def clean_text(raw):
-    """Nettoie le markdown extrait : enlève images, commentaires, notes."""
+    """Nettoie le markdown extrait : enlÃ¨ve images, commentaires, notes."""
     text = re.sub(r'!\[.*?\]\(.*?\)', '', raw)              # images
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL) # commentaires HTML
     text = re.sub(r'###\s*Notes:.*?(?=\n\n|\Z)', '', text, flags=re.DOTALL)  # notes
@@ -3878,32 +4005,32 @@ def clean_text(raw):
 
 
 def main():
-    print("\n=== Import Catalogues PPTX → MySQL (v2 — 1 ligne par gamme) ===\n")
+    print("\n=== Import Catalogues PPTX â†’ MySQL (v2 â€” 1 ligne par gamme) ===\n")
 
     # 1. Connexion
-    print("1. Connexion à MySQL...")
+    print("1. Connexion Ã  MySQL...")
     try:
         conn = get_connection()
-        print("   ✓ Connecté")
+        print("   âœ“ ConnectÃ©")
     except Exception as e:
-        print(f"   ✗ Erreur: {e}")
+        print(f"   âœ— Erreur: {e}")
         sys.exit(1)
 
-    # 2. Recréer la table
-    print("\n2. Recréation de la table...")
+    # 2. RecrÃ©er la table
+    print("\n2. RecrÃ©ation de la table...")
     fix_table(conn)
 
-    # 3. Vérifier le dossier
+    # 3. VÃ©rifier le dossier
     print(f"\n3. Lecture du dossier...")
     if not os.path.exists(CATALOGUE_DIR):
-        print(f"   ✗ Dossier introuvable: {CATALOGUE_DIR}")
-        print("   → Modifie CATALOGUE_DIR dans le script")
+        print(f"   âœ— Dossier introuvable: {CATALOGUE_DIR}")
+        print("   â†’ Modifie CATALOGUE_DIR dans le script")
         sys.exit(1)
 
     pptx_files = sorted([f for f in os.listdir(CATALOGUE_DIR) if f.endswith('.pptx')])
-    print(f"   ✓ {len(pptx_files)} fichiers PPTX trouvés")
+    print(f"   âœ“ {len(pptx_files)} fichiers PPTX trouvÃ©s")
 
-    # 4. Traiter chaque PPTX → 1 ligne par fichier
+    # 4. Traiter chaque PPTX â†’ 1 ligne par fichier
     print("\n4. Extraction et import...\n")
     md = MarkItDown()
 
@@ -3911,7 +4038,7 @@ def main():
         filepath = os.path.join(CATALOGUE_DIR, filename)
         gamme    = extract_gamme_name(filename)
 
-        print(f"  📂 {filename}  →  Gamme: {gamme}", end="", flush=True)
+        print(f"  ðŸ“‚ {filename}  â†’  Gamme: {gamme}", end="", flush=True)
 
         try:
             result  = md.convert(filepath)
@@ -3925,18 +4052,18 @@ def main():
             conn.commit()
 
             # Afficher la taille du contenu extrait
-            print(f"  ✓  ({len(contenu)} caractères)")
+            print(f"  âœ“  ({len(contenu)} caractÃ¨res)")
 
         except Exception as e:
-            print(f"  ✗ Erreur: {e}")
+            print(f"  âœ— Erreur: {e}")
 
     conn.close()
 
-    # 5. Résumé
+    # 5. RÃ©sumÃ©
     print(f"\n{'='*50}")
-    print(f"✓ Import terminé ! {len(pptx_files)} gammes insérées.")
-    print(f"\nProchaines étapes:")
-    print(f"  1. Vérifier dans Workbench : SELECT gamme, LENGTH(contenu) FROM catalogues;")
+    print(f"âœ“ Import terminÃ© ! {len(pptx_files)} gammes insÃ©rÃ©es.")
+    print(f"\nProchaines Ã©tapes:")
+    print(f"  1. VÃ©rifier dans Workbench : SELECT gamme, LENGTH(contenu) FROM catalogues;")
     print(f"  2. Ajouter dans backend/rag/config.py :")
     print(f"       {{")
     print(f'           "table": "catalogues",')
@@ -3949,13 +4076,16 @@ def main():
 
 if __name__ == "__main__":
     main()
-=== ./scripts/ingest.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\scripts\ingest.py
+========================================
 """
 ingest.py
 =========
 Step 1 of the pipeline.
 
-Reads product data from MySQL → splits into chunks → embeds with Ollama →
+Reads product data from MySQL â†’ splits into chunks â†’ embeds with Ollama â†’
 stores in ChromaDB vector database.
 
 Run once to set up, then re-run whenever your MySQL data changes.
@@ -3975,10 +4105,10 @@ from langchain_ollama import OllamaEmbeddings
 import chromadb
 from chromadb.config import Settings
 
-# ── Load .env ────────────────────────────────────────────────────────────────
+# â”€â”€ Load .env â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 load_dotenv()
 
-# ── Import your table config ─────────────────────────────────────────────────
+# â”€â”€ Import your table config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
 from rag.config import TABLES, CHUNK_SIZE, CHUNK_OVERLAP
@@ -4015,7 +4145,7 @@ def fetch_rows_from_mysql(conn, table_config: dict) -> list[dict]:
         cur.execute(f"SELECT {col_list} FROM `{table}`")
         rows = cur.fetchall()
 
-    print(f"  → Fetched {len(rows)} rows from `{table}`")
+    print(f"  â†’ Fetched {len(rows)} rows from `{table}`")
     return rows
 
 
@@ -4036,8 +4166,8 @@ def row_to_document(row: dict, table_config: dict) -> tuple[str, dict]:
             # Clean up the pipe-separated format
             cleaned = str(val).strip()
             cleaned = cleaned.replace(" | ", "\n")
-            cleaned = cleaned.replace("• ", "\n- ")
-            cleaned = cleaned.replace("– ", "\n- ")
+            cleaned = cleaned.replace("â€¢ ", "\n- ")
+            cleaned = cleaned.replace("â€“ ", "\n- ")
             label = col.replace("_", " ").title()
             parts.append(f"{label}: {cleaned}")
 
@@ -4071,17 +4201,17 @@ def chunk_document(text: str, metadata: dict, chunk_idx: int) -> list[tuple]:
 def main(reset: bool = False):
     print("\n=== MedRAG Ingestion Pipeline ===\n")
 
-    # ── 1. Connect to MySQL ──────────────────────────────────────────────────
+    # â”€â”€ 1. Connect to MySQL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("1. Connecting to MySQL...")
     try:
         conn = get_mysql_connection()
-        print("   ✓ Connected to MySQL")
+        print("   âœ“ Connected to MySQL")
     except Exception as e:
-        print(f"   ✗ MySQL connection failed: {e}")
+        print(f"   âœ— MySQL connection failed: {e}")
         print("   Check your .env file credentials.")
         sys.exit(1)
 
-    # ── 2. Load embedding model ──────────────────────────────────────────────
+    # â”€â”€ 2. Load embedding model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("\n2. Loading embedding model from Ollama...")
     embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -4089,13 +4219,13 @@ def main(reset: bool = False):
         embeddings = OllamaEmbeddings(model=embed_model, base_url=base_url)
         # Quick test
         _ = embeddings.embed_query("test")
-        print(f"   ✓ Embedding model '{embed_model}' ready")
+        print(f"   âœ“ Embedding model '{embed_model}' ready")
     except Exception as e:
-        print(f"   ✗ Ollama not reachable: {e}")
+        print(f"   âœ— Ollama not reachable: {e}")
         print("   Make sure Ollama is running: open a terminal and type 'ollama serve'")
         sys.exit(1)
 
-    # ── 3. Set up ChromaDB ───────────────────────────────────────────────────
+    # â”€â”€ 3. Set up ChromaDB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("\n3. Setting up ChromaDB...")
     persist_dir     = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
     collection_name = os.getenv("CHROMA_COLLECTION_NAME", "medical_products")
@@ -4114,9 +4244,9 @@ def main(reset: bool = False):
         name=collection_name,
         metadata={"hnsw:space": "cosine"},
     )
-    print(f"   ✓ Collection '{collection_name}' ready")
+    print(f"   âœ“ Collection '{collection_name}' ready")
 
-    # ── 4. Process each table ────────────────────────────────────────────────
+    # â”€â”€ 4. Process each table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("\n4. Reading MySQL data and ingesting into vector DB...\n")
 
     total_chunks = 0
@@ -4141,7 +4271,7 @@ def main(reset: bool = False):
                 all_metas.append(chunk_meta)
 
         if not all_docs:
-            print(f"  ! No text found in table '{table_name}' — check your column names")
+            print(f"  ! No text found in table '{table_name}' â€” check your column names")
             continue
 
         # Embed in batches of 50 (avoids memory issues)
@@ -4163,17 +4293,17 @@ def main(reset: bool = False):
                 embeddings=vectors,
                 metadatas=batch_metas,
             )
-            print(" ✓")
+            print(" âœ“")
 
         total_chunks += len(all_docs)
-        print(f"  ✓ {table_name}: {len(rows)} rows → {len(all_docs)} chunks stored\n")
+        print(f"  âœ“ {table_name}: {len(rows)} rows â†’ {len(all_docs)} chunks stored\n")
 
     conn.close()
 
-    # ── 5. Summary ───────────────────────────────────────────────────────────
+    # â”€â”€ 5. Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     final_count = collection.count()
     print("=" * 40)
-    print(f"✓ Ingestion complete!")
+    print(f"âœ“ Ingestion complete!")
     print(f"  Total chunks in vector DB: {final_count}")
     print(f"  Database stored at: {persist_dir}")
     print("\nNext step: run the API with:")
@@ -4189,7 +4319,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(reset=args.reset)
-=== ./scripts/test_system.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\scripts\test_system.py
+========================================
 """
 test_system.py
 ==============
@@ -4210,17 +4343,17 @@ load_dotenv()
 
 
 def section(title):
-    print(f"\n{'─'*50}")
+    print(f"\n{'â”€'*50}")
     print(f"  {title}")
-    print(f"{'─'*50}")
+    print(f"{'â”€'*50}")
 
 
-def ok(msg):    print(f"  ✓ {msg}")
-def fail(msg):  print(f"  ✗ {msg}")
-def info(msg):  print(f"  · {msg}")
+def ok(msg):    print(f"  âœ“ {msg}")
+def fail(msg):  print(f"  âœ— {msg}")
+def info(msg):  print(f"  Â· {msg}")
 
 
-# ── 1. Python packages ──────────────────────────────────────────────────────
+# â”€â”€ 1. Python packages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 section("1. Python Dependencies")
 required = [
     "langchain", "langchain_community", "langchain_ollama",
@@ -4232,7 +4365,7 @@ for pkg in required:
         __import__(pkg.replace("-", "_"))
         ok(pkg)
     except ImportError:
-        fail(f"{pkg}  ← run: pip install -r requirements.txt")
+        fail(f"{pkg}  â† run: pip install -r requirements.txt")
         all_ok = False
 
 if not all_ok:
@@ -4240,7 +4373,7 @@ if not all_ok:
     sys.exit(1)
 
 
-# ── 2. .env file ───────────────────────────────────────────────────────────
+# â”€â”€ 2. .env file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 section("2. Environment Variables")
 required_env = ["MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"]
 for var in required_env:
@@ -4252,7 +4385,7 @@ for var in required_env:
         fail(f"{var} is not set in .env")
 
 
-# ── 3. MySQL connection ────────────────────────────────────────────────────
+# â”€â”€ 3. MySQL connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 section("3. MySQL Connection")
 try:
     import pymysql
@@ -4276,7 +4409,7 @@ except Exception as e:
     print("  Check your .env credentials.")
 
 
-# ── 4. Ollama ──────────────────────────────────────────────────────────────
+# â”€â”€ 4. Ollama â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 section("4. Ollama LLM Service")
 try:
     import urllib.request
@@ -4293,12 +4426,12 @@ try:
     if any(llm_model in m for m in models):
         ok(f"LLM model '{llm_model}' is available")
     else:
-        fail(f"LLM model '{llm_model}' not found — run: ollama pull {llm_model}")
+        fail(f"LLM model '{llm_model}' not found â€” run: ollama pull {llm_model}")
 
     if any(embed_model in m for m in models):
         ok(f"Embed model '{embed_model}' is available")
     else:
-        fail(f"Embed model '{embed_model}' not found — run: ollama pull {embed_model}")
+        fail(f"Embed model '{embed_model}' not found â€” run: ollama pull {embed_model}")
 
 except Exception as e:
     fail(f"Cannot reach Ollama: {e}")
@@ -4307,7 +4440,7 @@ except Exception as e:
     print("  Then run: ollama serve")
 
 
-# ── 5. ChromaDB / Vector store ─────────────────────────────────────────────
+# â”€â”€ 5. ChromaDB / Vector store â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 section("5. ChromaDB Vector Store")
 try:
     import chromadb
@@ -4320,15 +4453,15 @@ try:
     ok(f"ChromaDB accessible at: {persist_dir}")
 
     if count > 0:
-        ok(f"{count} chunks already stored — ingestion done!")
+        ok(f"{count} chunks already stored â€” ingestion done!")
     else:
-        info("0 chunks stored — run: python scripts/ingest.py")
+        info("0 chunks stored â€” run: python scripts/ingest.py")
 
 except Exception as e:
     fail(f"ChromaDB error: {e}")
 
 
-# ── Summary ────────────────────────────────────────────────────────────────
+# â”€â”€ Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 section("Summary")
 print("  If all checks passed, run the system with:")
 print()
@@ -4336,7 +4469,10 @@ print("    Step 1: python scripts/ingest.py")
 print("    Step 2: python backend/api.py")
 print("    Step 3: Open frontend/index.html in your browser")
 print()
-=== ./scripts/test_token_factory.py ===
+
+========================================
+FILE: C:\Users\ASUS\Desktop\Esprit-PI-4DS6-2526-VITA\scripts\test_token_factory.py
+========================================
 """
 test_token_direct.py
 =====================
@@ -4347,7 +4483,7 @@ import requests
 import os
 from dotenv import load_dotenv
 
-# Désactiver les warnings SSL (pour test seulement)
+# DÃ©sactiver les warnings SSL (pour test seulement)
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -4356,7 +4492,7 @@ load_dotenv()
 api_key = os.getenv("TOKEN_FACTORY_API_KEY")
 base_url = os.getenv("TOKEN_FACTORY_BASE_URL", "https://tokenfactory.esprit.tn")
 
-# URL complète
+# URL complÃ¨te
 url = f"{base_url}/api/chat/completions"
 
 headers = {
@@ -4385,7 +4521,7 @@ print(f"Model: {data['model']}")
 print()
 
 try:
-    print("📤 Envoi de la requête...")
+    print("ðŸ“¤ Envoi de la requÃªte...")
     response = requests.post(url, headers=headers, json=data, verify=False, timeout=30)
     
     print(f"Status code: {response.status_code}")
@@ -4394,19 +4530,19 @@ try:
     
     if response.status_code == 200:
         result = response.json()
-        print("✅ Succès !")
-        print(f"Réponse: {result['choices'][0]['message']['content']}")
+        print("âœ… SuccÃ¨s !")
+        print(f"RÃ©ponse: {result['choices'][0]['message']['content']}")
         print()
-        print("Détails complets:")
-        print(f"  Model utilisé: {result.get('model')}")
+        print("DÃ©tails complets:")
+        print(f"  Model utilisÃ©: {result.get('model')}")
         print(f"  Tokens: {result.get('usage', {})}")
     else:
-        print(f"❌ Erreur {response.status_code}")
+        print(f"âŒ Erreur {response.status_code}")
         print(f"Body: {response.text}")
         
 except requests.exceptions.Timeout:
-    print("❌ Timeout - L'API ne répond pas")
+    print("âŒ Timeout - L'API ne rÃ©pond pas")
 except requests.exceptions.ConnectionError as e:
-    print(f"❌ Erreur de connexion: {e}")
+    print(f"âŒ Erreur de connexion: {e}")
 except Exception as e:
-    print(f"❌ Erreur inattendue: {e}")
+    print(f"âŒ Erreur inattendue: {e}")
