@@ -453,9 +453,11 @@ async function resendQuestion(userText) {
 
 // ── Log + Rapport ─────────────────────────────────────────────
 const conversationLog=[];
+window.conversationLog = conversationLog;
 function logUser(text,isVoice){
   conversationLog.push({role:'user',text,isVoice:!!isVoice,time:new Date()});
   document.getElementById('report-btn').disabled=false;
+  document.getElementById('mindmap-btn')?.removeAttribute('disabled');
 }
 function logAI(text,sources){ conversationLog.push({role:'ai',text,sources:sources||[],time:new Date()}); }
 
