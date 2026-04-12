@@ -7,9 +7,13 @@ MYSQL_PASSWORD=root
 MYSQL_DATABASE=vital_crm
 
 # ─── Token Factory ─────────────────────────────────
-TOKEN_FACTORY_API_KEY=sk-fad8a2c4fde94096bb38483d43da8c90
+TOKEN_FACTORY_API_KEY=sk-b91a19f4b8c74314b4cb9ef60b5286ec
 TOKEN_FACTORY_BASE_URL=https://tokenfactory.esprit.tn
 TOKEN_FACTORY_MODEL=hosted_vllm/Llama-3.1-70B-Instruct 
+
+# ─── GROQ ─────────────────────────────────────────────────────
+GROQ_API_KEY=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
+OPENROUTER_API_KEY=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
 
 # ─── Ollama ──────────────────────────────────────────────────
 OLLAMA_BASE_URL=http://localhost:11434
@@ -23,7 +27,175 @@ CHROMA_COLLECTION_NAME=medical_products
 # ─── API ─────────────────────────────────────────────────────
 API_HOST=0.0.0.0
 API_PORT=8000
-=== ./backend/api/routes_chat.py ===
+=== ./backend/analytics/groq_extractor.py ===
+import os
+import json
+import time
+from typing import List, Dict, Any
+from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class GroqExtractor:
+    def __init__(self):
+        self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        self.model = "llama-3.1-8b-instant"  
+    
+    def extract(self, conversation: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Extract structured data from conversation using Groq"""
+        
+        # Take last 20 messages for speed
+        recent = conversation[-20:] if len(conversation) > 20 else conversation
+        
+        # Format conversation
+        conv_text = "\n".join([
+            f"{msg['role'].upper()}: {msg['text'][:300]}"
+            for msg in recent
+        ])
+        
+        prompt = f"""You are a pharmaceutical COMMERCIAL sales analyst. Analyze this sales conversation between a doctor (USER) and Vita (ASSISTANT) - Vita is the pharmaceutical delegate.
+
+CONVERSATION:
+{conv_text}
+
+Return ONLY valid JSON. Focus on SALES insights.
+
+{{
+
+  "engagement_score": 1-5,
+  "language": "french|english|arabic|mixed",
+  "topics": ["topic1", "topic2", "topic3"],
+  "recommendations": ["specific training recommendation 1", "specific training recommendation 2"],
+
+  "products": [
+    {{
+      "name": "product name",
+      "doctor_interest": "very_high|high|medium|low|none",
+      "doctor_familiarity": "expert|familiar|unfamiliar",
+      "prescription_intent": "definitely|probably|unsure|probably_not",
+      "key_concerns": ["concern1", "concern2"],
+      "what_doctor_liked": ["liked aspect1", "liked aspect2"]
+    }}
+  ],
+  
+  "objections": [
+    {{
+      "objection_exact_quote": "exact words the doctor said",
+      "type": "price|efficacy|safety|competition|reimbursement|trust",
+      "severity": "severe|moderate|mild",
+      "how_vita_responded": "summary of how Vita responded",
+      "resolution": "resolved|partially_resolved|unresolved",
+      "what_worked": "specific technique or argument that helped",
+      "what_didnt_work": "what Vita said that failed"
+    }}
+  ],
+  
+  "vita_performance": {{
+    "strengths": ["strength1", "strength2"],
+    "weaknesses": ["weakness1", "weakness2"],
+    "objection_handling_skill": 1-5,
+    "rapport_building": 1-5,
+    "closing_ability": 1-5,
+    "specific_coaching_needed": ["coaching point1", "coaching point2"]
+  }},
+  
+  "sales_techniques": {{
+    "what_worked_well": ["technique1", "technique2"],
+    "what_failed": ["approach1", "approach2"],
+    "missed_opportunities": ["opportunity1", "opportunity2"]
+  }},
+  
+  "competitors": [
+    {{
+      "name": "competitor name",
+      "doctor_perception": "prefers|considering|neutral|against",
+      "how_vita_responded": "what Vita said about competitor"
+    }}
+  ],
+  
+  "business_insights": {{
+    "doctor_convinced": true/false,
+    "price_sensitivity": "high|medium|low",
+    "decision_factors": ["factor1", "factor2"],
+    "follow_up_needed": true/false,
+    "winning_arguments": ["argument that worked"],
+    "lost_arguments": ["argument that failed"]
+  }},
+  
+}}
+
+JSON:"""
+
+        try:
+            start_time = time.time()
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,  # Deterministic output
+                max_tokens=1000,
+                response_format={"type": "json_object"}
+            )
+            
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            
+            # Parse JSON response
+            result = json.loads(response.choices[0].message.content)
+            result["_metadata"] = {
+                "extraction_time_ms": elapsed_ms,
+                "model": self.model,
+                "provider": "groq"
+            }
+            
+            return result
+            
+        except Exception as e:
+            print(f"Groq extraction error: {e}")
+            return self._default_extraction()
+    
+    def _default_extraction(self):
+        return {
+            "products": [],
+            "objections": [],
+            "engagement_score": 3,
+            "topics": [],
+            "language": "unknown",
+            "recommendations": ["Unable to analyze conversation"],
+            "_metadata": {"error": "extraction_failed"}
+        }
+
+# Singleton instance
+extractor = GroqExtractor()=== ./backend/api/routes_analytics.py ===
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+import json
+from backend.analytics.groq_extractor import extractor
+
+router = APIRouter()
+
+class ConversationMessage(BaseModel):
+    role: str
+    text: str
+    timestamp: Optional[str] = None
+
+class ExtractRequest(BaseModel):
+    conversation: List[ConversationMessage]
+
+@router.post("/extract")
+async def extract_conversation(request: ExtractRequest):
+    """Extract structured data from conversation using Groq"""
+    try:
+        # Convert to dict for extractor
+        conversation = [{"role": msg.role, "text": msg.text} for msg in request.conversation]
+        
+        # Extract using Groq
+        extraction = extractor.extract(conversation)
+        
+        return {"success": True, "extraction": extraction}
+    except Exception as e:
+        return {"success": False, "error": str(e)}=== ./backend/api/routes_chat.py ===
 """
 backend/api/routes_chat.py
 ===========================
@@ -198,53 +370,51 @@ def get_gammes():
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Prompts de génération — un par (mode, langue)
+# Prompts de génération — un par (mode, langue)
 _SUGGEST_PROMPTS = {
 
     # ── MEDICAL ──────────────────────────────────────────────────────────────
     ("medical", "fr"): """Tu es Dr. Layla, formatrice en produits pharmaceutiques.
-Un délégué médical vient de poser une question et tu y as répondu.
+Un délégué médical vient de poser cette question : {question}
+Et tu as répondu ceci : {answer}
 
-Question posée : {question}
-Réponse donnée : {answer}
+En te basant UNIQUEMENT sur ce qui est mentionné dans la réponse ci-dessus, génère exactement {n} questions de suivi que le délégué poserait naturellement pour approfondir CE SUJET PRÉCIS.
 
-Génère exactement {n} questions de suivi pertinentes que le délégué pourrait poser pour approfondir sa formation.
-Ces questions doivent :
-- Être directement liées au sujet de la réponse
-- Aider le délégué à mieux comprendre le produit (mécanisme, posologie, indications, contre-indications, études cliniques…)
-- Être formulées du point de vue du délégué (questions qu'il poserait à un formateur)
-- Être courtes et claires (max 12 mots chacune)
+RÈGLES STRICTES :
+- Chaque question doit porter sur un élément SPÉCIFIQUE cité dans la réponse (un ingrédient, un mécanisme, un effet, une indication concrète...)
+- INTERDIT de générer des questions sur posologie/contre-indications/études cliniques si ces sujets ne sont PAS explicitement mentionnés dans la réponse
+- Les questions doivent sembler naturelles, comme si le délégué voulait en savoir plus sur ce qui vient d'être dit
+- Courtes et précises (max 12 mots)
 
 Réponds UNIQUEMENT avec un JSON valide, sans texte avant ni après :
 {{"suggestions": ["question 1", "question 2", "question 3"]}}""",
 
     ("medical", "en"): """You are Dr. Layla, a pharmaceutical product trainer.
-A medical delegate just asked a question and you answered it.
+A medical delegate just asked this question: {question}
+And you answered: {answer}
 
-Question asked: {question}
-Answer given: {answer}
+Based ONLY on what is mentioned in the answer above, generate exactly {n} follow-up questions the delegate would naturally ask to go deeper on THIS SPECIFIC TOPIC.
 
-Generate exactly {n} relevant follow-up questions the delegate could ask to deepen their training.
-These questions should:
-- Be directly related to the topic of the answer
-- Help the delegate better understand the product (mechanism, dosage, indications, contraindications, clinical studies…)
-- Be formulated from the delegate's perspective
-- Be short and clear (max 12 words each)
+STRICT RULES:
+- Each question must focus on a SPECIFIC element cited in the answer (an ingredient, a mechanism, an effect, a concrete indication...)
+- FORBIDDEN to generate questions about dosage/contraindications/clinical studies if those topics are NOT explicitly in the answer
+- Questions must feel natural, as if the delegate wants to know more about what was just said
+- Short and precise (max 12 words each)
 
 Respond ONLY with valid JSON, no text before or after:
 {{"suggestions": ["question 1", "question 2", "question 3"]}}""",
 
     ("medical", "ar"): """أنتِ الدكتورة ليلى، مدرّبة في المنتجات الصيدلانية.
-طرح مندوب طبي سؤالاً وقمتِ بالإجابة عنه.
+طرح مندوب طبي هذا السؤال: {question}
+وأجبتِ بما يلي: {answer}
 
-السؤال المطروح: {question}
-الإجابة المقدّمة: {answer}
+استناداً فقط إلى ما ورد في الإجابة أعلاه، اقترحي بالضبط {n} أسئلة متابعة يطرحها المندوب بشكل طبيعي لتعميق هذا الموضوع تحديداً.
 
-اقترحي بالضبط {n} أسئلة متابعة يمكن للمندوب طرحها لتعميق تدريبه.
-يجب أن تكون:
-- مرتبطة مباشرة بموضوع الإجابة
-- تساعد على فهم أعمق للمنتج
-- صياغتها من منظور المندوب
-- قصيرة وواضحة (12 كلمة كحد أقصى)
+قواعد صارمة:
+- كل سؤال يجب أن يتناول عنصراً محدداً مذكوراً في الإجابة (مكوّن، آلية عمل، تأثير، مؤشر...)
+- ممنوع طرح أسئلة عن الجرعة/موانع الاستعمال/الدراسات السريرية إذا لم تُذكر صراحةً في الإجابة
+- الأسئلة يجب أن تبدو طبيعية كأن المندوب يريد معرفة المزيد مما قيل للتو
+- قصيرة ودقيقة (12 كلمة كحد أقصى)
 - احتفظي بأسماء المنتجات والمصطلحات العلمية بالفرنسية أو الإنجليزية
 
 أجيبي فقط بـ JSON صحيح، بدون أي نص قبله أو بعده:
@@ -252,81 +422,94 @@ Respond ONLY with valid JSON, no text before or after:
 
     # ── COMMERCIAL ───────────────────────────────────────────────────────────
     ("commercial", "fr"): """Tu es Vita, coach en vente pharmaceutique.
-Un délégué commercial vient de poser une question et tu y as répondu.
+Un délégué commercial vient de poser cette question : {question}
+Et tu as répondu ceci : {answer}
 
-Question posée : {question}
-Réponse donnée : {answer}
+En te basant UNIQUEMENT sur ce qui est mentionné dans la réponse ci-dessus, génère exactement {n} questions de suivi commerciales que le délégué poserait naturellement pour progresser sur CE POINT PRÉCIS.
 
-Génère exactement {n} questions de suivi commerciales que le délégué pourrait poser pour progresser.
-Ces questions doivent :
-- Porter sur les techniques de vente, objections, argumentation, concurrence ou clients cibles
-- Être pratiques et orientées terrain
-- Être courtes et directes (max 12 mots chacune)
+RÈGLES STRICTES :
+- Chaque question doit porter sur un élément SPÉCIFIQUE cité dans la réponse (une technique mentionnée, un type d'objection évoqué, un argument donné, un client cible nommé...)
+- INTERDIT de générer des questions génériques non liées au contenu de la réponse
+- Les questions doivent sembler naturelles, comme une réaction directe à ce qui vient d'être dit
+- Courtes et directes (max 12 mots)
 
 Réponds UNIQUEMENT avec un JSON valide, sans texte avant ni après :
 {{"suggestions": ["question 1", "question 2", "question 3"]}}""",
 
     ("commercial", "en"): """You are Vita, a pharmaceutical sales coach.
-A commercial delegate just asked a question and you answered it.
+A commercial delegate just asked this question: {question}
+And you answered: {answer}
 
-Question asked: {question}
-Answer given: {answer}
+Based ONLY on what is mentioned in the answer above, generate exactly {n} commercial follow-up questions the delegate would naturally ask to go deeper on THIS SPECIFIC POINT.
 
-Generate exactly {n} commercial follow-up questions the delegate could ask to improve.
-These should cover sales techniques, objections, arguments, competition, or target customers.
-Be short and direct (max 12 words each).
+STRICT RULES:
+- Each question must focus on a SPECIFIC element cited in the answer (a technique mentioned, an objection type raised, an argument given, a named customer target...)
+- FORBIDDEN to generate generic questions unrelated to the answer content
+- Questions must feel natural, like a direct reaction to what was just said
+- Short and direct (max 12 words each)
 
 Respond ONLY with valid JSON, no text before or after:
 {{"suggestions": ["question 1", "question 2", "question 3"]}}""",
 
     ("commercial", "ar"): """أنتِ Vita، مدرّبة مبيعات صيدلانية.
-طرح مندوب تجاري سؤالاً وقمتِ بالإجابة عنه.
+طرح مندوب تجاري هذا السؤال: {question}
+وأجبتِ بما يلي: {answer}
 
-السؤال المطروح: {question}
-الإجابة المقدّمة: {answer}
+استناداً فقط إلى ما ورد في الإجابة أعلاه، اقترحي بالضبط {n} أسئلة متابعة تجارية يطرحها المندوب بشكل طبيعي لتعميق هذه النقطة تحديداً.
 
-اقترحي بالضبط {n} أسئلة تجارية قصيرة (12 كلمة كحد) للمتابعة.
+قواعد صارمة:
+- كل سؤال يجب أن يتناول عنصراً محدداً مذكوراً في الإجابة (تقنية مذكورة، نوع اعتراض، حجة معطاة، عميل مستهدف...)
+- ممنوع طرح أسئلة عامة غير مرتبطة بمحتوى الإجابة
+- الأسئلة يجب أن تبدو طبيعية كردّ فعل مباشر على ما قيل
+- قصيرة ومباشرة (12 كلمة كحد أقصى)
 
-أجيبي فقط بـ JSON صحيح:
+أجيبي فقط بـ JSON صحيح، بدون أي نص قبله أو بعده:
 {{"suggestions": ["سؤال 1", "سؤال 2", "سؤال 3"]}}""",
 
     # ── VITA COMMERCIAL ───────────────────────────────────────────────────────
     ("vita_commercial", "fr"): """Tu es Vita, déléguée pharmaceutique de VITAL SA.
-Un médecin vient d'interagir avec toi lors d'une visite médicale.
+Un médecin vient de dire ceci lors d'une visite médicale : {question}
+Et tu as répondu : {answer}
 
-Ce que le médecin a dit : {question}
-Ta réponse en tant que déléguée : {answer}
+En te basant UNIQUEMENT sur ce qui est mentionné dans ta réponse ci-dessus, génère exactement {n} réactions que le médecin pourrait avoir ensuite — questions, doutes, objections ou demandes de précision sur CE QUI VIENT D'ÊTRE DIT.
 
-Génère exactement {n} questions ou objections que le médecin pourrait soulever ensuite.
-Ces suggestions doivent simuler des réactions réelles d'un médecin (doute, curiosité, objection, demande de preuve…).
-Courtes (max 12 mots).
+RÈGLES STRICTES :
+- Chaque suggestion doit réagir à un élément SPÉCIFIQUE de ta réponse (un produit nommé, un bénéfice cité, une donnée mentionnée, une affirmation faite...)
+- INTERDIT de générer des réactions génériques non liées à ta réponse
+- Simule des réactions réelles de médecin : scepticisme, curiosité, demande de preuve, comparaison...
+- Courtes (max 12 mots)
 
 Réponds UNIQUEMENT avec un JSON valide :
-{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+{{"suggestions": ["réaction 1", "réaction 2", "réaction 3"]}}""",
 
     ("vita_commercial", "en"): """You are Vita, a pharmaceutical delegate from VITAL SA.
-A doctor just interacted with you during a medical visit.
+A doctor just said this during a medical visit: {question}
+And you responded: {answer}
 
-What the doctor said: {question}
-Your response as delegate: {answer}
+Based ONLY on what is mentioned in your response above, generate exactly {n} reactions the doctor might have next — questions, doubts, objections or requests for clarification about WHAT WAS JUST SAID.
 
-Generate exactly {n} questions or objections the doctor might raise next.
-Simulate real doctor reactions (doubt, curiosity, objection, request for evidence…).
-Short (max 12 words).
+STRICT RULES:
+- Each suggestion must react to a SPECIFIC element of your response (a named product, a cited benefit, a mentioned data point, a claim made...)
+- FORBIDDEN to generate generic reactions unrelated to your response
+- Simulate real doctor reactions: skepticism, curiosity, request for proof, comparison...
+- Short (max 12 words)
 
 Respond ONLY with valid JSON:
-{{"suggestions": ["question 1", "question 2", "question 3"]}}""",
+{{"suggestions": ["reaction 1", "reaction 2", "reaction 3"]}}""",
 
     ("vita_commercial", "ar"): """أنتِ Vita، مندوبة صيدلانية من VITAL SA.
-تفاعل طبيب معكِ خلال زيارة طبية.
+قال الطبيب خلال الزيارة: {question}
+وردّكِ كان: {answer}
 
-ما قاله الطبيب: {question}
-ردّك كمندوبة: {answer}
+استناداً فقط إلى ما ورد في ردّك أعلاه، اقترحي بالضبط {n} ردود فعل يمكن أن يبديها الطبيب بعد ذلك — أسئلة، شكوك، اعتراضات أو طلبات توضيح حول ما قيل للتو.
 
-اقترحي بالضبط {n} أسئلة أو اعتراضات قصيرة (12 كلمة كحد) قد يطرحها الطبيب بعد ذلك.
+قواعد صارمة:
+- كل اقتراح يجب أن يتفاعل مع عنصر محدد في ردّك (منتج مسمّى، فائدة مذكورة، بيانات معطاة، ادّعاء قُدِّم...)
+- ممنوع توليد ردود فعل عامة غير مرتبطة بردّك
+- قصيرة (12 كلمة كحد أقصى)
 
 أجيبي فقط بـ JSON صحيح:
-{{"suggestions": ["سؤال 1", "سؤال 2", "سؤال 3"]}}""",
+{{"suggestions": ["ردّ 1", "ردّ 2", "ردّ 3"]}}""",
 }
 
 # Suggestions de secours si le LLM échoue
@@ -387,8 +570,8 @@ async def get_suggestions(req: SuggestionsRequest):
             model=os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct"),
             openai_api_key=os.getenv("TOKEN_FACTORY_API_KEY"),
             openai_api_base=os.getenv("TOKEN_FACTORY_BASE_URL") + "/api",
-            temperature=0.7,
-            max_tokens=250,
+            temperature=0.8,
+            max_tokens=300,
         )
 
         response = llm.invoke([HumanMessage(content=prompt)])
@@ -415,7 +598,332 @@ async def get_suggestions(req: SuggestionsRequest):
         print(f"[/chat/suggestions] LLM error, using fallback: {e}")
         fallback = _FALLBACK_SUGGESTIONS.get(mode, _FALLBACK_SUGGESTIONS["medical"])[:req.n]
         return {"suggestions": fallback, "lang": lang, "mode": mode, "fallback": True}
-=== ./backend/api/routes_tts.py ===
+=== ./backend/api/routes_mindmap.py ===
+# backend/api/routes_mindmap.py - Version complète avec Token Factory
+
+import os
+import json
+import re
+import math
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+
+router = APIRouter()
+
+# Utiliser Token Factory (qui fonctionne déjà)
+TOKEN_FACTORY_API_KEY = os.getenv("TOKEN_FACTORY_API_KEY", "")
+TOKEN_FACTORY_BASE_URL = os.getenv("TOKEN_FACTORY_BASE_URL", "https://tokenfactory.esprit.tn")
+TOKEN_FACTORY_MODEL = os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct")
+
+
+class ConvMsg(BaseModel):
+    role: str
+    text: str
+
+class MindmapRequest(BaseModel):
+    conversation: List[ConvMsg]
+    mode: Optional[str] = "medical"
+    lang: Optional[str] = "fr"
+
+
+async def extract_concepts(conversation: list, mode: str, lang: str) -> dict:
+    """Call Token Factory to extract mindmap concepts from conversation."""
+
+    conv_text = "\n".join([
+        f"{m['role'].upper()}: {m['text'][:250]}"
+        for m in conversation[-30:]
+    ])
+
+    if lang == "ar":
+        lang_instruction = "Respond with labels in Arabic. Keep product names and scientific terms in French/English."
+    elif lang == "en":
+        lang_instruction = "Respond with all labels in English."
+    else:
+        lang_instruction = "Respond with all labels in French."
+
+    prompt = f"""You are an expert pharmaceutical trainer analyzing a training session.
+Analyze this conversation and extract a structured mindmap.
+
+CONVERSATION:
+{conv_text}
+
+{lang_instruction}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+  "center": "Main topic or product name (short, max 3 words)",
+  "branches": [
+    {{
+      "label": "Branch name (2-4 words)",
+      "color": "#hexcolor",
+      "children": ["concept 1", "concept 2", "concept 3"]
+    }}
+  ]
+}}
+
+Rules:
+- 4 to 6 branches maximum
+- Each branch: 2 to 4 children
+- Branch colors: choose from #7eb8f7, #c084fc, #34d399, #f59e0b, #f87171, #60a5fa
+- Labels must be short and specific to THIS conversation
+- Focus on: products discussed, key benefits, objections raised, clinical concepts, sales techniques
+- No generic labels like "Introduction" or "General"
+"""
+
+    headers = {
+        "Authorization": f"Bearer {TOKEN_FACTORY_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": TOKEN_FACTORY_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": 800,
+    }
+
+    url = f"{TOKEN_FACTORY_BASE_URL}/api/chat/completions"
+
+    async with httpx.AsyncClient(timeout=45.0, verify=False) as client:
+        try:
+            res = await client.post(url, headers=headers, json=payload)
+            res.raise_for_status()
+            data = res.json()
+        except httpx.HTTPStatusError as e:
+            print(f"[mindmap] HTTP error: {e.response.status_code}")
+            print(f"[mindmap] Response: {e.response.text[:200]}")
+            raise ValueError(f"API error: {e.response.status_code}")
+        except Exception as e:
+            print(f"[mindmap] Request error: {e}")
+            raise
+
+    raw = data["choices"][0]["message"]["content"].strip()
+    raw = re.sub(r"```(?:json)?\s*", "", raw).strip().strip("`")
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON found in response: {raw[:200]}")
+    return json.loads(match.group())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SVG GENERATOR - À AJOUTER (ces fonctions manquaient)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
+    """
+    Generate a beautiful radial mindmap SVG in pure Python.
+    No external dependencies — just math and string building.
+    """
+
+    W, H = 900, 700
+    CX, CY = W // 2, H // 2
+
+    center_label = data.get("center", "Session")
+    branches = data.get("branches", [])
+    if not branches:
+        branches = [{"label": "No concepts", "color": "#7eb8f7", "children": []}]
+
+    # Clamp branches
+    branches = branches[:6]
+    n_branches = len(branches)
+
+    # ── SVG header + defs ────────────────────────────────────────────────────
+    lines = []
+    lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" style="background:transparent;font-family:\'Jost\',system-ui,sans-serif;">')
+
+    # Defs: gradients + filters
+    lines.append('<defs>')
+
+    # Center gradient
+    lines.append('''
+  <radialGradient id="centerGrad" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#1e2d4a"/>
+    <stop offset="100%" stop-color="#0d1120"/>
+  </radialGradient>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur stdDeviation="3" result="blur"/>
+    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(0,0,0,0.4)"/>
+  </filter>
+  <filter id="nodeShadow" x="-30%" y="-30%" width="160%" height="160%">
+    <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="rgba(0,0,0,0.3)"/>
+  </filter>
+''')
+
+    # Branch gradients
+    for i, branch in enumerate(branches):
+        color = branch.get("color", "#7eb8f7")
+        lines.append(f'''
+  <linearGradient id="branchGrad{i}" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%" stop-color="{color}" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="{color}" stop-opacity="0.5"/>
+  </linearGradient>''')
+
+    lines.append('</defs>')
+
+    # ── Background subtle grid ───────────────────────────────────────────────
+    lines.append(f'''
+<rect width="{W}" height="{H}" fill="url(#centerGrad)" rx="16"/>
+<g opacity="0.04" stroke="white" stroke-width="0.5">''')
+    for gx in range(0, W, 40):
+        lines.append(f'  <line x1="{gx}" y1="0" x2="{gx}" y2="{H}"/>')
+    for gy in range(0, H, 40):
+        lines.append(f'  <line x1="0" y1="{gy}" x2="{W}" y2="{gy}"/>')
+    lines.append('</g>')
+
+    # ── Outer decorative ring ────────────────────────────────────────────────
+    lines.append(f'<circle cx="{CX}" cy="{CY}" r="280" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>')
+    lines.append(f'<circle cx="{CX}" cy="{CY}" r="200" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>')
+
+    # ── Branch radius settings ────────────────────────────────────────────────
+    R_BRANCH = 160
+    R_CHILD = 260
+    BRANCH_NODE_R = 36
+    CHILD_NODE_R = 22
+
+    branch_angles = []
+    for i in range(n_branches):
+        angle_deg = (360 / n_branches) * i - 90
+        branch_angles.append(math.radians(angle_deg))
+
+    # ── Draw connections (lines) FIRST ────────────────────────────────────────
+    for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
+        color = branch.get("color", "#7eb8f7")
+        bx = CX + R_BRANCH * math.cos(angle)
+        by = CY + R_BRANCH * math.sin(angle)
+        children = branch.get("children", [])
+        n_children = len(children)
+
+        # Center → Branch
+        lines.append(f'<line x1="{CX}" y1="{CY}" x2="{bx:.1f}" y2="{by:.1f}" stroke="{color}" stroke-width="2.5" stroke-opacity="0.6" stroke-linecap="round"/>')
+
+        # Branch → Children
+        if n_children:
+            spread = math.radians(25)
+            child_start = angle - spread * (n_children - 1) / 2
+            for j, child in enumerate(children[:4]):
+                child_angle = child_start + spread * j
+                r_child = R_CHILD + (j % 2) * 20
+                cx2 = CX + r_child * math.cos(child_angle)
+                cy2 = CY + r_child * math.sin(child_angle)
+                lines.append(f'<line x1="{bx:.1f}" y1="{by:.1f}" x2="{cx2:.1f}" y2="{cy2:.1f}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.35" stroke-linecap="round" stroke-dasharray="4 3"/>')
+
+    # ── Draw branch nodes ─────────────────────────────────────────────────────
+    for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
+        color = branch.get("color", "#7eb8f7")
+        label = branch.get("label", f"Branch {i+1}")
+        children = branch.get("children", [])
+
+        bx = CX + R_BRANCH * math.cos(angle)
+        by = CY + R_BRANCH * math.sin(angle)
+
+        # Branch node circle
+        lines.append(f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{BRANCH_NODE_R}" fill="{color}" fill-opacity="0.18" stroke="{color}" stroke-width="2" filter="url(#nodeShadow)"/>')
+        lines.append(f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{BRANCH_NODE_R - 8}" fill="{color}" fill-opacity="0.1"/>')
+
+        # Branch label — wrap at ~12 chars
+        words = label.split()
+        if len(label) > 12 and len(words) > 1:
+            mid = len(words) // 2
+            line1 = " ".join(words[:mid])
+            line2 = " ".join(words[mid:])
+            lines.append(f'<text x="{bx:.1f}" y="{by - 5:.1f}" text-anchor="middle" fill="{color}" font-size="11" font-weight="600" letter-spacing="0.3">{_esc(line1)}</text>')
+            lines.append(f'<text x="{bx:.1f}" y="{by + 8:.1f}" text-anchor="middle" fill="{color}" font-size="11" font-weight="600" letter-spacing="0.3">{_esc(line2)}</text>')
+        else:
+            lines.append(f'<text x="{bx:.1f}" y="{by + 4:.1f}" text-anchor="middle" fill="{color}" font-size="11" font-weight="600" letter-spacing="0.3">{_esc(label)}</text>')
+
+        # Children nodes
+        n_children = len(children)
+        spread = math.radians(25)
+        child_start = angle - spread * (n_children - 1) / 2
+        for j, child in enumerate(children[:4]):
+            child_angle = child_start + spread * j
+            r_child = R_CHILD + (j % 2) * 20
+            cx2 = CX + r_child * math.cos(child_angle)
+            cy2 = CY + r_child * math.sin(child_angle)
+
+            child_label = str(child)
+            if len(child_label) > 16:
+                child_label = child_label[:14] + "…"
+
+            lines.append(f'<circle cx="{cx2:.1f}" cy="{cy2:.1f}" r="{CHILD_NODE_R}" fill="rgba(13,17,32,0.85)" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
+            lines.append(f'<text x="{cx2:.1f}" y="{cy2 + 4:.1f}" text-anchor="middle" fill="rgba(232,234,240,0.85)" font-size="9.5" font-weight="400">{_esc(child_label)}</text>')
+
+    # ── Center node ───────────────────────────────────────────────────────────
+    CENTER_R = 54
+    lines.append(f'<circle cx="{CX}" cy="{CY}" r="{CENTER_R + 8}" fill="none" stroke="rgba(126,184,247,0.15)" stroke-width="1.5"/>')
+    lines.append(f'<circle cx="{CX}" cy="{CY}" r="{CENTER_R}" fill="url(#centerGrad)" stroke="rgba(126,184,247,0.5)" stroke-width="2" filter="url(#shadow)"/>')
+
+    # Center text wrapping
+    center_words = center_label.split()
+    if len(center_label) > 14 and len(center_words) > 1:
+        mid = len(center_words) // 2
+        l1 = " ".join(center_words[:mid])
+        l2 = " ".join(center_words[mid:])
+        lines.append(f'<text x="{CX}" y="{CY - 5}" text-anchor="middle" fill="white" font-size="13" font-weight="600" letter-spacing="0.5">{_esc(l1)}</text>')
+        lines.append(f'<text x="{CX}" y="{CY + 11}" text-anchor="middle" fill="white" font-size="13" font-weight="600" letter-spacing="0.5">{_esc(l2)}</text>')
+    else:
+        lines.append(f'<text x="{CX}" y="{CY + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="600" letter-spacing="0.5">{_esc(center_label)}</text>')
+
+    # ── Watermark ─────────────────────────────────────────────────────────────
+    lines.append(f'<text x="{W - 12}" y="{H - 8}" text-anchor="end" fill="rgba(255,255,255,0.12)" font-size="9" font-style="italic">VitalAgent · AI Mindmap</text>')
+
+    lines.append('</svg>')
+    return "\n".join(lines)
+
+
+def _esc(s: str) -> str:
+    """Escape XML special chars."""
+    return (str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# API ENDPOINT
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/mindmap")
+async def generate_mindmap(request: MindmapRequest):
+    """
+    Generate a radial SVG mindmap from the session conversation.
+    Uses Token Factory for concept extraction.
+    """
+    if not TOKEN_FACTORY_API_KEY:
+        raise HTTPException(status_code=500, detail="TOKEN_FACTORY_API_KEY not set in .env")
+
+    if len(request.conversation) < 2:
+        raise HTTPException(status_code=400, detail="Conversation too short to generate a mindmap")
+
+    conversation = [{"role": m.role, "text": m.text} for m in request.conversation]
+
+    try:
+        concepts = await extract_concepts(conversation, request.mode, request.lang)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Token Factory API error: {e.response.status_code}")
+    except Exception as e:
+        print(f"[mindmap] concept extraction error: {e}")
+        # Fallback: generic structure
+        concepts = {
+            "center": "Session",
+            "branches": [
+                {"label": "Topics", "color": "#7eb8f7", "children": ["Review conversation"]},
+                {"label": "Products", "color": "#c084fc", "children": ["Check session log"]},
+            ]
+        }
+
+    svg = build_mindmap_svg(concepts, request.mode)
+    return {
+        "success": True,
+        "svg": svg,
+        "concepts": concepts,
+    }=== ./backend/api/routes_tts.py ===
 """
 backend/api/routes_tts.py
 ==========================
@@ -547,10 +1055,31 @@ async def voice_ask_stream(
         raise HTTPException(status_code=400, detail="Empty audio file")
 
     stt_result = transcribe_audio_file(audio_bytes, language=language)
-    question   = stt_result["text"]
+    question = stt_result["text"]
 
-    if not question.strip():
-        raise HTTPException(status_code=400, detail="Could not transcribe audio")
+    # CLEAN THE TRANSCRIBED TEXT
+    import re
+    # Remove all non-printable characters
+    question = ''.join(char for char in question if char.isprintable() or char == ' ')
+    # Replace multiple spaces with single space
+    question = re.sub(r'\s+', ' ', question)
+    # Strip leading/trailing spaces
+    question = question.strip()
+    
+    # Debug: print to console to see what's being sent
+    print(f"[VOICE] Raw transcription: '{stt_result['text']}'")
+    print(f"[VOICE] Cleaned question: '{question}'")
+    print(f"[VOICE] Question length: {len(question)}")
+
+    if not question or len(question) < 3:
+        async def error_generator():
+            error_message = "Je n'ai pas bien compris. Pouvez-vous répéter plus clairement?"
+            transcript_data = json.dumps({'type': 'transcript', 'text': question if question else '...', 'language': stt_result['language']})
+            token_data = json.dumps({'type': 'token', 'content': error_message})
+            yield f"data: {transcript_data}\n\n"
+            yield f"data: {token_data}\n\n"
+            yield "data: {\"type\": \"done\"}\n\n"
+        return StreamingResponse(error_generator(), media_type="text/event-stream")
 
     def event_generator():
         # Send transcription first so UI can show what was heard
@@ -560,7 +1089,12 @@ async def voice_ask_stream(
             for chunk in engine.stream_ask(question, n_results=n_results, mode=mode):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+            print(f"[VOICE] Error in stream_ask: {e}")
+            error_response = {
+                "type": "token",
+                "content": "Je n'ai pas bien compris. Pouvez-vous reformuler?"
+            }
+            yield f"data: {json.dumps(error_response)}\n\n"
         finally:
             yield "data: {\"type\": \"done\"}\n\n"
 
@@ -589,6 +1123,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+from backend.api.routes_analytics import router as analytics_router
+
 load_dotenv()
 
 from backend.api.routes_chat  import router as chat_router
@@ -613,6 +1149,7 @@ app.add_middleware(
 app.include_router(chat_router,  prefix="/chat",  tags=["Chat"])
 app.include_router(voice_router, prefix="/voice", tags=["Voice"])
 app.include_router(tts_router, prefix="/tts", tags=["TTS"])
+app.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 
 @app.get("/health")
 def health():
@@ -670,7 +1207,10 @@ def product_detail(name: str):
         return {k: (str(v) if v is not None else "") for k, v in row.items()}
     except Exception as e:
         return {"name": name, "description": "", "error": str(e)}
-=== ./backend/rag/config.py ===
+
+
+from backend.api.routes_mindmap import router as mindmap_router
+app.include_router(mindmap_router, prefix="/analytics", tags=["Analytics"])=== ./backend/rag/config.py ===
 """
 mysql_columns.py
 ================
@@ -1112,6 +1652,45 @@ class RAGEngine:
 
         import re
 
+        question_lower = question.lower()
+        hits = []
+        seen_ids = set()
+        
+        # ========== EXACT PRODUCT NAME DETECTION ==========
+        # Get ALL unique product names first
+        all_metas = self.collection.get(include=["metadatas"])
+        product_to_id = {}
+        for meta in all_metas["metadatas"]:
+            name = meta.get("product_name", "")
+            if name and name not in product_to_id:
+                product_to_id[name.lower()] = (meta.get("source_id"), meta.get("source_table"))
+        
+        # Check if any product name is IN the question
+        for prod_name_lower, (source_id, source_table) in product_to_id.items():
+            if prod_name_lower in question_lower:
+                # Get ALL chunks for this product - FIXED where clause
+                product_docs = self.collection.get(
+                    where={
+                        "$and": [
+                            {"source_id": source_id},
+                            {"source_table": source_table}
+                        ]
+                    },
+                    include=["documents", "metadatas"]
+                )
+                if product_docs["documents"]:
+                    # Combine all chunks into one document
+                    full_text = "\n\n".join(product_docs["documents"])
+                    hits.append({
+                        "text": full_text,
+                        "product_name": product_docs["metadatas"][0].get("product_name", "Unknown"),
+                        "source_table": source_table,
+                        "relevance": 1.0,  # Perfect match
+                    })
+                    seen_ids.add(source_id)
+                    print(f"✅ EXACT MATCH FOUND: {product_docs['metadatas'][0].get('product_name')}")
+        # ========== END EXACT MATCH ==========
+
         question_vector = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=[question_vector],
@@ -1119,27 +1698,30 @@ class RAGEngine:
             include=["documents", "metadatas", "distances"],
         )
 
-        hits = []
-        seen_ids = set()
+        #hits = []
+        #seen_ids = set()
 
         for doc, meta, dist in zip(
             results["documents"][0],
             results["metadatas"][0],
             results["distances"][0],
         ):
+            source_id = meta.get("source_id", "")
+            if source_id in seen_ids:
+                continue
             hits.append({
                 "text": doc,
                 "product_name": meta.get("product_name", "Unknown"),
                 "source_table": meta.get("source_table", ""),
                 "relevance": round(1 - dist, 3),
             })
-            seen_ids.add(meta.get("source_id", ""))
+            seen_ids.add(source_id)
 
         catalogue_keywords = [
             "gamme", "gammes", "catalogue", "catalogues",
             "liste", "laboratoire", "portfolio", "offre",
         ]
-        question_lower = question.lower()
+        #question_lower = question.lower()
         is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
 
         if is_catalogue_query:
@@ -1159,7 +1741,7 @@ class RAGEngine:
                 })
                 seen_ids.add(source_id)
 
-        words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
+        words = re.findall(r"\w+", question)
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
             for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
@@ -1308,24 +1890,47 @@ Réponse :"""
     # ── Ask streaming ─────────────────────────────────────────────────────────
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
         self.initialize()
+        
+        import re
+        question = re.sub(r'\s+', ' ', question).strip()
+        question = ''.join(char for char in question if char.isprintable() or char == ' ')
+        
+        if not question or len(question) < 3:
+            yield {"type": "token", "content": "Pouvez-vous reformuler votre question s'il vous plaît ?"}
+            yield {"type": "sources", "sources": []}
+            return
 
-        lang = detect_language(question)          # ← NEW: detect language
-
-        hits = self.search(question, n_results=n_results)
+        lang = detect_language(question)
+        
+        # --- Wrap search in try-except ---
+        try:
+            hits = self.search(question, n_results=n_results)
+        except Exception as e:
+            print(f"[RAG] Search error: {e}")
+            yield {"type": "token", "content": "Désolé, je n'ai pas pu traiter votre demande. Veuillez réessayer."}
+            yield {"type": "sources", "sources": []}
+            return
 
         if not hits:
-            yield {"type": "token", "content": "Je n'ai pas trouvé d'information pertinente."}
+            yield {"type": "token", "content": "Je n'ai pas trouvé d'information sur ce sujet. Pouvez-vous me poser une autre question ?"}
             yield {"type": "sources", "sources": []}
             return
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # ← NEW: lang=lang
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)
 
+        # --- Collect full response and ensure it's not empty ---
+        full_response = ""
         for chunk in self.llm.stream([HumanMessage(content=prompt)]):
-            token = chunk.content
+            token = chunk.content or ""
+            full_response += token
             if token:
                 yield {"type": "token", "content": token}
+        
+        # If LLM returned nothing, send a fallback
+        if not full_response.strip():
+            yield {"type": "token", "content": "Je n'ai pas pu générer une réponse. Pouvez-vous reformuler ?"}
 
         seen, sources = set(), []
         for hit in hits:
@@ -2030,6 +2635,20 @@ def synthesize(text: str, lang: str = "auto") -> dict:
         <p>You are the doctor. Vita is your delegate.</p>
       </div>
       <div class="header-right">
+        <button class="mindmap-btn" id="mindmap-btn" onclick="openMindmap()" disabled title="Générer la mindmap de session">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <line x1="12" y1="2" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="22" y2="12"/>
+            <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"/>
+            <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"/>
+            <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"/>
+            <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
+          </svg>
+          Mindmap
+        </button>
         <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           Report
@@ -2065,6 +2684,57 @@ def synthesize(text: str, lang: str = "auto") -> dict:
   </main>
 </div>
 
+<div id="report-overlay" class="report-overlay" onclick="closeReportOnBg(event)">
+  <div class="report-modal">
+    <div class="report-modal-header">
+      <h2>Session Report</h2>
+      <button class="close-report" onclick="closeReport()">&times;</button>
+    </div>
+    <div id="report-content" class="report-content">
+      <!-- Report content will be inserted here -->
+    </div>
+    <div class="report-modal-footer">
+      <button class="download-pdf" onclick="downloadReport()">Download PDF</button>
+      <button class="close-btn" onclick="closeReport()">Close</button>
+    </div>
+  </div>
+</div>
+<div id="mindmap-overlay" class="mindmap-overlay" onclick="closeMindmapOnBg(event)">
+  <div class="mindmap-modal">
+    <div class="mindmap-modal-header">
+      <div class="mindmap-modal-title">
+        <span class="mindmap-icon-badge">◈</span>
+        <h2>Session Mindmap</h2>
+        <span class="mindmap-subtitle" id="mindmap-subtitle">Powered by Mistral AI</span>
+      </div>
+      <div class="mindmap-modal-actions">
+        <button class="mindmap-download-btn" onclick="downloadMindmapSVG()" id="mindmap-dl-btn" disabled>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download SVG
+        </button>
+        <button class="mindmap-close-btn" onclick="closeMindmap()">✕</button>
+      </div>
+    </div>
+    <div class="mindmap-body">
+      <div id="mindmap-loading" class="mindmap-loading">
+        <div class="mindmap-spinner"></div>
+        <div class="mindmap-loading-text">
+          <p>Analyse de la session…</p>
+          <p class="mindmap-loading-sub">Mistral AI extrait les concepts clés</p>
+        </div>
+      </div>
+      <div id="mindmap-svg-container" class="mindmap-svg-container" style="display:none"></div>
+      <div id="mindmap-error" class="mindmap-error" style="display:none">
+        <p>⚠ Impossible de générer la mindmap</p>
+        <span id="mindmap-error-detail"></span>
+      </div>
+    </div>
+  </div>
+</div>
 <script type="importmap">
 {
   "imports": {
@@ -2076,6 +2746,8 @@ def synthesize(text: str, lang: str = "auto") -> dict:
 
 <script type="module" src="js/avatar.js"></script>
 <script type="module" src="js/commercial.js"></script>
+<script src="js/mindmap.js"></script>
+
 </body>
 </html>=== ./frontend/css/style.css ===
 
@@ -2313,6 +2985,20 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 .medical-item .test-menu-label{color:var(--accent)}
 .commercial-item .test-menu-label{color:var(--gold)}
 .test-menu-sub{font-size:11px;color:var(--text-dim);margin-top:1px}
+.toast-message {
+    animation: fadeInUp 0.3s ease;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    ★ AJOUTER À LA FIN DE  frontend/css/style.css
@@ -2463,6 +3149,248 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 }
 .suggestions-loading .mini-dots span:nth-child(2) { animation-delay: 0.2s; }
 .suggestions-loading .mini-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MINDMAP STYLES — Add to frontend/css/style.css
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Mindmap button ────────────────────────────────────────────────────────── */
+.mindmap-btn {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid rgba(126, 184, 247, 0.3);
+  background: rgba(126, 184, 247, 0.08);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mindmap-btn:hover:not(:disabled) {
+  background: rgba(126, 184, 247, 0.18);
+  border-color: rgba(126, 184, 247, 0.55);
+  box-shadow: 0 0 12px rgba(126, 184, 247, 0.15);
+}
+.mindmap-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Overlay ────────────────────────────────────────────────────────────────── */
+.mindmap-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(6px);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.mindmap-overlay.open {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* ── Modal ────────────────────────────────────────────────────────────────── */
+.mindmap-modal {
+  background: #0a0e1a;
+  border: 1px solid rgba(126, 184, 247, 0.2);
+  border-radius: 18px;
+  width: min(960px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(126, 184, 247, 0.06),
+    0 24px 80px rgba(0, 0, 0, 0.6),
+    0 0 60px rgba(126, 184, 247, 0.04);
+  transform: translateY(12px) scale(0.97);
+  transition: transform 0.25s ease;
+}
+.mindmap-overlay.open .mindmap-modal {
+  transform: translateY(0) scale(1);
+}
+
+/* ── Modal header ─────────────────────────────────────────────────────────── */
+.mindmap-modal-header {
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(180deg, rgba(126,184,247,0.04) 0%, transparent 100%);
+  flex-shrink: 0;
+}
+.mindmap-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mindmap-icon-badge {
+  font-size: 18px;
+  color: var(--accent);
+  opacity: 0.8;
+}
+.mindmap-modal-title h2 {
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 300;
+  color: var(--text);
+}
+.mindmap-subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 9px;
+  margin-left: 4px;
+}
+.mindmap-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mindmap-download-btn {
+  padding: 6px 13px;
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.07);
+  color: #22c55e;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mindmap-download-btn:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+.mindmap-download-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.mindmap-close-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.15s;
+}
+.mindmap-close-btn:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Modal body ──────────────────────────────────────────────────────────── */
+.mindmap-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  min-height: 400px;
+  position: relative;
+}
+
+/* ── Loading state ────────────────────────────────────────────────────────── */
+.mindmap-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+.mindmap-spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid rgba(126, 184, 247, 0.12);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+  position: relative;
+}
+.mindmap-spinner::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: rgba(192, 132, 252, 0.6);
+  animation: spin 0.6s linear infinite reverse;
+}
+.mindmap-loading-text p {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 300;
+  color: var(--text);
+}
+.mindmap-loading-sub {
+  font-size: 12px !important;
+  color: var(--text-dim) !important;
+  margin-top: 4px;
+  font-family: var(--sans) !important;
+}
+
+/* ── SVG container ───────────────────────────────────────────────────────── */
+.mindmap-svg-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.01);
+  animation: fadeIn 0.4s ease;
+}
+.mindmap-svg-container svg {
+  border-radius: 12px;
+}
+
+/* ── Error state ──────────────────────────────────────────────────────────── */
+.mindmap-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 32px;
+}
+.mindmap-error p {
+  font-size: 15px;
+  color: #f87171;
+  font-family: var(--serif);
+  font-weight: 300;
+}
+.mindmap-error span {
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 380px;
+  line-height: 1.5;
+}
 === ./frontend/index.html ===
 <!DOCTYPE html>
 <html lang="en">
@@ -2585,6 +3513,20 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
     </a>
   </div>
 </div>
+<button class="mindmap-btn" id="mindmap-btn" onclick="openMindmap()" disabled title="Générer la mindmap de session">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <line x1="12" y1="2" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="22" y2="12"/>
+            <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"/>
+            <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"/>
+            <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"/>
+            <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
+          </svg>
+          Mindmap
+</button>
         <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           Report
@@ -2629,7 +3571,42 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
     </div>
   </main>
 </div>
-
+<div id="mindmap-overlay" class="mindmap-overlay" onclick="closeMindmapOnBg(event)">
+  <div class="mindmap-modal">
+    <div class="mindmap-modal-header">
+      <div class="mindmap-modal-title">
+        <span class="mindmap-icon-badge">◈</span>
+        <h2>Session Mindmap</h2>
+        <span class="mindmap-subtitle" id="mindmap-subtitle">Powered by Mistral AI</span>
+      </div>
+      <div class="mindmap-modal-actions">
+        <button class="mindmap-download-btn" onclick="downloadMindmapSVG()" id="mindmap-dl-btn" disabled>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download SVG
+        </button>
+        <button class="mindmap-close-btn" onclick="closeMindmap()">✕</button>
+      </div>
+    </div>
+    <div class="mindmap-body">
+      <div id="mindmap-loading" class="mindmap-loading">
+        <div class="mindmap-spinner"></div>
+        <div class="mindmap-loading-text">
+          <p>Analyse de la session…</p>
+          <p class="mindmap-loading-sub">Mistral AI extrait les concepts clés</p>
+        </div>
+      </div>
+      <div id="mindmap-svg-container" class="mindmap-svg-container" style="display:none"></div>
+      <div id="mindmap-error" class="mindmap-error" style="display:none">
+        <p>⚠ Impossible de générer la mindmap</p>
+        <span id="mindmap-error-detail"></span>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- ★ importmap : résout "three" pour TalkingHead ★ -->
 <script type="importmap">
 {
@@ -2645,6 +3622,7 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
 
 <!-- 2. Main Logic (Chat, Voice, Products, Report) -->
 <script src="js/main.js"></script>
+<script src="js/mindmap.js"></script>
 
 </body>
 </html>
@@ -2803,6 +3781,9 @@ let isRecording = false;
 let mediaRecorder = null;
 let audioChunks = [];
 
+let currentSessionId = null;
+let currentProfileId = null;
+
 const MODE = 'vita_commercial';
 let visitStarted = false;
 
@@ -2824,7 +3805,6 @@ async function init() {
   }
 
   await window.initAvatar();
-  // No auto‑start – wait for user to click the button
 }
 
 function setStatus(state, text) {
@@ -2835,58 +3815,69 @@ function setStatus(state, text) {
 }
 window.setStatus = setStatus;
 
-// ── Start Visit (called by button) ──────────────────────────
+// Store original function BEFORE overriding
+const originalStartVisit = window.startVisit;
+
+// Create new startVisit function
 window.startVisit = async function() {
-  if (visitStarted) return;
-  visitStarted = true;
-
-  // Resume audio context (user gesture)
-  if (window._head?.audioCtx?.state !== 'running') {
-    await window._head.audioCtx.resume();
-  }
-
-  // Enable mic button
-  const micBtn = document.getElementById('mic-btn');
-  if (micBtn) micBtn.disabled = false;
-
-  await loadGreeting();
+    if (visitStarted) return;
+    
+    // Get profile ID from somewhere (you can skip for now)
+    currentProfileId = localStorage.getItem('profileId') || 1;
+    
+    // Create session in Spring Boot (skip if Spring Boot not ready)
+    try {
+        const response = await fetch('http://localhost:8080/api/v1/sessions/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ mode: MODE })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            currentSessionId = data.id;
+            console.log('Session started:', currentSessionId);
+        }
+    } catch (error) {
+        console.warn('Session start failed (Spring Boot may not be running):', error);
+        // Continue anyway - session is optional
+    }
+    
+    // Call original startVisit if it exists
+    if (originalStartVisit) {
+        await originalStartVisit();
+    } else {
+        // Fallback to original logic
+        visitStarted = true;
+        if (window._head?.audioCtx?.state !== 'running') {
+            await window._head.audioCtx.resume();
+        }
+        const micBtn = document.getElementById('mic-btn');
+        if (micBtn) micBtn.disabled = false;
+        await loadGreeting();
+    }
 };
 
-// ── Load and speak greeting ──────────────────────────────────
+// ── Greeting ──────────────────────────────────────────────────
 async function loadGreeting() {
-  hideEmpty();
-  addTyping();
-  setStatus('speaking', 'Greeting…');
-
+  hideEmpty(); addTyping(); setStatus('speaking', 'Greeting…');
   try {
-    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, {
-      signal: AbortSignal.timeout(60000)
-    });
+    const res = await fetch(`${API}/chat/mode-intro/stream?mode=${MODE}`, { signal: AbortSignal.timeout(60000) });
     if (!res.ok) throw new Error();
-
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
-    let fullText = '';
-    let msgEl = null;
-
+    let buffer = '', fullText = '', msgEl = null;
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      const lines = buffer.split('\n\n'); buffer = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let data;
-        try {
-          data = JSON.parse(line.slice(6));
-        } catch { continue; }
+        let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
         if (data.type === 'token') {
-          if (!msgEl) {
-            removeTyping();
-            msgEl = addAIBubble(null);
-          }
+          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           fullText += data.content;
           const textSpan = document.getElementById('streaming-text');
           if (textSpan) textSpan.textContent = fullText;
@@ -2894,14 +3885,9 @@ async function loadGreeting() {
         } else if (data.type === 'done') break;
       }
     }
-
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, []);
-
-    if (fullText) {
-      setStatus('speaking', 'Speaking…');
-      await window.speakWithAvatar(fullText);
-    }
+    finalizeBubble(fullText, []); // greeting : pas de suggestions
+    if (fullText) { setStatus('speaking', 'Speaking…'); await window.speakWithAvatar(fullText); }
     setStatus('', 'Ready');
   } catch (err) {
     console.error('Error loading greeting:', err);
@@ -2917,119 +3903,275 @@ async function loadGreeting() {
 }
 
 // ── Send Question (doctor input) ────────────────────────────
+// ── Send Question (doctor input) ────────────────────────────
 window.sendQuestion = async function() {
-  if (!visitStarted) {
-    await window.startVisit(); // ensure visit started before sending
-  }
-
-  const input = document.getElementById('question-input');
-  const userText = input.value.trim();
-  if (!userText || isLoading) return;
-
-  isLoading = true;
-  setSend(true);
-  input.value = '';
-  input.style.height = 'auto';
-
-  addUserMsg(userText);
-  addTyping();
-  setStatus('thinking', 'Thinking…');
-
-  try {
-    const res = await fetch(`${API}/chat/ask/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+    const input = document.getElementById('question-input');
+    const userText = input.value.trim();
+    if (!userText || isLoading) return;
+    
+    // Log user message to conversationLog
+    conversationLog.push({
+        role: 'user',
+        text: userText,
+        timestamp: new Date().toISOString()
     });
-    if (!res.ok) throw new Error();
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let fullText = '';
-    let sources = [];
-    let msgEl = null;
-    setStatus('speaking', 'Responding…');
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        let data;
-        try {
-          data = JSON.parse(line.slice(6));
-        } catch { continue; }
-        if (data.type === 'token') {
-          if (!msgEl) {
-            removeTyping();
-            msgEl = addAIBubble(null);
-          }
-          fullText += data.content;
-          const textSpan = document.getElementById('streaming-text');
-          if (textSpan) textSpan.textContent = fullText;
-          scrollBottom();
-        } else if (data.type === 'sources') {
-          sources = data.sources;
+    
+    // Display user message in chat UI
+    addUserMsg(userText, false);
+    
+    // Clear input
+    input.value = '';
+    input.style.height = 'auto';
+    
+    // Show typing indicator
+    addTyping();
+    setStatus('thinking', 'Thinking…');
+    
+    isLoading = true;
+    setSend(true);
+    
+    try {
+        // Call the RAG backend
+        const res = await fetch(`${API}/chat/ask/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+        });
+        
+        if (!res.ok) throw new Error();
+        
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullText = '';
+        let sources = [];
+        let msgEl = null;
+        setStatus('speaking', 'Responding…');
+        
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                let data;
+                try {
+                    data = JSON.parse(line.slice(6));
+                } catch { continue; }
+                if (data.type === 'token') {
+                    if (!msgEl) {
+                        removeTyping();
+                        msgEl = addAIBubble(null);
+                    }
+                    fullText += data.content;
+                    const textSpan = document.getElementById('streaming-text');
+                    if (textSpan) textSpan.textContent = fullText;
+                    scrollBottom();
+                } else if (data.type === 'sources') {
+                    sources = data.sources;
+                }
+            }
         }
-      }
+        
+        // Log assistant response
+        conversationLog.push({
+            role: 'assistant',
+            text: fullText,
+            sources: sources,
+            timestamp: new Date().toISOString()
+        });
+        
+        if (!msgEl) msgEl = addAIBubble(null);
+        finalizeBubble(fullText, sources, userText);
+        
+        if (fullText) {
+            await window.speakWithAvatar(fullText);
+        }
+        setStatus('', 'Ready');
+        
+    } catch (error) {
+        console.error('Error:', error);
+        removeTyping();
+        showError('Cannot reach the API. Run: python backend/main.py');
+        setStatus('', 'Ready');
+    } finally {
+        isLoading = false;
+        setSend(false);
+        document.getElementById('question-input').focus();
     }
+};
 
-    if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, sources, userText);
-
-    if (fullText) {
-      await window.speakWithAvatar(fullText);
+// Modified openReport to use AI extraction
+const originalOpenReport = window.openReport;
+window.openReport = async function() {
+    if (!conversationLog.length) {
+        showToast('No conversation to analyze');
+        return;
     }
-    setStatus('', 'Ready');
-  } catch {
-    removeTyping();
-    showError('Cannot reach the API. Run: python backend/main.py');
-    setStatus('', 'Ready');
-  } finally {
-    isLoading = false;
-    setSend(false);
-    document.getElementById('question-input').focus();
-  }
+    
+    // Show loading
+    const reportBtn = document.getElementById('report-btn');
+    const originalText = reportBtn.innerHTML;
+    reportBtn.innerHTML = 'Analyzing...';
+    reportBtn.disabled = true;
+    
+    try {
+        // If session exists, end it and get extraction
+        if (currentSessionId) {
+            const token = localStorage.getItem('jwt');
+            const response = await fetch('http://localhost:8080/api/v1/sessions/end', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify({
+                    sessionId: currentSessionId,
+                    profileId: currentProfileId,
+                    conversation: conversationLog
+                })
+            });
+            
+            const extraction = await response.json();
+            displayAIReport(extraction);
+        } else {
+            // Just extract without saving
+            const response = await fetch('http://localhost:8000/analytics/extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conversation: conversationLog })
+            });
+            const result = await response.json();
+            displayAIReport(result.extraction);
+        }
+    } catch (error) {
+        console.error('Analysis failed:', error);
+        showToast('Failed to analyze conversation');
+        originalOpenReport(); // Fallback to old report
+    } finally {
+        reportBtn.innerHTML = originalText;
+        reportBtn.disabled = false;
+    }
+};
+
+// New function to display AI report
+function displayAIReport(extraction) {
+    const reportContent = document.getElementById('report-content');
+    if (!reportContent) {
+        console.error('report-content element not found');
+        return;
+    }
+    
+    const metadata = extraction._metadata || {};
+    const html = `
+        <div class="extraction-report">
+            <div class="r-header">
+                <div class="r-logo">VITAL AI Analysis</div>
+                <div class="r-subtitle">Powered by Groq (${metadata.extraction_time_ms || '?'}ms)</div>
+            </div>
+            
+            <div class="r-section-title">Products Discussed</div>
+            <div class="r-products">
+                ${extraction.products?.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('') || 'None'}
+            </div>
+            
+            <div class="r-section-title">Objections Raised</div>
+            ${extraction.objections?.map(o => `
+                <div class="r-exchange">
+                    <div class="r-text">Type: ${o.type} - ${o.resolved ? '✓ Resolved' : '✗ Unresolved'}</div>
+                </div>
+            `).join('') || 'None'}
+            
+            <div class="r-section-title">Engagement Score</div>
+            <div class="r-text">${extraction.engagement_score}/5</div>
+            
+            <div class="r-section-title">Topics</div>
+            <div class="r-text">${extraction.topics?.join(', ') || 'None'}</div>
+            
+            <div class="r-section-title">Language</div>
+            <div class="r-text">${extraction.language}</div>
+            
+            <div class="r-section-title">Training Recommendations</div>
+            <ul>
+                ${extraction.recommendations?.map(r => `<li>${escHtml(r)}</li>`).join('') || 'None'}
+            </ul>
+        </div>
+    `;
+    
+    reportContent.innerHTML = html;
+    
+    // Show the overlay
+    const overlay = document.getElementById('report-overlay');
+    if (overlay) {
+        overlay.classList.add('open');
+    }
+}
+
+window.closeReport = function() {
+    const overlay = document.getElementById('report-overlay');
+    if (overlay) {
+        overlay.classList.remove('open');
+    }
+};
+
+window.closeReportOnBg = function(e) {
+    if (e.target === document.getElementById('report-overlay')) {
+        closeReport();
+    }
+};
+
+window.downloadReport = function() {
+    const content = document.getElementById('report-content');
+    if (!content) return;
+    
+    const win = window.open('', '_blank');
+    win.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>VITAL Report</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 40px; }
+                .r-header { border-bottom: 2px solid #c084fc; margin-bottom: 20px; }
+                .r-section-title { font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
+                .r-product-tag { display: inline-block; background: #f3e8ff; padding: 2px 8px; border-radius: 10px; margin: 2px; }
+            </style>
+        </head>
+        <body>
+            ${content.innerHTML}
+        </body>
+        </html>
+    `);
+    win.document.close();
+    win.print();
+  
 };
 
 // ── Voice ─────────────────────────────────────────────────────
 window.toggleMic = async function() {
-  if (!visitStarted) {
-    await window.startVisit(); // ensure audio enabled
-  }
+  if (!visitStarted) await window.startVisit();
   isRecording ? stopRecording() : startRecording();
 };
 
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream); audioChunks = [];
     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-    mediaRecorder.onstop = sendAudio;
-    mediaRecorder.start();
-    isRecording = true;
+    mediaRecorder.onstop = sendAudio; mediaRecorder.start(); isRecording = true;
     document.getElementById('mic-btn').classList.add('recording');
     document.getElementById('mic-label').textContent = 'Recording… click to stop';
     document.getElementById('waveform').classList.add('recording-active');
     setStatus('listening', 'Listening…');
-    if (window._avatarReady && window._head?.audioCtx?.state !== 'running') {
-      await window._head.audioCtx.resume();
-    }
-  } catch {
-    showError('Microphone access denied.');
-  }
+    if (window._avatarReady && window._head?.audioCtx?.state !== 'running') await window._head.audioCtx.resume();
+  } catch { showError('Microphone access denied.'); }
 }
 
 function stopRecording() {
   if (mediaRecorder && isRecording) {
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(t => t.stop());
-    isRecording = false;
+    mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); isRecording = false;
     document.getElementById('mic-btn').classList.remove('recording');
     document.getElementById('mic-label').textContent = 'Hold to speak';
     document.getElementById('waveform').classList.remove('recording-active');
@@ -3039,18 +4181,14 @@ function stopRecording() {
 
 async function sendAudio() {
   if (!audioChunks.length) return;
-  console.log("Sending audio...");
-  isLoading = true;
-  setSend(true);
-  addTyping();
+  isLoading = true; setSend(true); addTyping();
   const blob = new Blob(audioChunks, { type: 'audio/webm' });
   const form = new FormData();
   form.append('audio', blob, 'rec.webm');
   form.append('mode', MODE);
-
+  let transcript = null;
   try {
     const res = await fetch(`${API}/voice/ask/stream`, { method: 'POST', body: form });
-    console.log("Voice response status:", res.status);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const reader = res.body.getReader();
@@ -3060,32 +4198,27 @@ async function sendAudio() {
     let sources = [];
     let msgEl = null;
     let transcript = null;
+    setStatus('speaking', 'Responding…');
 
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      const lines = buffer.split('\n\n'); buffer = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let data;
-        try {
-          data = JSON.parse(line.slice(6));
-        } catch (e) {
-          console.warn("Failed to parse SSE data:", line, e);
-          continue;
-        }
+        let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
         if (data.type === 'transcript') {
           transcript = data.text;
           addUserMsg(`🎤 ${transcript}`, true);
+          conversationLog.push({
+            role: 'user',
+            text: transcript,
+            timestamp: new Date().toISOString()
+          });
           removeTyping();
           addTyping();
         } else if (data.type === 'token') {
-          if (!msgEl) {
-            removeTyping();
-            msgEl = addAIBubble(null);
-          }
+          if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           fullText += data.content;
           const textSpan = document.getElementById('streaming-text');
           if (textSpan) textSpan.textContent = fullText;
@@ -3094,101 +4227,123 @@ async function sendAudio() {
           sources = data.sources;
         } else if (data.type === 'error') {
           console.error("Backend error:", data.content);
+          showError(`Error: ${data.content}`);
+          removeTyping();
+          setStatus('', 'Ready');
+          isLoading = false;
+          setSend(false);
+          return;
         }
       }
     }
 
-    if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(fullText, sources, transcript);
+    // Log assistant response
+    if (fullText) {
+      conversationLog.push({
+        role: 'assistant',
+        text: fullText,
+        sources: sources,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (msgEl) {
+      finalizeBubble(fullText, sources);
+    }
+    
     if (fullText) {
       await window.speakWithAvatar(fullText);
     }
     setStatus('', 'Ready');
   } catch (err) {
     console.error("Voice processing error:", err);
-    removeTyping();
-    showError('Voice processing failed.');
-    setStatus('', 'Ready');
-  } finally {
-    isLoading = false;
-    setSend(false);
-  }
+    removeTyping(); showError('Voice processing failed.'); setStatus('', 'Ready');
+  } finally { isLoading = false; setSend(false); }
 }
 
-// ── Message UI Helpers (identical to main.js) ────────────────
+// ── Message UI ────────────────────────────────────────────────
 function hideEmpty() { document.getElementById('empty-state')?.remove(); }
 function addSystemMsg(text) {
-  const el = document.createElement('div');
-  el.className = 'system-msg';
+  const el = document.createElement('div'); el.className = 'system-msg';
   el.innerHTML = `<span>${esc(text)}</span>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  document.getElementById('messages').appendChild(el); scrollBottom();
 }
 function addUserMsg(text, isVoice) {
-  hideEmpty();
-  logUser(text, isVoice);
-  const el = document.createElement('div');
-  el.className = 'message user';
-  const msgId = 'msg-' + Date.now();
-  el.id = msgId;
+  hideEmpty(); logUser(text, isVoice);
+  const el = document.createElement('div'); el.className = 'message user';
+  const msgId = 'msg-' + Date.now(); el.id = msgId;
   el.innerHTML = `<div class="edit-wrap">
     <div class="bubble" data-text="${esc(text)}">${esc(text)}</div>
     <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>
   </div><div class="avatar-sm user">You</div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
-  return msgId;
+  document.getElementById('messages').appendChild(el); scrollBottom(); return msgId;
 }
 function addTyping() {
-  const el = document.createElement('div');
-  el.className = 'message ai';
-  el.id = 'typing-indicator';
+  const el = document.createElement('div'); el.className = 'message ai'; el.id = 'typing-indicator';
   el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  document.getElementById('messages').appendChild(el); scrollBottom();
 }
-function removeTyping() {
-  const t = document.getElementById('typing-indicator');
-  if (t) t.remove();
-}
+function removeTyping() { const t = document.getElementById('typing-indicator'); if (t) t.remove(); }
 function addAIBubble(transcriptText) {
   removeTyping();
-  const el = document.createElement('div');
-  el.className = 'message ai';
+  const el = document.createElement('div'); el.className = 'message ai';
   const tb = transcriptText ? `<div class="transcript-badge">Heard: "${esc(transcriptText)}"</div>` : '';
   el.innerHTML = `<div class="avatar-sm ai">V</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
-  return el;
+  document.getElementById('messages').appendChild(el); scrollBottom(); return el;
 }
-function finalizeBubble(fullText, sources, userQuestion) {   // ← ajouter userQuestion
-     logAI(fullText, sources);
-     const textEl = document.getElementById('streaming-text');
-     if (textEl) {
-       const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
-       textEl.outerHTML = html || '<p></p>';
-     }
-     const bubble = document.getElementById('streaming-bubble');
-     if (bubble) {
-       if (sources?.length) {
-         bubble.removeAttribute('id');
-         const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
-         bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
-       } else {
-         bubble.removeAttribute('id');
-       }
 
-       // ── Suggestions adaptives (sans lecture vocale) ──────────────────────
-       if (fullText && userQuestion) {
-         // Récupère la bulle finale (après removeAttribute('id'))
-         const finalBubble = bubble.id ? bubble : bubble;
-         fetchAndRenderSuggestions(userQuestion, fullText, finalBubble);
-       }
-     }
-     scrollBottom();
-   }
+// ── finalizeBubble ────────────────────────────────────────────
+function finalizeBubble(fullText, sources, userQuestion) {
+  logAI(fullText, sources);
+  const textEl = document.getElementById('streaming-text');
+  if (textEl) {
+    const html = fullText.split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    textEl.outerHTML = html || '<p></p>';
+  }
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble) {
+    if (sources?.length) {
+      bubble.removeAttribute('id');
+      const tags = sources.map(s => `<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance * 100)}%</span></span>`).join('');
+      bubble.insertAdjacentHTML('beforeend', `<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+    } else {
+      bubble.removeAttribute('id');
+    }
+    // Suggestions — seulement si une question utilisateur est fournie
+    if (fullText && userQuestion) {
+      const cleanAnswer = fullText
+        .replace(/questions?\s+compl[eé]mentaires?\s*:?[\s\S]*$/i, '')
+        .replace(/suggestions?\s*:?[\s\S]*$/i, '')
+        .trim();
+      fetchAndRenderSuggestions(userQuestion, cleanAnswer || fullText, bubble); // ← "bubble" et non "finalBubble"
+    }
+  }
+  scrollBottom();
+}
+function showToast(message) {
+  // Create toast element
+  const toast = document.createElement('div');
+  toast.className = 'toast-message';
+  toast.textContent = message;
+  toast.style.position = 'fixed';
+  toast.style.bottom = '20px';
+  toast.style.left = '50%';
+  toast.style.transform = 'translateX(-50%)';
+  toast.style.backgroundColor = '#333';
+  toast.style.color = '#fff';
+  toast.style.padding = '10px 20px';
+  toast.style.borderRadius = '8px';
+  toast.style.zIndex = '9999';
+  toast.style.fontSize = '14px';
+  document.body.appendChild(toast);
+  
+  // Remove after 3 seconds
+  setTimeout(() => {
+    toast.remove();
+  }, 3000);
+}
 
-// ── Edit & Resend (copied from main.js) ──────────────────────
+// ── Edit & Resend ─────────────────────────────────────────────
 window.startEdit = function(msgId, btn) {
   const msgEl = document.getElementById(msgId);
   const wrap = msgEl.querySelector('.edit-wrap');
@@ -3199,10 +4354,8 @@ window.startEdit = function(msgId, btn) {
       <button class="edit-save"   onclick="saveEdit('${msgId}')">Send</button>
     </div>`;
   const ta = document.getElementById(`edit-input-${msgId}`);
-  ta.style.height = 'auto';
-  ta.style.height = ta.scrollHeight + 'px';
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px';
+  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
   ta.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msgId); }
     if (e.key === 'Escape') cancelEdit(msgId, originalText);
@@ -3215,8 +4368,7 @@ window.cancelEdit = function(msgId, originalText) {
 };
 window.saveEdit = function(msgId) {
   const ta = document.getElementById(`edit-input-${msgId}`);
-  const newText = ta.value.trim();
-  if (!newText) return;
+  const newText = ta.value.trim(); if (!newText) return;
   const wrap = document.getElementById(msgId).querySelector('.edit-wrap');
   wrap.innerHTML = `<div class="bubble" data-text="${esc(newText)}">${esc(newText)}</div>
     <button class="edit-btn" onclick="startEdit('${msgId}',this)">edit</button>`;
@@ -3227,31 +4379,23 @@ window.saveEdit = function(msgId) {
 
 async function resendQuestion(userText) {
   if (!visitStarted) await window.startVisit();
-  isLoading = true;
-  setSend(true);
-  addTyping();
-  setStatus('thinking', 'Thinking…');
+  isLoading = true; setSend(true); addTyping(); setStatus('thinking', 'Thinking…');
   try {
     const res = await fetch(`${API}/chat/ask/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
     });
     if (!res.ok) throw new Error();
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+    const reader = res.body.getReader(); const decoder = new TextDecoder();
     let buffer = '', full = '', sources = [], msgEl = null;
     setStatus('speaking', 'Responding…');
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done } = await reader.read(); if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      const lines = buffer.split('\n\n'); buffer = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let c;
-        try { c = JSON.parse(line.slice(6)); } catch { continue; }
+        let c; try { c = JSON.parse(line.slice(6)); } catch { continue; }
         if (c.type === 'token') {
           if (!msgEl) { removeTyping(); msgEl = addAIBubble(null); }
           full += c.content;
@@ -3263,32 +4407,24 @@ async function resendQuestion(userText) {
     }
     if (!msgEl) msgEl = addAIBubble(null);
     finalizeBubble(full, sources, userText);
-    if (full) { await window.speakWithAvatar(full); }
+    if (full) await window.speakWithAvatar(full);
     setStatus('', 'Ready');
   } catch {
-    removeTyping();
-    showError('Cannot reach the API.');
-    setStatus('', 'Ready');
-  } finally {
-    isLoading = false;
-    setSend(false);
-  }
+    removeTyping(); showError('Cannot reach the API.'); setStatus('', 'Ready');
+  } finally { isLoading = false; setSend(false); }
 }
 
-// ── Log + Report (copied from main.js, adapted to commercial) ──
+// ── Log + Report ──────────────────────────────────────────────
 const conversationLog = [];
+window.conversationLog = conversationLog;
 function logUser(text, isVoice) {
   conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
   document.getElementById('report-btn').disabled = false;
+  document.getElementById('mindmap-btn')?.removeAttribute('disabled');
 }
 function logAI(text, sources) {
   conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() });
 }
-window.openReport = function() {
-  if (!conversationLog.length) return;
-  buildReportContent();
-  document.getElementById('report-overlay').classList.add('open');
-};
 window.closeReport = function() {
   document.getElementById('report-overlay').classList.remove('open');
 };
@@ -3303,32 +4439,25 @@ function buildReportContent() {
   const userCount = conversationLog.filter(e => e.role === 'user').length;
   const aiCount = conversationLog.filter(e => e.role === 'ai').length;
   const exchangesHtml = conversationLog.map(entry => {
-    if (entry.role === 'user') {
-      return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
-    } else {
-      const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
-      return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
-    }
+    if (entry.role === 'user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
+    const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
+    return `<div class="r-exchange ai-ex"><div class="r-role ai-role">Vita (Delegate)</div><div class="r-text">${escHtml(entry.text)}</div>${tags}</div>`;
   }).join('');
   const prodHtml = products.length ? `<div class="r-section-title">Products discussed</div><div class="r-products">${products.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('')}</div>` : '';
   document.getElementById('report-content').innerHTML = `
-    <div class="r-header">
-      <div class="r-logo">VITAL Commercial Visit</div>
-      <div class="r-subtitle">Session with Vita — Delegate</div>
-      <div class="r-meta">
-        <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
-        <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
-        <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
-      </div>
-    </div>
+    <div class="r-header"><div class="r-logo">VITAL Commercial Visit</div><div class="r-subtitle">Session with Vita — Delegate</div>
+    <div class="r-meta">
+      <div class="r-meta-item"><strong>Date</strong><span>${dateStr} at ${timeStr}</span></div>
+      <div class="r-meta-item"><strong>Exchanges</strong><span>${userCount} doctor · ${aiCount} Vita</span></div>
+      <div class="r-meta-item"><strong>Products discussed</strong><span>${products.length || 'None'}</span></div>
+    </div></div>
     ${prodHtml}
-    <div class="r-section-title">Full conversation</div>
-    ${exchangesHtml}
+    <div class="r-section-title">Full conversation</div>${exchangesHtml}
     <div class="r-footer"><span>Generated by VitalAgent · VITAL SA</span><span>${dateStr}</span></div>`;
 }
+
 window.downloadReport = function() {
-  const content = document.getElementById('report-content');
-  if (!content) return;
+  const content = document.getElementById('report-content'); if (!content) return;
   const now = new Date();
   const win = window.open('', '_blank', 'width=800,height=900');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>vital-commercial-${now.toISOString().slice(0,10)}.pdf</title>
@@ -3351,16 +4480,15 @@ window.downloadReport = function() {
     <script>window.onload=function(){window.print();setTimeout(()=>window.close(),1000)}<\/script></body></html>`);
   win.document.close();
 };
+
 function escHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 // ── Helpers ───────────────────────────────────────────────────
 function showError(msg) {
   removeTyping();
-  const el = document.createElement('div');
-  el.className = 'message ai';
+  const el = document.createElement('div'); el.className = 'message ai';
   el.innerHTML = `<div class="avatar-sm ai" style="background:#7f1d1d">!</div><div class="bubble" style="border-color:rgba(239,68,68,0.2);background:rgba(239,68,68,0.05)"><p style="color:#fca5a5">${esc(msg)}</p></div>`;
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  document.getElementById('messages').appendChild(el); scrollBottom();
 }
 window.handleKey = function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window.sendQuestion(); } };
 window.autoResize = function(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 100) + 'px'; };
@@ -3368,35 +4496,24 @@ function setSend(d) { document.getElementById('send-btn').disabled = d; }
 function scrollBottom() { const el = document.getElementById('messages'); el.scrollTop = el.scrollHeight; }
 function esc(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-// Start
-
-// ── Suggestions adaptives ─────────────────────────────────────────────────────
-//
-// Appelée APRÈS finalizeBubble(), une fois la réponse complète affichée.
-// Ne déclenche PAS la lecture vocale des suggestions.
-//
+// ── Suggestions adaptives (déclarées UNE SEULE FOIS) ─────────
 async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
-  if (!userQuestion || !aiAnswer) return;
+  if (!userQuestion || !aiAnswer || !bubbleEl) return;
 
-  // Déterminer mode et langue courants
-  const mode = (typeof trainingMode !== 'undefined' && trainingMode)
-    ? trainingMode
-    : (typeof MODE !== 'undefined' ? MODE : 'medical');
+  const mode = MODE;
 
-  // Détection de langue simple côté client (fallback — le backend redétectera)
   const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
   const lang = arabicRatio > 0.15 ? 'ar'
-    : /\b(the|is|are|what|how|does)\b/i.test(aiAnswer) ? 'en'
+    : /\b(the|is|are|what|how|does|give|tell)\b/i.test(aiAnswer) ? 'en'
     : 'fr';
 
-  // Créer le placeholder "chargement" dans la bulle
   const wrapId = 'suggest-wrap-' + Date.now();
   bubbleEl.insertAdjacentHTML('beforeend', `
-    <div class="suggestions-wrap${mode === 'vita_commercial' || mode === 'commercial' ? ' commercial' : ''}" id="${wrapId}">
+    <div class="suggestions-wrap commercial" id="${wrapId}">
       <div class="suggestions-label">Suggestions</div>
       <div class="suggestions-loading">
         <div class="mini-dots"><span></span><span></span><span></span></div>
-        <span>Génération des questions…</span>
+        <span style="font-size:11px;color:var(--text-dim)">Génération…</span>
       </div>
     </div>
   `);
@@ -3406,76 +4523,47 @@ async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
     const res = await fetch(`${API}/chat/suggestions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        question: userQuestion,
-        answer:   aiAnswer,
-        mode:     mode,
-        lang:     lang,
-        n:        3,
-      }),
+      body: JSON.stringify({ question: userQuestion, answer: aiAnswer, mode, lang, n: 3 }),
       signal: AbortSignal.timeout(15000),
     });
-
     const data = res.ok ? await res.json() : null;
     const suggestions = data?.suggestions || [];
-
     const wrapEl = document.getElementById(wrapId);
     if (!wrapEl) return;
-
-    if (suggestions.length === 0) {
-      wrapEl.remove();
-      return;
-    }
-
-    // Rendre les chips cliquables
+    if (!suggestions.length) { wrapEl.remove(); return; }
     const chipsHtml = suggestions
       .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
       .join('');
-
     wrapEl.innerHTML = `
       <div class="suggestions-label">Questions suggérées</div>
       <div class="suggestions-chips">${chipsHtml}</div>
     `;
     scrollBottom();
-
   } catch (err) {
-    console.warn('[suggestions] fetch failed:', err);
+    console.warn('[suggestions]', err);
     const wrapEl = document.getElementById(wrapId);
     if (wrapEl) wrapEl.remove();
   }
 }
 
-// ── Clic sur une suggestion → remplit l'input et envoie ──────────────────────
 window.applySuggestion = function(btn) {
-  const text = btn.textContent.trim();
-  if (!text) return;
-
-  // Remplir l'input
+  const text = btn.textContent.trim(); if (!text) return;
   const input = document.getElementById('question-input');
-  if (input) {
-    input.value = text;
-    autoResize(input);
-    input.focus();
-  }
-
-  // Désactiver toutes les chips de ce groupe pour éviter le double-clic
+  if (input) { input.value = text; autoResize(input); input.focus(); }
   const wrap = btn.closest('.suggestions-wrap');
   if (wrap) {
     wrap.querySelectorAll('.suggestion-chip').forEach(c => {
-      c.disabled = true;
-      c.style.opacity = '0.4';
-      c.style.cursor = 'default';
+      c.disabled = true; c.style.opacity = '0.4'; c.style.cursor = 'default';
     });
-    // Marquer la chip sélectionnée
     btn.style.opacity = '1';
-    btn.style.background = 'rgba(126,184,247,0.18)';
-    btn.style.borderColor = 'rgba(126,184,247,0.6)';
+    btn.style.background = 'rgba(192,132,252,0.18)';
+    btn.style.borderColor = 'rgba(192,132,252,0.6)';
   }
-
-  // Envoyer automatiquement
-  sendQuestion();
+  window.sendQuestion();
 };
-init();=== ./frontend/js/frontend_patch_suggestions.js ===
+
+init();
+=== ./frontend/js/frontend_patch_suggestions.js ===
 
 
 
@@ -3552,7 +4640,6 @@ init();=== ./frontend/js/frontend_patch_suggestions.js ===
    Laisser : finalizeBubble(fullText, []);   ← sans 3ème argument (undefined → pas de suggestions)
 */
 === ./frontend/js/main.js ===
-
 const API = 'http://localhost:8000';
 window._API = API;
 
@@ -3802,33 +4889,34 @@ function addAIBubble(transcriptText) {
   document.getElementById('messages').appendChild(el); scrollBottom(); return el;
 }
 
-// ★ finalizeBubble — VERSION AVEC SUGGESTIONS ──────────────────────────────
-function finalizeBubble(fullText, sources, userQuestion) {   // ← ajouter userQuestion
-     logAI(fullText, sources);
-     const textEl = document.getElementById('streaming-text');
-     if (textEl) {
-       const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
-       textEl.outerHTML = html || '<p></p>';
-     }
-     const bubble = document.getElementById('streaming-bubble');
-     if (bubble) {
-       if (sources?.length) {
-         bubble.removeAttribute('id');
-         const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
-         bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
-       } else {
-         bubble.removeAttribute('id');
-       }
-
-       // ── Suggestions adaptives (sans lecture vocale) ──────────────────────
-       if (fullText && userQuestion) {
-         // Récupère la bulle finale (après removeAttribute('id'))
-         const finalBubble = bubble.id ? bubble : bubble;
-         fetchAndRenderSuggestions(userQuestion, fullText, finalBubble);
-       }
-     }
-     scrollBottom();
-   }
+// ── finalizeBubble ────────────────────────────────────────────
+function finalizeBubble(fullText, sources, userQuestion) {
+  logAI(fullText, sources);
+  const textEl = document.getElementById('streaming-text');
+  if (textEl) {
+    const html = fullText.split('\n\n').filter(p=>p.trim()).map(p=>`<p>${esc(p).replace(/\n/g,'<br>')}</p>`).join('');
+    textEl.outerHTML = html || '<p></p>';
+  }
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble) {
+    if (sources?.length) {
+      bubble.removeAttribute('id');
+      const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
+      bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+    } else {
+      bubble.removeAttribute('id');
+    }
+    // Suggestions adaptives — seulement si une question utilisateur est fournie
+    if (fullText && userQuestion) {
+      const cleanAnswer = fullText
+        .replace(/questions?\s+compl[eé]mentaires?\s*:?[\s\S]*$/i, '')
+        .replace(/suggestions?\s*:?[\s\S]*$/i, '')
+        .trim();
+      fetchAndRenderSuggestions(userQuestion, cleanAnswer || fullText, bubble); // ← "bubble" et non "finalBubble"
+    }
+  }
+  scrollBottom();
+}
 
 // ── Send question ─────────────────────────────────────────────
 async function sendQuestion() {
@@ -3860,7 +4948,7 @@ async function sendQuestion() {
       }
     }
     if (!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full, sources, ragQuestion);   // ★ passer ragQuestion
+    finalizeBubble(full, sources, ragQuestion);
     if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch {
@@ -3899,12 +4987,12 @@ async function sendAudio() {
   isLoading=true; setSend(true); addTyping();
   const blob=new Blob(audioChunks,{type:'audio/webm'});
   const form=new FormData(); form.append('audio',blob,'rec.webm');
-  let voiceQuestion = '';
+  let voiceQuestion = ''; // ← variable correcte
   try {
     const res=await fetch(`${API}/voice/ask/stream`,{method:'POST',body:form});
     if (!res.ok) throw new Error();
     const reader=res.body.getReader(), dec=new TextDecoder();
-    let buf='', msgEl=null, full='', sources=[], detectedLang='fr';
+    let buf='', msgEl=null, full='', sources=[];
     setStatus('speaking','Responding…');
     while (true) {
       const {value,done}=await reader.read(); if(done) break;
@@ -3914,8 +5002,7 @@ async function sendAudio() {
         if (!line.startsWith('data: ')) continue;
         let c; try{c=JSON.parse(line.slice(6))}catch{continue}
         if (c.type==='transcript') {
-          detectedLang=c.language||'fr';
-          voiceQuestion = c.text;
+          voiceQuestion = c.text; // ← stocké ici
           const heard=c.text.toLowerCase().trim();
           if (!trainingMode) {
             const isMed=/médic|medical|clinique|docteur|pharmacien|scientif/.test(heard);
@@ -3931,7 +5018,7 @@ async function sendAudio() {
       }
     }
     if (!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full, sources, question);   // ★ passer voiceQuestion
+    finalizeBubble(full, sources, voiceQuestion); // ← "voiceQuestion" et non "question"
     if (full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
@@ -3997,7 +5084,7 @@ async function resendQuestion(userText) {
       }
     }
     if(!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full, sources, ragQuestion);   // ★ passer ragQuestion
+    finalizeBubble(full, sources, ragQuestion);
     if(full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
@@ -4008,9 +5095,11 @@ async function resendQuestion(userText) {
 
 // ── Log + Rapport ─────────────────────────────────────────────
 const conversationLog=[];
+window.conversationLog = conversationLog;
 function logUser(text,isVoice){
   conversationLog.push({role:'user',text,isVoice:!!isVoice,time:new Date()});
   document.getElementById('report-btn').disabled=false;
+  document.getElementById('mindmap-btn')?.removeAttribute('disabled');
 }
 function logAI(text,sources){ conversationLog.push({role:'ai',text,sources:sources||[],time:new Date()}); }
 
@@ -4101,22 +5190,17 @@ document.addEventListener('click', function(e) {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ★ SUGGESTIONS ADAPTIVES
-// ══════════════════════════════════════════════════════════════════════════════
-
+// ── Suggestions adaptives (déclarées UNE SEULE FOIS) ─────────
 async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
   if (!userQuestion || !aiAnswer || !bubbleEl) return;
 
   const mode = trainingMode || 'medical';
 
-  // Détection de langue légère côté client (le backend re-détecte aussi)
   const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
   const lang = arabicRatio > 0.15 ? 'ar'
     : /\b(the|is|are|what|how|does|give|tell)\b/i.test(aiAnswer) ? 'en'
     : 'fr';
 
-  // Placeholder de chargement
   const wrapId = 'suggest-wrap-' + Date.now();
   bubbleEl.insertAdjacentHTML('beforeend', `
     <div class="suggestions-wrap" id="${wrapId}">
@@ -4169,7 +5253,6 @@ window.applySuggestion = function(btn) {
   const input = document.getElementById('question-input');
   if (input) { input.value = text; autoResize(input); input.focus(); }
 
-  // Désactiver le groupe de chips
   const wrap = btn.closest('.suggestions-wrap');
   if (wrap) {
     wrap.querySelectorAll('.suggestion-chip').forEach(c => {
@@ -4183,113 +5266,153 @@ window.applySuggestion = function(btn) {
   sendQuestion();
 };
 
-// ── Suggestions adaptives ─────────────────────────────────────────────────────
-//
-// Appelée APRÈS finalizeBubble(), une fois la réponse complète affichée.
-// Ne déclenche PAS la lecture vocale des suggestions.
-//
-async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
-  if (!userQuestion || !aiAnswer) return;
+init();
+=== ./frontend/js/mindmap.js ===
+// frontend/js/mindmap.js
+// Fichier autonome — chargé après main.js ou commercial.js
 
-  // Déterminer mode et langue courants
-  const mode = (typeof trainingMode !== 'undefined' && trainingMode)
-    ? trainingMode
-    : (typeof MODE !== 'undefined' ? MODE : 'medical');
+const _MINDMAP_API = window._API || 'http://localhost:8000';
+let _mindmapSvgCache = null;
 
-  // Détection de langue simple côté client (fallback — le backend redétectera)
-  const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
-  const lang = arabicRatio > 0.15 ? 'ar'
-    : /\b(the|is|are|what|how|does)\b/i.test(aiAnswer) ? 'en'
+// ── Ouvrir la modale et lancer la génération ───────────────────────────────
+window.openMindmap = async function () {
+  if (!window.conversationLog || window.conversationLog.length < 2) {
+    _mindmapToast('Commence une conversation d\'abord !');
+    return;
+  }
+
+  const overlay = document.getElementById('mindmap-overlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+
+  // Reset UI
+  document.getElementById('mindmap-loading').style.display = 'flex';
+  document.getElementById('mindmap-svg-container').style.display = 'none';
+  document.getElementById('mindmap-error').style.display = 'none';
+  document.getElementById('mindmap-dl-btn').disabled = true;
+  _mindmapSvgCache = null;
+
+  // Détecter la langue depuis la conversation
+  const allText = window.conversationLog.map(m => m.text || '').join(' ');
+  const arRatio = (allText.match(/[\u0600-\u06FF]/g) || []).length / Math.max(allText.length, 1);
+  const lang = arRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how)\b/i.test(allText) ? 'en'
     : 'fr';
 
-  // Créer le placeholder "chargement" dans la bulle
-  const wrapId = 'suggest-wrap-' + Date.now();
-  bubbleEl.insertAdjacentHTML('beforeend', `
-    <div class="suggestions-wrap${mode === 'vita_commercial' || mode === 'commercial' ? ' commercial' : ''}" id="${wrapId}">
-      <div class="suggestions-label">Suggestions</div>
-      <div class="suggestions-loading">
-        <div class="mini-dots"><span></span><span></span><span></span></div>
-        <span>Génération des questions…</span>
-      </div>
-    </div>
-  `);
-  scrollBottom();
+  // Détecter le mode (main.js expose trainingMode, commercial.js expose MODE)
+  const mode = window.trainingMode || window.MODE || 'medical';
 
   try {
-    const res = await fetch(`${API}/chat/suggestions`, {
+    const res = await fetch(`${_MINDMAP_API}/analytics/mindmap`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        question: userQuestion,
-        answer:   aiAnswer,
-        mode:     mode,
-        lang:     lang,
-        n:        3,
+        conversation: window.conversationLog.map(m => ({
+          role: m.role === 'ai' ? 'assistant' : m.role,
+          text: m.text || m.content || '',
+        })),
+        mode,
+        lang,
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
 
-    const data = res.ok ? await res.json() : null;
-    const suggestions = data?.suggestions || [];
-
-    const wrapEl = document.getElementById(wrapId);
-    if (!wrapEl) return;
-
-    if (suggestions.length === 0) {
-      wrapEl.remove();
-      return;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Erreur HTTP ${res.status}`);
     }
 
-    // Rendre les chips cliquables
-    const chipsHtml = suggestions
-      .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
-      .join('');
+    const data = await res.json();
+    if (!data.svg) throw new Error('Aucun SVG reçu du serveur');
 
-    wrapEl.innerHTML = `
-      <div class="suggestions-label">Questions suggérées</div>
-      <div class="suggestions-chips">${chipsHtml}</div>
-    `;
-    scrollBottom();
+    _mindmapSvgCache = data.svg;
+
+    // Injecter le SVG
+    const container = document.getElementById('mindmap-svg-container');
+    container.innerHTML = data.svg;
+    const svgEl = container.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.width  = '100%';
+      svgEl.style.height = '100%';
+      svgEl.style.maxHeight = '520px';
+      svgEl.style.borderRadius = '10px';
+    }
+
+    // Mettre à jour le badge de topic
+    const center = data.concepts?.center || 'Session';
+    const subtitle = document.getElementById('mindmap-subtitle');
+    if (subtitle) subtitle.textContent = `Sujet : ${center}`;
+
+    // Afficher
+    document.getElementById('mindmap-loading').style.display = 'none';
+    container.style.display = 'flex';
+    document.getElementById('mindmap-dl-btn').disabled = false;
 
   } catch (err) {
-    console.warn('[suggestions] fetch failed:', err);
-    const wrapEl = document.getElementById(wrapId);
-    if (wrapEl) wrapEl.remove();
+    console.error('[mindmap]', err);
+    document.getElementById('mindmap-loading').style.display = 'none';
+    const errEl = document.getElementById('mindmap-error');
+    errEl.style.display = 'flex';
+    const detail = document.getElementById('mindmap-error-detail');
+    if (detail) detail.textContent = err.message || 'Erreur inconnue';
   }
-}
-
-// ── Clic sur une suggestion → remplit l'input et envoie ──────────────────────
-window.applySuggestion = function(btn) {
-  const text = btn.textContent.trim();
-  if (!text) return;
-
-  // Remplir l'input
-  const input = document.getElementById('question-input');
-  if (input) {
-    input.value = text;
-    autoResize(input);
-    input.focus();
-  }
-
-  // Désactiver toutes les chips de ce groupe pour éviter le double-clic
-  const wrap = btn.closest('.suggestions-wrap');
-  if (wrap) {
-    wrap.querySelectorAll('.suggestion-chip').forEach(c => {
-      c.disabled = true;
-      c.style.opacity = '0.4';
-      c.style.cursor = 'default';
-    });
-    // Marquer la chip sélectionnée
-    btn.style.opacity = '1';
-    btn.style.background = 'rgba(126,184,247,0.18)';
-    btn.style.borderColor = 'rgba(126,184,247,0.6)';
-  }
-
-  // Envoyer automatiquement
-  sendQuestion();
 };
 
-init();
+// ── Fermer ─────────────────────────────────────────────────────────────────
+window.closeMindmap = function () {
+  document.getElementById('mindmap-overlay')?.classList.remove('open');
+};
+
+window.closeMindmapOnBg = function (e) {
+  if (e.target === document.getElementById('mindmap-overlay')) {
+    window.closeMindmap();
+  }
+};
+
+// ── Télécharger le SVG ─────────────────────────────────────────────────────
+window.downloadMindmapSVG = function () {
+  if (!_mindmapSvgCache) return;
+  const blob = new Blob([_mindmapSvgCache], { type: 'image/svg+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `vitalagent-mindmap-${new Date().toISOString().slice(0, 10)}.svg`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ── Activer le bouton dès qu'une conversation démarre ─────────────────────
+// On patche logUser qui est définie dans main.js / commercial.js
+const _origLogUser = window.logUser;  // peut être undefined si logUser n'est pas global
+// Alternative : on observe conversationLog via un MutationObserver sur le DOM
+// Plus simple : on surveille le bouton report — quand il s'active, on active mindmap aussi
+const _reportBtn  = document.getElementById('report-btn');
+const _mindmapBtn = document.getElementById('mindmap-btn');
+
+if (_reportBtn && _mindmapBtn) {
+  // Polling léger : dès que report-btn est enabled, mindmap-btn l'est aussi
+  const _checkReportBtn = setInterval(() => {
+    if (!_reportBtn.disabled) {
+      _mindmapBtn.disabled = false;
+      clearInterval(_checkReportBtn);
+    }
+  }, 500);
+}
+
+// ── Toast interne (fallback si showToast pas dispo) ───────────────────────
+function _mindmapToast(msg) {
+  if (typeof showToast === 'function') { showToast(msg); return; }
+  const t = document.createElement('div');
+  t.textContent = msg;
+  Object.assign(t.style, {
+    position:'fixed', bottom:'24px', left:'50%', transform:'translateX(-50%)',
+    background:'#1e2d4a', color:'#e8eaf0', padding:'10px 20px',
+    borderRadius:'10px', fontSize:'13px', zIndex:'9999',
+    border:'1px solid rgba(126,184,247,0.3)', fontFamily:'system-ui',
+  });
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
 === ./frontend/package-lock.json ===
 {
   "name": "frontend",

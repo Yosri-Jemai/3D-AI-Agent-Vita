@@ -99,3 +99,7 @@ def product_detail(name: str):
         return {k: (str(v) if v is not None else "") for k, v in row.items()}
     except Exception as e:
         return {"name": name, "description": "", "error": str(e)}
+
+
+from backend.api.routes_mindmap import router as mindmap_router
+app.include_router(mindmap_router, prefix="/analytics", tags=["Analytics"])
