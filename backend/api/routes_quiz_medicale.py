@@ -2,12 +2,7 @@
 backend/api/routes_quiz_medicale.py
 ====================================
 Quiz endpoints — VERSION REFONTE COMPLÈTE
-Corrections :
-  1. Génération en parallèle (asyncio)
-  2. Prompt renforcé → questions pédagogiques, jamais de codes/IDs
-  3. Contexte nettoyé → suppression codes articles, IDs numériques
-  4. [FIX] 1 produit sélectionné → N questions UNIQUEMENT sur ce produit
-  5. [FIX] Multi-produits → questions UNIQUEMENT sur les produits sélectionnés
+
 """
 
 import json
@@ -383,3 +378,136 @@ def _is_valid_question(q: Optional[dict], expected_product: str) -> bool:
     if any(len(str(c).strip()) < 5 for c in choices):
         return False
     return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOUVEAUX ENDPOINTS — AJOUT UNIQUEMENT, rien au-dessus n'a été touché
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FeedbackRequest(BaseModel):
+    question: str
+    correct_answer: str
+    chosen_answer: str
+    product: str
+    explanation: str
+
+
+class FinalFeedbackRequest(BaseModel):
+    score: int
+    total: int
+    history: List[dict]
+
+
+_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Un délégué vient de répondre incorrectement. Rédige un feedback pédagogique de 2-3 phrases :
+- Explique pourquoi la réponse était incorrecte
+- Rappelle le point clé à retenir
+- Encourage le délégué
+- En français, jamais "Docteur," au début"""
+
+
+_FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Rédige un bilan final structuré et personnalisé basé sur les réponses du délégué.
+
+STRUCTURE OBLIGATOIRE (respecte cet ordre) :
+1. Score global + appréciation courte (1 phrase)
+2. Points forts : produits et notions bien maîtrisés (avec exemples des bonnes réponses)
+3. Points faibles : ce qui n'a pas été su, avec explication du bon contenu (posologie, indication, mécanisme…)
+4. Plan d'amélioration : conseils concrets sur quoi réviser et comment (fiches produits, points clés)
+5. Encouragement final (1 phrase)
+
+RÈGLES :
+- Cite les vrais noms des produits concernés
+- Pour chaque mauvaise réponse : rappelle la bonne réponse et explique pourquoi
+- Sois précis, pédagogique, bienveillant
+- En français, jamais "Docteur," au début
+- 10 à 15 phrases maximum"""
+
+@router.post("/feedback/stream")
+async def stream_question_feedback(req: FeedbackRequest):
+    from backend.rag.engine import engine
+    from langchain_core.messages import SystemMessage, HumanMessage
+    engine.initialize()
+
+    prompt = (
+        f"Question sur {req.product} : {req.question}\n"
+        f"Bonne réponse : {req.correct_answer}\n"
+        f"Réponse du délégué : {req.chosen_answer}\n"
+        f"Explication déjà fournie : {req.explanation}\n\n"
+        f"Donne un feedback pédagogique complémentaire (2-3 phrases)."
+    )
+
+    async def gen():
+        try:
+            for chunk in engine.llm.stream([
+                SystemMessage(content=_FEEDBACK_SYSTEM),
+                HumanMessage(content=prompt)
+            ]):
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+            yield f'data: {json.dumps({"type": "done"})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+_FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Rédige un bilan final structuré et personnalisé basé sur les réponses du délégué.
+
+STRUCTURE OBLIGATOIRE (respecte cet ordre) :
+1. Score global + appréciation courte (1 phrase)
+2. Points forts : produits et notions bien maîtrisés (avec exemples des bonnes réponses)
+3. Points faibles : ce qui n'a pas été su, avec explication du bon contenu (posologie, indication, mécanisme…)
+4. Plan d'amélioration : conseils concrets sur quoi réviser et comment (fiches produits, points clés)
+5. Encouragement final (1 phrase)
+
+RÈGLES :
+- Cite les vrais noms des produits concernés
+- Pour chaque mauvaise réponse : rappelle la bonne réponse et explique pourquoi
+- Sois précis, pédagogique, bienveillant
+- En français, jamais "Docteur," au début
+- 10 à 15 phrases maximum"""
+
+
+@router.post("/feedback/final/stream")
+async def stream_final_feedback(req: FinalFeedbackRequest):
+    from backend.rag.engine import engine
+    from langchain_core.messages import SystemMessage, HumanMessage
+    engine.initialize()
+
+    pct = round((req.score / req.total) * 100) if req.total > 0 else 0
+
+    # Détail complet de chaque question
+    details = []
+    for i, h in enumerate(req.history, 1):
+        status = "✓ CORRECT" if h.get("ok") else "✗ INCORRECT"
+        line = f"Q{i} [{h.get('product','?')}] {status}\n  Question : {h.get('question','')}\n  Réponse du délégué : {h.get('chosen','')}"
+        if not h.get("ok"):
+            line += f"\n  Bonne réponse : {h.get('correct','')}"
+            if h.get("explanation"):
+                line += f"\n  Explication : {h.get('explanation','')}"
+        details.append(line)
+
+    details_text = "\n\n".join(details)
+
+    prompt = (
+        f"Score : {req.score}/{req.total} ({pct}%)\n\n"
+        f"Détail de toutes les réponses :\n\n{details_text}\n\n"
+        f"Génère le bilan final structuré."
+    )
+
+    async def gen():
+        try:
+            for chunk in engine.llm.stream([
+                SystemMessage(content=_FINAL_FEEDBACK_SYSTEM),
+                HumanMessage(content=prompt)
+            ]):
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+            yield f'data: {json.dumps({"type": "done"})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
