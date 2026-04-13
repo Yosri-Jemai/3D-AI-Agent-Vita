@@ -1,4 +1,3 @@
-
 const API = 'http://localhost:8000';
 window._API = API;
 
@@ -11,13 +10,11 @@ let trainingMode = null;
 async function init() {
   setStatus('loading', 'Loading avatar…');
 
-  // Attendre que initAvatar soit disponible (module chargé)
   await new Promise(resolve => {
     const t = setInterval(() => { if (window.initAvatar) { clearInterval(t); resolve(); } }, 30);
     setTimeout(() => { clearInterval(t); resolve(); }, 5000);
   });
 
-  // Lancer avatar + stats en parallèle
   const avatarP = window.initAvatar();
   try {
     const res = await fetch(`${API}/chat/stats`, { signal: AbortSignal.timeout(4000) });
@@ -57,7 +54,7 @@ async function streamModeIntro(mode) {
       }
     }
     if (!msgEl) msgEl = addAIBubble(null);
-    finalizeBubble(full, []);
+    finalizeBubble(full, []);   // greeting : pas de suggestions
     if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch { document.getElementById('typing-indicator')?.remove(); setStatus('','Ready'); }
@@ -249,7 +246,9 @@ function addAIBubble(transcriptText) {
   el.innerHTML=`<div class="avatar-sm ai">L</div><div class="bubble" id="streaming-bubble">${tb}<span id="streaming-text"></span></div>`;
   document.getElementById('messages').appendChild(el); scrollBottom(); return el;
 }
-function finalizeBubble(fullText, sources) {
+
+// ── finalizeBubble ────────────────────────────────────────────
+function finalizeBubble(fullText, sources, userQuestion) {
   logAI(fullText, sources);
   const textEl = document.getElementById('streaming-text');
   if (textEl) {
@@ -257,10 +256,22 @@ function finalizeBubble(fullText, sources) {
     textEl.outerHTML = html || '<p></p>';
   }
   const bubble = document.getElementById('streaming-bubble');
-  if (bubble && sources?.length) {
-    bubble.removeAttribute('id');
-    const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
-    bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+  if (bubble) {
+    if (sources?.length) {
+      bubble.removeAttribute('id');
+      const tags = sources.map(s=>`<span class="source-tag">${esc(s.name)}<span class="rel">${Math.round(s.relevance*100)}%</span></span>`).join('');
+      bubble.insertAdjacentHTML('beforeend',`<div class="sources"><div class="sources-label">Sources</div>${tags}</div>`);
+    } else {
+      bubble.removeAttribute('id');
+    }
+    // Suggestions adaptives — seulement si une question utilisateur est fournie
+    if (fullText && userQuestion) {
+      const cleanAnswer = fullText
+        .replace(/questions?\s+compl[eé]mentaires?\s*:?[\s\S]*$/i, '')
+        .replace(/suggestions?\s*:?[\s\S]*$/i, '')
+        .trim();
+      fetchAndRenderSuggestions(userQuestion, cleanAnswer || fullText, bubble); // ← "bubble" et non "finalBubble"
+    }
   }
   scrollBottom();
 }
@@ -295,7 +306,7 @@ async function sendQuestion() {
       }
     }
     if (!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full, sources);
+    finalizeBubble(full, sources, ragQuestion);
     if (full) { setStatus('speaking','Speaking…'); await window.speakWithAvatar(full); }
     setStatus('','Ready');
   } catch {
@@ -334,11 +345,12 @@ async function sendAudio() {
   isLoading=true; setSend(true); addTyping();
   const blob=new Blob(audioChunks,{type:'audio/webm'});
   const form=new FormData(); form.append('audio',blob,'rec.webm');
+  let voiceQuestion = ''; // ← variable correcte
   try {
     const res=await fetch(`${API}/voice/ask/stream`,{method:'POST',body:form});
     if (!res.ok) throw new Error();
     const reader=res.body.getReader(), dec=new TextDecoder();
-    let buf='', msgEl=null, full='', sources=[], detectedLang='fr';
+    let buf='', msgEl=null, full='', sources=[];
     setStatus('speaking','Responding…');
     while (true) {
       const {value,done}=await reader.read(); if(done) break;
@@ -348,7 +360,7 @@ async function sendAudio() {
         if (!line.startsWith('data: ')) continue;
         let c; try{c=JSON.parse(line.slice(6))}catch{continue}
         if (c.type==='transcript') {
-          detectedLang=c.language||'fr';
+          voiceQuestion = c.text; // ← stocké ici
           const heard=c.text.toLowerCase().trim();
           if (!trainingMode) {
             const isMed=/médic|medical|clinique|docteur|pharmacien|scientif/.test(heard);
@@ -364,7 +376,7 @@ async function sendAudio() {
       }
     }
     if (!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full,sources);
+    finalizeBubble(full, sources, voiceQuestion); // ← "voiceQuestion" et non "question"
     if (full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
@@ -430,7 +442,7 @@ async function resendQuestion(userText) {
       }
     }
     if(!msgEl) msgEl=addAIBubble(null);
-    finalizeBubble(full,sources);
+    finalizeBubble(full, sources, ragQuestion);
     if(full){setStatus('speaking','Speaking…');await window.speakWithAvatar(full);}
     setStatus('','Ready');
   } catch {
@@ -441,9 +453,11 @@ async function resendQuestion(userText) {
 
 // ── Log + Rapport ─────────────────────────────────────────────
 const conversationLog=[];
+window.conversationLog = conversationLog;
 function logUser(text,isVoice){
   conversationLog.push({role:'user',text,isVoice:!!isVoice,time:new Date()});
   document.getElementById('report-btn').disabled=false;
+  document.getElementById('mindmap-btn')?.removeAttribute('disabled');
 }
 function logAI(text,sources){ conversationLog.push({role:'ai',text,sources:sources||[],time:new Date()}); }
 
@@ -519,8 +533,7 @@ function setSend(d){document.getElementById('send-btn').disabled=d;}
 function scrollBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
 function esc(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-
-
+// ── Test menu ─────────────────────────────────────────────────
 function toggleTestMenu() {
   const menu = document.getElementById('test-menu');
   const btn  = document.getElementById('test-btn');
@@ -534,4 +547,81 @@ document.addEventListener('click', function(e) {
     document.getElementById('test-btn')?.classList.remove('open');
   }
 });
+
+// ── Suggestions adaptives (déclarées UNE SEULE FOIS) ─────────
+async function fetchAndRenderSuggestions(userQuestion, aiAnswer, bubbleEl) {
+  if (!userQuestion || !aiAnswer || !bubbleEl) return;
+
+  const mode = trainingMode || 'medical';
+
+  const arabicRatio = (aiAnswer.match(/[\u0600-\u06FF]/g) || []).length / Math.max(aiAnswer.length, 1);
+  const lang = arabicRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how|does|give|tell)\b/i.test(aiAnswer) ? 'en'
+    : 'fr';
+
+  const wrapId = 'suggest-wrap-' + Date.now();
+  bubbleEl.insertAdjacentHTML('beforeend', `
+    <div class="suggestions-wrap" id="${wrapId}">
+      <div class="suggestions-label">Suggestions</div>
+      <div class="suggestions-loading">
+        <div class="mini-dots"><span></span><span></span><span></span></div>
+        <span style="font-size:11px;color:var(--text-dim)">Génération…</span>
+      </div>
+    </div>
+  `);
+  scrollBottom();
+
+  try {
+    const res = await fetch(`${API}/chat/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userQuestion, answer: aiAnswer, mode, lang, n: 3 }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const data = res.ok ? await res.json() : null;
+    const suggestions = data?.suggestions || [];
+
+    const wrapEl = document.getElementById(wrapId);
+    if (!wrapEl) return;
+
+    if (!suggestions.length) { wrapEl.remove(); return; }
+
+    const chipsHtml = suggestions
+      .map(s => `<button class="suggestion-chip" onclick="applySuggestion(this)">${esc(s)}</button>`)
+      .join('');
+
+    wrapEl.innerHTML = `
+      <div class="suggestions-label">Questions suggérées</div>
+      <div class="suggestions-chips">${chipsHtml}</div>
+    `;
+    scrollBottom();
+
+  } catch (err) {
+    console.warn('[suggestions]', err);
+    const wrapEl = document.getElementById(wrapId);
+    if (wrapEl) wrapEl.remove();
+  }
+}
+
+window.applySuggestion = function(btn) {
+  const text = btn.textContent.trim();
+  if (!text) return;
+
+  const input = document.getElementById('question-input');
+  if (input) { input.value = text; autoResize(input); input.focus(); }
+
+  const wrap = btn.closest('.suggestions-wrap');
+  if (wrap) {
+    wrap.querySelectorAll('.suggestion-chip').forEach(c => {
+      c.disabled = true; c.style.opacity = '0.4'; c.style.cursor = 'default';
+    });
+    btn.style.opacity = '1';
+    btn.style.background = 'rgba(126,184,247,0.18)';
+    btn.style.borderColor = 'rgba(126,184,247,0.6)';
+  }
+
+  sendQuestion();
+};
+
 init();

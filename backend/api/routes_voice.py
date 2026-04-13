@@ -90,10 +90,31 @@ async def voice_ask_stream(
         raise HTTPException(status_code=400, detail="Empty audio file")
 
     stt_result = transcribe_audio_file(audio_bytes, language=language)
-    question   = stt_result["text"]
+    question = stt_result["text"]
 
-    if not question.strip():
-        raise HTTPException(status_code=400, detail="Could not transcribe audio")
+    # CLEAN THE TRANSCRIBED TEXT
+    import re
+    # Remove all non-printable characters
+    question = ''.join(char for char in question if char.isprintable() or char == ' ')
+    # Replace multiple spaces with single space
+    question = re.sub(r'\s+', ' ', question)
+    # Strip leading/trailing spaces
+    question = question.strip()
+    
+    # Debug: print to console to see what's being sent
+    print(f"[VOICE] Raw transcription: '{stt_result['text']}'")
+    print(f"[VOICE] Cleaned question: '{question}'")
+    print(f"[VOICE] Question length: {len(question)}")
+
+    if not question or len(question) < 3:
+        async def error_generator():
+            error_message = "Je n'ai pas bien compris. Pouvez-vous répéter plus clairement?"
+            transcript_data = json.dumps({'type': 'transcript', 'text': question if question else '...', 'language': stt_result['language']})
+            token_data = json.dumps({'type': 'token', 'content': error_message})
+            yield f"data: {transcript_data}\n\n"
+            yield f"data: {token_data}\n\n"
+            yield "data: {\"type\": \"done\"}\n\n"
+        return StreamingResponse(error_generator(), media_type="text/event-stream")
 
     def event_generator():
         # Send transcription first so UI can show what was heard
@@ -103,7 +124,12 @@ async def voice_ask_stream(
             for chunk in engine.stream_ask(question, n_results=n_results, mode=mode):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+            print(f"[VOICE] Error in stream_ask: {e}")
+            error_response = {
+                "type": "token",
+                "content": "Je n'ai pas bien compris. Pouvez-vous reformuler?"
+            }
+            yield f"data: {json.dumps(error_response)}\n\n"
         finally:
             yield "data: {\"type\": \"done\"}\n\n"
 

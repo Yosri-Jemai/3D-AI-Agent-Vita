@@ -352,6 +352,45 @@ class RAGEngine:
 
         import re
 
+        question_lower = question.lower()
+        hits = []
+        seen_ids = set()
+        
+        # ========== EXACT PRODUCT NAME DETECTION ==========
+        # Get ALL unique product names first
+        all_metas = self.collection.get(include=["metadatas"])
+        product_to_id = {}
+        for meta in all_metas["metadatas"]:
+            name = meta.get("product_name", "")
+            if name and name not in product_to_id:
+                product_to_id[name.lower()] = (meta.get("source_id"), meta.get("source_table"))
+        
+        # Check if any product name is IN the question
+        for prod_name_lower, (source_id, source_table) in product_to_id.items():
+            if prod_name_lower in question_lower:
+                # Get ALL chunks for this product - FIXED where clause
+                product_docs = self.collection.get(
+                    where={
+                        "$and": [
+                            {"source_id": source_id},
+                            {"source_table": source_table}
+                        ]
+                    },
+                    include=["documents", "metadatas"]
+                )
+                if product_docs["documents"]:
+                    # Combine all chunks into one document
+                    full_text = "\n\n".join(product_docs["documents"])
+                    hits.append({
+                        "text": full_text,
+                        "product_name": product_docs["metadatas"][0].get("product_name", "Unknown"),
+                        "source_table": source_table,
+                        "relevance": 1.0,  # Perfect match
+                    })
+                    seen_ids.add(source_id)
+                    print(f"✅ EXACT MATCH FOUND: {product_docs['metadatas'][0].get('product_name')}")
+        # ========== END EXACT MATCH ==========
+
         question_vector = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=[question_vector],
@@ -359,27 +398,30 @@ class RAGEngine:
             include=["documents", "metadatas", "distances"],
         )
 
-        hits = []
-        seen_ids = set()
+        #hits = []
+        #seen_ids = set()
 
         for doc, meta, dist in zip(
             results["documents"][0],
             results["metadatas"][0],
             results["distances"][0],
         ):
+            source_id = meta.get("source_id", "")
+            if source_id in seen_ids:
+                continue
             hits.append({
                 "text": doc,
                 "product_name": meta.get("product_name", "Unknown"),
                 "source_table": meta.get("source_table", ""),
                 "relevance": round(1 - dist, 3),
             })
-            seen_ids.add(meta.get("source_id", ""))
+            seen_ids.add(source_id)
 
         catalogue_keywords = [
             "gamme", "gammes", "catalogue", "catalogues",
             "liste", "laboratoire", "portfolio", "offre",
         ]
-        question_lower = question.lower()
+        #question_lower = question.lower()
         is_catalogue_query = any(kw in question_lower for kw in catalogue_keywords)
 
         if is_catalogue_query:
@@ -399,7 +441,7 @@ class RAGEngine:
                 })
                 seen_ids.add(source_id)
 
-        words = [w for w in re.findall(r"\w+", question) if len(w) > 3]
+        words = re.findall(r"\w+", question)
         if words:
             all_docs = self.collection.get(include=["documents", "metadatas"])
             for doc, meta in zip(all_docs["documents"], all_docs["metadatas"]):
@@ -548,24 +590,47 @@ Réponse :"""
     # ── Ask streaming ─────────────────────────────────────────────────────────
     def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
         self.initialize()
+        
+        import re
+        question = re.sub(r'\s+', ' ', question).strip()
+        question = ''.join(char for char in question if char.isprintable() or char == ' ')
+        
+        if not question or len(question) < 3:
+            yield {"type": "token", "content": "Pouvez-vous reformuler votre question s'il vous plaît ?"}
+            yield {"type": "sources", "sources": []}
+            return
 
-        lang = detect_language(question)          # ← NEW: detect language
-
-        hits = self.search(question, n_results=n_results)
+        lang = detect_language(question)
+        
+        # --- Wrap search in try-except ---
+        try:
+            hits = self.search(question, n_results=n_results)
+        except Exception as e:
+            print(f"[RAG] Search error: {e}")
+            yield {"type": "token", "content": "Désolé, je n'ai pas pu traiter votre demande. Veuillez réessayer."}
+            yield {"type": "sources", "sources": []}
+            return
 
         if not hits:
-            yield {"type": "token", "content": "Je n'ai pas trouvé d'information pertinente."}
+            yield {"type": "token", "content": "Je n'ai pas trouvé d'information sur ce sujet. Pouvez-vous me poser une autre question ?"}
             yield {"type": "sources", "sources": []}
             return
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)  # ← NEW: lang=lang
+        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)
 
+        # --- Collect full response and ensure it's not empty ---
+        full_response = ""
         for chunk in self.llm.stream([HumanMessage(content=prompt)]):
-            token = chunk.content
+            token = chunk.content or ""
+            full_response += token
             if token:
                 yield {"type": "token", "content": token}
+        
+        # If LLM returned nothing, send a fallback
+        if not full_response.strip():
+            yield {"type": "token", "content": "Je n'ai pas pu générer une réponse. Pouvez-vous reformuler ?"}
 
         seen, sources = set(), []
         for hit in hits:

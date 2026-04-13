@@ -1,0 +1,63 @@
+package com.unity6.vita.controller;
+
+import com.unity6.vita.dto.EndSessionRequestDTO;
+import com.unity6.vita.dto.ExtractionResultDTO;
+import com.unity6.vita.dto.SessionDTO;
+import com.unity6.vita.service.ProfileService;
+import com.unity6.vita.service.SessionService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/sessions")
+@RequiredArgsConstructor
+@CrossOrigin(origins = "http://localhost:3000")
+public class SessionController {
+
+    private final SessionService sessionService;
+    private final ProfileService profileService;
+
+    // Start a new session
+    @PostMapping("/start")
+    public ResponseEntity<SessionDTO> startSession(@RequestBody Map<String, String> request) {
+//        Long profileId = profileService.getCurrentProfile().getId();
+        Long profileId = 1L;
+        String mode = request.get("mode");
+
+        SessionDTO session = sessionService.startSession(profileId, mode);
+        return ResponseEntity.status(HttpStatus.CREATED).body(session);
+    }
+
+    // End session and generate report
+    @PostMapping("/end")
+    public ResponseEntity<ExtractionResultDTO> endSession(@RequestBody EndSessionRequestDTO request) {
+        request.setProfileId(1L);
+        ExtractionResultDTO result = sessionService.endSessionAndExtract(request);
+        return ResponseEntity.ok(result);
+    }
+
+    // Get session history for current user
+    @GetMapping("/history")
+    public ResponseEntity<List<SessionDTO>> getSessionHistory() {
+//        Long profileId = profileService.getCurrentProfile().getId();
+        Long profileId = 1L;
+        List<SessionDTO> history = sessionService.getSessionHistory(profileId);
+        return ResponseEntity.ok(history);
+    }
+
+    // Get extraction for a specific session
+    @GetMapping("/{sessionId}/extraction")
+    public ResponseEntity<ExtractionResultDTO> getExtraction(@PathVariable Long sessionId) {
+        ExtractionResultDTO extraction = sessionService.getExtractionBySession(sessionId);
+        if (extraction == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(extraction);
+    }
+}
