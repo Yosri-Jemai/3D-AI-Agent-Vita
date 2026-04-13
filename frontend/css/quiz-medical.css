@@ -474,21 +474,30 @@ html, body {
 .explanation-text     { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 
 /* Action row */
-.action-row { display: flex; justify-content: flex-end; }
+.action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
 .next-btn {
-  display: flex; align-items: center; gap: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 24px;
   background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 10px;
-  font-size: 14px; font-weight: 600;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
+  margin-left: auto;
   transition: background .15s, transform .1s;
 }
 .next-btn:hover  { background: var(--accent-dark); }
 .next-btn:active { transform: scale(.98); }
-
 /* Loading skeleton */
 .q-loading { display: flex; flex-direction: column; gap: 12px; }
 .skeleton-line {
@@ -1115,3 +1124,32 @@ html, body {
 }
 .certificate-download-btn:hover  { background: #d97706; }
 .certificate-download-btn:active { transform: scale(.97); }
+
+
+
+/* ── Bouton précédent ────────────────────────────────────────────────────── */
+.action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.prev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 18px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.prev-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--accent);
+}

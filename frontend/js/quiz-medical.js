@@ -370,7 +370,6 @@ function updateLoadBar(loaded, total) {
 function loadQuestion(idx) {
   if (idx >= state.questions.length) return;
 
-  // Stoppe toute animation en cours sur l'ancienne question
   TypingEngine.reset();
 
   const q = state.questions[idx];
@@ -378,11 +377,10 @@ function loadQuestion(idx) {
   state.answered = false;
   updateHeader();
 
-  $("q-number").textContent        = `Q${idx + 1}`;
-  $("q-topic").textContent         = q.product || "Formation VITAL SA";
-  $("q-difficulty-badge").textContent =
-    state.difficulty.charAt(0).toUpperCase() + state.difficulty.slice(1);
-  $("question-text").textContent   = q.question;
+  $("q-number").textContent           = `Q${idx + 1}`;
+  $("q-topic").textContent            = q.product || "Formation VITAL SA";
+  $("q-difficulty-badge").textContent = state.difficulty.charAt(0).toUpperCase() + state.difficulty.slice(1);
+  $("question-text").textContent      = q.question;
 
   const grid    = $("choices-grid");
   grid.innerHTML = "";
@@ -398,16 +396,50 @@ function loadQuestion(idx) {
     grid.appendChild(btn);
   });
 
+  // Reset feedback
   $("explanation-box").style.display = "none";
   $("action-row").style.display      = "none";
-
-  // Réinitialiser le feedback typing
   const fb = $("feedback-typing-box");
   if (fb) {
     fb.style.display = "none";
     $("feedback-typing-text").textContent = "";
     const cur = $("typing-cursor");
     if (cur) cur.style.display = "none";
+  }
+
+  // Bouton précédent
+  const prevBtn = $("prev-btn");
+  if (prevBtn) prevBtn.style.display = idx > 0 ? "inline-flex" : "none";
+
+  // ── Restaurer l'état si déjà répondu ──────────────────────────────────
+  const saved = state.history[idx];
+  if (saved) {
+    state.answered = true;
+
+    const buttons = grid.querySelectorAll(".choice-btn");
+    buttons.forEach((btn, i) => {
+      btn.disabled = true;
+      if (i === q.correct_index) btn.classList.add("correct");
+    });
+
+    // Retrouver l'index de la réponse choisie
+    const chosenIdx = q.choices.indexOf(saved.chosen);
+    if (chosenIdx !== -1 && chosenIdx !== q.correct_index) {
+      buttons[chosenIdx].classList.add("wrong");
+    }
+
+    $("explanation-icon").textContent    = saved.ok ? "✓" : "✗";
+    $("explanation-icon").className      = `explanation-icon ${saved.ok ? "ok" : "bad"}`;
+    $("explanation-verdict").textContent = saved.ok ? "Bonne réponse !" : "Réponse incorrecte";
+    $("explanation-text").textContent    = saved.explanation || "";
+    $("explanation-box").style.display   = "flex";
+
+    const isLast = idx >= state.questions.length - 1 && state.streamDone;
+    $("next-btn").innerHTML = isLast
+      ? `Voir les résultats <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : `Question suivante <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    $("action-row").style.display = "flex";
   }
 
   const panel = document.querySelector(".question-panel");
@@ -452,18 +484,19 @@ function handleAnswer(chosenIdx, q) {
   const buttons = $("choices-grid").querySelectorAll(".choice-btn");
   buttons.forEach((btn, i) => {
     btn.disabled = true;
-    if (i === correct)          btn.classList.add("correct");
-    if (i === chosenIdx && !isOk) btn.classList.add("wrong");
+    if (i === correct)             btn.classList.add("correct");
+    if (i === chosenIdx && !isOk)  btn.classList.add("wrong");
   });
 
-  state.history.push({
+  // Mise à jour ou ajout dans l'historique à l'index courant
+  state.history[state.current] = {
     question:    q.question,
     product:     q.product || "—",
     chosen:      q.choices[chosenIdx],
     correct:     q.choices[correct],
     ok:          isOk,
     explanation: q.explanation || "",
-  });
+  };
 
   $("explanation-icon").textContent    = isOk ? "✓" : "✗";
   $("explanation-icon").className      = `explanation-icon ${isOk ? "ok" : "bad"}`;
@@ -490,6 +523,7 @@ function handleAnswer(chosenIdx, q) {
 let _waitingForNext = false;
 
 $("next-btn").addEventListener("click", goToNext);
+$("prev-btn") && $("prev-btn").addEventListener("click", goToPrev);
 
 function goToNext() {
   const nextIdx = state.current + 1;
@@ -512,6 +546,20 @@ function goToNext() {
   }, 200);
 }
 
+function goToPrev() {
+  const prevIdx = state.current - 1;
+  if (prevIdx < 0) return;
+
+  // Si la question courante était répondue, déduire du score avant de partir
+  const currentSaved = state.history[state.current];
+  if (currentSaved && currentSaved.ok) {
+    state.score = Math.max(0, state.score - 1);
+  }
+  // Effacer la réponse courante pour permettre de re-répondre
+  delete state.history[state.current];
+
+  loadQuestion(prevIdx);
+}
 // ── Résultats ─────────────────────────────────────────────────────────────
 function showResults() {
   $("quiz-screen").style.display     = "none";
@@ -561,11 +609,11 @@ function showResults() {
   speak(title + " " + message);
 
   if (total > 0) {
-    streamFinalFeedback();
-    if (pct >= 60) {
-      const certSection = $("certificate-section");
-      if (certSection) certSection.style.display = "block";
-    }
+    setTimeout(() => streamFinalFeedback(), 400);
+  }
+  const certSection = $("certificate-section");
+  if (certSection) {
+    certSection.style.display = pct >= 60 ? "block" : "none";
   }
 }
 
@@ -595,13 +643,7 @@ function escHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// HELPER : lit un SSE stream et pousse les tokens dans TypingEngine
-// element : élément DOM cible (textContent sera modifié)
-// cursor  : span.typing-cursor (peut être null)
-// fetchFn : () => Promise<Response>
-// onError : () => void  (optionnel)
-// ══════════════════════════════════════════════════════════════════════════════
+
 async function _streamIntoTypingEngine(element, cursor, fetchFn, onError) {
   // Réinitialise le moteur et démarre sur cet élément
   TypingEngine.reset();
@@ -683,16 +725,18 @@ async function streamFinalFeedback() {
   const textEl  = $("final-feedback-text");
   if (!section || !textEl) return;
 
-  section.style.display = "block";
+  // Reset complet — coupe tout stream question encore en cours
+  TypingEngine.reset();
 
-  // Crée un curseur clignotant injecté dans le conteneur du bilan
+  section.style.display = "block";
   textEl.innerHTML = "";
+
   const finalCursor = document.createElement("span");
   finalCursor.className = "typing-cursor";
   textEl.appendChild(finalCursor);
 
-  // Crée un span dédié au texte (le curseur reste toujours à la fin)
-  const textSpan = document.createElement("span");
+  const textSpan = document.createElement("p");
+  textSpan.style.cssText = "white-space: pre-wrap; margin: 0; line-height: 1.7;";
   textEl.insertBefore(textSpan, finalCursor);
 
   await _streamIntoTypingEngine(

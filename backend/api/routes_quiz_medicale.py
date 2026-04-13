@@ -379,7 +379,6 @@ def _is_valid_question(q: Optional[dict], expected_product: str) -> bool:
         return False
     return True
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # NOUVEAUX ENDPOINTS — AJOUT UNIQUEMENT, rien au-dessus n'a été touché
 # ══════════════════════════════════════════════════════════════════════════════
@@ -399,29 +398,30 @@ class FinalFeedbackRequest(BaseModel):
 
 
 _FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
-Un délégué vient de répondre incorrectement. Rédige un feedback pédagogique de 2-3 phrases :
-- Explique pourquoi la réponse était incorrecte
-- Rappelle le point clé à retenir
-- Encourage le délégué
-- En français, jamais "Docteur," au début"""
+Le délégué vient de répondre incorrectement à une question. Rédige EXACTEMENT 1 phrase courte :
+- Rappelle uniquement le point clé correct à retenir
+- Jamais "Docteur," au début
+- 1 seule phrase, pas plus"""
 
 
 _FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
-Rédige un bilan final structuré et personnalisé basé sur les réponses du délégué.
+Génère un bilan global de la performance du délégué selon son score.
 
-STRUCTURE OBLIGATOIRE (respecte cet ordre) :
-1. Score global + appréciation courte (1 phrase)
-2. Points forts : produits et notions bien maîtrisés (avec exemples des bonnes réponses)
-3. Points faibles : ce qui n'a pas été su, avec explication du bon contenu (posologie, indication, mécanisme…)
-4. Plan d'amélioration : conseils concrets sur quoi réviser et comment (fiches produits, points clés)
-5. Encouragement final (1 phrase)
+STRUCTURE SELON LE CAS :
 
-RÈGLES :
-- Cite les vrais noms des produits concernés
-- Pour chaque mauvaise réponse : rappelle la bonne réponse et explique pourquoi
-- Sois précis, pédagogique, bienveillant
-- En français, jamais "Docteur," au début
-- 10 à 15 phrases maximum"""
+CAS 1 — Score parfait (100%) :
+"Score [X]/[X] (100%). Parfait ! Vous maîtrisez parfaitement [liste tous les produits]. Continuez sur cette lancée, c'est exactement le niveau attendu d'un délégué VITAL SA !"
+
+CAS 2 — Score non parfait:
+"Score [X]/[Y] ([Z]%). Des lacunes importantes persistent sur [notion précise manquante par produit raté]. Reprenez les fiches produits de [liste des produits ratés] une par une avant votre prochain terrain. Vous pouvez y arriver !"
+
+RÈGLES ABSOLUES :
+- EXACTEMENT 2 à 3 phrases, jamais plus
+- ZÉRO titre, ZÉRO liste, ZÉRO puce, ZÉRO numéro
+- JAMAIS commenter chaque question individuellement
+- JAMAIS "Docteur," au début
+- Toujours citer la NOTION PRÉCISE manquante (posologie / mécanisme / indication / conservation / contre-indication)
+- Prose fluide uniquement, en français"""
 
 @router.post("/feedback/stream")
 async def stream_question_feedback(req: FeedbackRequest):
@@ -430,11 +430,10 @@ async def stream_question_feedback(req: FeedbackRequest):
     engine.initialize()
 
     prompt = (
-        f"Question sur {req.product} : {req.question}\n"
+        f"Produit : {req.product}\n"
         f"Bonne réponse : {req.correct_answer}\n"
-        f"Réponse du délégué : {req.chosen_answer}\n"
-        f"Explication déjà fournie : {req.explanation}\n\n"
-        f"Donne un feedback pédagogique complémentaire (2-3 phrases)."
+        f"Réponse du délégué : {req.chosen_answer}\n\n"
+        f"Rédige 1 phrase courte rappelant le point clé correct."
     )
 
     async def gen():
@@ -452,23 +451,6 @@ async def stream_question_feedback(req: FeedbackRequest):
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-_FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
-Rédige un bilan final structuré et personnalisé basé sur les réponses du délégué.
-
-STRUCTURE OBLIGATOIRE (respecte cet ordre) :
-1. Score global + appréciation courte (1 phrase)
-2. Points forts : produits et notions bien maîtrisés (avec exemples des bonnes réponses)
-3. Points faibles : ce qui n'a pas été su, avec explication du bon contenu (posologie, indication, mécanisme…)
-4. Plan d'amélioration : conseils concrets sur quoi réviser et comment (fiches produits, points clés)
-5. Encouragement final (1 phrase)
-
-RÈGLES :
-- Cite les vrais noms des produits concernés
-- Pour chaque mauvaise réponse : rappelle la bonne réponse et explique pourquoi
-- Sois précis, pédagogique, bienveillant
-- En français, jamais "Docteur," au début
-- 10 à 15 phrases maximum"""
-
 
 @router.post("/feedback/final/stream")
 async def stream_final_feedback(req: FinalFeedbackRequest):
@@ -478,24 +460,31 @@ async def stream_final_feedback(req: FinalFeedbackRequest):
 
     pct = round((req.score / req.total) * 100) if req.total > 0 else 0
 
-    # Détail complet de chaque question
-    details = []
-    for i, h in enumerate(req.history, 1):
-        status = "✓ CORRECT" if h.get("ok") else "✗ INCORRECT"
-        line = f"Q{i} [{h.get('product','?')}] {status}\n  Question : {h.get('question','')}\n  Réponse du délégué : {h.get('chosen','')}"
+    good_products = list({h.get("product", "?") for h in req.history if h.get("ok")})
+
+    # Une ligne par produit raté — notion précise manquante uniquement
+    bad_summary = []
+    seen = set()
+    for h in req.history:
         if not h.get("ok"):
-            line += f"\n  Bonne réponse : {h.get('correct','')}"
-            if h.get("explanation"):
-                line += f"\n  Explication : {h.get('explanation','')}"
-        details.append(line)
+            p = h.get("product", "?")
+            if p not in seen:
+                seen.add(p)
+                bad_summary.append(f"- {p} : la bonne réponse était « {h.get('correct', '')} »")
 
-    details_text = "\n\n".join(details)
-
-    prompt = (
-        f"Score : {req.score}/{req.total} ({pct}%)\n\n"
-        f"Détail de toutes les réponses :\n\n{details_text}\n\n"
-        f"Génère le bilan final structuré."
-    )
+    if bad_summary:
+        prompt = (
+            f"Score : {req.score}/{req.total} ({pct}%)\n"
+            f"Produits maîtrisés : {', '.join(good_products) if good_products else 'aucun'}\n"
+            f"Produits ratés :\n" + "\n".join(bad_summary) +
+            "\n\nGénère le bilan final en suivant exactement le squelette."
+        )
+    else:
+        prompt = (
+            f"Score : {req.score}/{req.total} ({pct}%)\n"
+            f"Tous les produits maîtrisés : {', '.join(good_products)}\n\n"
+            f"Génère le bilan final en suivant exactement le squelette."
+        )
 
     async def gen():
         try:
