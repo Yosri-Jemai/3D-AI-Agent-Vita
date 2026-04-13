@@ -102,13 +102,30 @@ const TypingEngine = {
 
 // ── TTS / Avatar ──────────────────────────────────────────────────────────
 function speak(text) {
+  // Bulle de dialogue
   const el = $("bubble-text");
   if (el) {
     el.style.opacity = "0";
     setTimeout(() => { el.textContent = text; el.style.opacity = "1"; }, 150);
   }
-  if (typeof window.speakWithAvatar === "function") {
+  // TTS + lipsync via avatar.js
+  if (typeof window.speakWithAvatar === "function" && text?.trim()) {
     window.speakWithAvatar(text, "fr");
+  }
+}
+// Lit à voix haute le bilan final une fois l'animation terminée
+function speakFinalFeedback(text) {
+  if (typeof window.speakWithAvatar === "function" && text?.trim()) {
+    window.speakWithAvatar(text, "fr");
+  }
+}
+function stopSpeaking() {
+  if (window._head && typeof window._head.stopSpeaking === "function") {
+    window._head.stopSpeaking();
+  }
+  // Fallback : couper l'AudioContext
+  if (window._head?.audioCtx) {
+    try { window._head.audioCtx.suspend(); window._head.audioCtx.resume(); } catch(e) {}
   }
 }
 
@@ -127,6 +144,14 @@ function moveAvatarToSetup() {
   setupWrap.insertBefore(avatarDiv, setupWrap.firstChild);
 }
 
+function moveAvatarToResults() {
+  const avatarDiv = document.getElementById("avatarDiv");
+  const ring = document.getElementById("results-ring");
+  if (!avatarDiv || !ring || ring.contains(avatarDiv)) return;
+  ring.innerHTML = "";
+  ring.appendChild(avatarDiv);
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   loadProducts();
@@ -140,9 +165,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function waitForAvatar(callback) {
   const iv = setInterval(() => {
-    if (window._avatarReady !== undefined) { clearInterval(iv); callback(); }
-  }, 150);
-  setTimeout(() => { clearInterval(iv); callback(); }, 8000);
+    if (window._avatarReady === true) {
+      clearInterval(iv);
+      callback();
+    }
+  }, 200);
+  setTimeout(() => { clearInterval(iv); callback(); }, 12000);
 }
 
 // ── Chargement produits ────────────────────────────────────────────────────
@@ -253,6 +281,9 @@ document.querySelectorAll(".qc-pill").forEach(btn => {
 $("start-btn").addEventListener("click", startQuiz);
 
 async function startQuiz() {
+
+  stopSpeaking(); 
+  
   Object.assign(state, {
     current: 0, score: 0, answered: false, history: [],
     questions: [], streamDone: false, generating: true,
@@ -369,6 +400,9 @@ function updateLoadBar(loaded, total) {
 // ── Affichage d'une question ──────────────────────────────────────────────
 function loadQuestion(idx) {
   if (idx >= state.questions.length) return;
+
+  stopSpeaking();          // ← AJOUT : arrête la parole en cours
+
 
   TypingEngine.reset();
 
@@ -526,6 +560,9 @@ $("next-btn").addEventListener("click", goToNext);
 $("prev-btn") && $("prev-btn").addEventListener("click", goToPrev);
 
 function goToNext() {
+
+  stopSpeaking(); 
+
   const nextIdx = state.current + 1;
   if (nextIdx < state.questions.length) { loadQuestion(nextIdx); return; }
   if (state.streamDone)                 { showResults(); return; }
@@ -547,6 +584,9 @@ function goToNext() {
 }
 
 function goToPrev() {
+
+  stopSpeaking();
+
   const prevIdx = state.current - 1;
   if (prevIdx < 0) return;
 
@@ -562,6 +602,10 @@ function goToPrev() {
 }
 // ── Résultats ─────────────────────────────────────────────────────────────
 function showResults() {
+
+  stopSpeaking();
+  moveAvatarToResults();        // ← AJOUT
+
   $("quiz-screen").style.display     = "none";
   $("results-screen").style.display  = "flex";
   $("progress-header").style.display = "none";
@@ -632,6 +676,7 @@ function returnToSetup(msg) {
 }
 
 $("restart-btn").addEventListener("click", () => {
+  stopSpeaking();  
   $("results-screen").style.display = "none";
   $("setup-screen").style.display   = "flex";
   moveAvatarToSetup();
@@ -725,9 +770,7 @@ async function streamFinalFeedback() {
   const textEl  = $("final-feedback-text");
   if (!section || !textEl) return;
 
-  // Reset complet — coupe tout stream question encore en cours
   TypingEngine.reset();
-
   section.style.display = "block";
   textEl.innerHTML = "";
 
@@ -739,20 +782,59 @@ async function streamFinalFeedback() {
   textSpan.style.cssText = "white-space: pre-wrap; margin: 0; line-height: 1.7;";
   textEl.insertBefore(textSpan, finalCursor);
 
-  await _streamIntoTypingEngine(
-    textSpan,
-    finalCursor,
-    () => fetch(`${API_BASE}/quiz/feedback/final/stream`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        score:   state.score,
-        total:   state.history.length,
-        history: state.history,
-      }),
+  // Collecte le texte complet pour le lire à voix haute après
+  let fullText = "";
+
+  const originalFetch = () => fetch(`${API_BASE}/quiz/feedback/final/stream`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      score:   state.score,
+      total:   state.history.length,
+      history: state.history,
     }),
-    () => { textEl.textContent = "Bilan indisponible."; }
-  );
+  });
+
+  // Stream SSE manuellement pour capturer le texte complet
+  TypingEngine.reset();
+  textSpan.textContent = "";
+  TypingEngine.start(textSpan, finalCursor, () => {
+    // Appelé quand toute l'animation est terminée → lire à voix haute
+    speakFinalFeedback(fullText);
+  });
+
+  let res;
+  try { res = await originalFetch(); }
+  catch (err) { textEl.textContent = "Bilan indisponible."; return; }
+  if (!res.ok) { textEl.textContent = "Bilan indisponible."; return; }
+
+  const reader  = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer    = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === "token") {
+            fullText += ev.content;
+            TypingEngine.push(ev.content);
+          }
+          if (ev.type === "done") TypingEngine.finish();
+        } catch (_) {}
+      }
+    }
+    TypingEngine.finish();
+  } catch (err) {
+    TypingEngine.finish();
+  }
 }
 
 // ── Certificat de réussite ────────────────────────────────────────────────

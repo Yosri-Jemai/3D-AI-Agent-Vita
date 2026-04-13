@@ -119,8 +119,8 @@ html, body {
 
 .setup-avatar-wrap {
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 200px;
+  height: 200px;
   margin: 0 auto 24px;
 }
 .setup-avatar-ring {
@@ -544,12 +544,19 @@ html, body {
 
 .results-avatar-wrap { margin-bottom: 20px; }
 .results-avatar-ring {
-  width: 80px; height: 80px;
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
   overflow: hidden;
   border: 3px solid var(--accent);
-  margin: 0 auto;
+  margin: 0 auto 16px;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.results-avatar-initials {
+  display: none; /* caché quand l'avatar est présent */
 }
 .results-avatar-img     { width: 100%; height: 100%; object-fit: cover; }
 .results-avatar-fallback {
@@ -953,8 +960,8 @@ html, body {
 
 .avatar-scene {
   position: relative;
-  width: 140px;
-  height: 140px;
+  width: 240px;
+  height: 240px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -984,10 +991,13 @@ html, body {
 #avatar-scene-slot {
   position: relative;
   z-index: 2;
-  width: 120px;
-  height: 120px;
+  width: 220px;
+  height: 220px;
   border-radius: 50%;
   overflow: hidden;
+  background: var(--accent-light);
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 .avatar-reaction {
   position: absolute;
@@ -1012,10 +1022,15 @@ html, body {
 /* ── Setup avatar slot ───────────────────────────────────────────────────── */
 
 .setup-avatar-div {
-  width: 80px;
-  height: 80px;
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
   overflow: hidden;
+  background: var(--accent-light);
+  /* Anti-flou : forcer le rendu net */
+  image-rendering: crisp-edges;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 .agent-status-setup {
   display: flex;
