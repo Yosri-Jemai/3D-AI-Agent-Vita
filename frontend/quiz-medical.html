@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Quiz Médical — VitalAgent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="css/quiz-medical.css"/>
+</head>
+<body>
+
+<div id="mic-btn"        style="display:none"></div>
+<div id="avatar-loading" style="display:none"></div>
+<div id="chunk-count"    style="display:none"></div>
+
+<!-- ─── HEADER ──────────────────────────────────────────────────────────── -->
+<header class="app-header">
+  <div class="header-left">
+    <a href="index.html" class="back-btn">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Retour
+    </a>
+    <div class="header-brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">VitalAgent</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-module">Quiz Délégué Médical</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="quiz-progress-header" id="progress-header" style="display:none">
+      <span id="q-counter">Question 1 / 10</span>
+      <div class="progress-bar-mini">
+        <div class="progress-fill-mini" id="progress-fill-mini"></div>
+      </div>
+    </div>
+    <div class="score-badge" id="score-badge" style="display:none">
+      <span id="score-live">0 / 0</span>
+    </div>
+  </div>
+</header>
+
+<!-- ─── SETUP SCREEN ────────────────────────────────────────────────────── -->
+<section class="setup-screen" id="setup-screen">
+  <div class="setup-card">
+
+    <div class="setup-avatar-wrap">
+      <div id="avatarDiv" class="setup-avatar-div"></div>
+      <div class="setup-avatar-pulse" id="setup-pulse"></div>
+    </div>
+
+    <div class="agent-status-setup">
+      <div class="status-dot loading" id="status-dot"></div>
+      <span id="status-text">Chargement de l'avatar…</span>
+    </div>
+
+    <h1 class="setup-title">Quiz de Formation Médicale</h1>
+    <p class="setup-subtitle">
+      Dr. Layla va vous poser des questions sur les produits VITAL SA.<br>
+      Répondez correctement pour valider vos connaissances.
+    </p>
+
+    <div class="setup-options">
+
+      <!-- ── Multi-product selector ──────────────────────────────────── -->
+      <div class="option-group">
+        <label class="option-label">Produit(s)</label>
+
+        <div class="product-selector" id="product-dropdown">
+
+          <!-- Trigger button -->
+          <button class="product-trigger" id="product-dropdown-btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+            <span id="selection-label">Tous les produits</span>
+            <svg class="trigger-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <!-- Dropdown panel -->
+          <div class="product-panel">
+            <div class="product-panel-header">
+              <input
+                type="text"
+                id="product-search"
+                class="product-search"
+                placeholder="Rechercher un produit…"
+                autocomplete="off"
+              />
+              <button class="clear-btn" id="clear-selection" type="button" title="Tout désélectionner">
+                Réinitialiser
+              </button>
+            </div>
+            <div class="product-list" id="product-list">
+              <div class="product-loading">Chargement…</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <!-- ────────────────────────────────────────────────────────────── -->
+
+      <div class="option-group">
+        <label class="option-label">Difficulté</label>
+        <div class="difficulty-pills">
+          <button class="diff-pill active" data-level="facile">Facile</button>
+          <button class="diff-pill" data-level="moyen">Moyen</button>
+          <button class="diff-pill" data-level="difficile">Difficile</button>
+        </div>
+      </div>
+
+      <div class="option-group">
+        <label class="option-label">Nombre de questions</label>
+        <div class="q-count-pills">
+          <button class="qc-pill" data-count="5">5</button>
+          <button class="qc-pill active" data-count="10">10</button>
+          <button class="qc-pill" data-count="15">15</button>
+        </div>
+      </div>
+    </div>
+
+    <button class="start-btn" id="start-btn">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M6 4L14 9L6 14V4Z" fill="currentColor"/>
+      </svg>
+      Commencer le Quiz
+    </button>
+
+  </div>
+</section>
+
+<!-- ─── QUIZ SCREEN ──────────────────────────────────────────────────────── -->
+<section class="quiz-screen" id="quiz-screen" style="display:none">
+
+  <aside class="avatar-panel">
+    <div class="avatar-scene">
+      <div class="speak-ring r1"></div>
+      <div class="speak-ring r2"></div>
+      <div class="speak-ring r3"></div>
+      <div class="avatar-glow"></div>
+      <div id="avatar-scene-slot"></div>
+      <div class="avatar-reaction" id="avatar-reaction"></div>
+    </div>
+
+    <div class="agent-info">
+      <div class="agent-name">Dr. Layla</div>
+      <div class="agent-role">Experte Formation Médicale</div>
+    </div>
+
+    <div class="speech-bubble" id="speech-bubble">
+      <p id="bubble-text">Êtes-vous prêt(e) ?</p>
+    </div>
+
+    <div class="donut-wrap">
+      <svg class="donut" viewBox="0 0 80 80">
+        <circle cx="40" cy="40" r="32" fill="none" stroke="var(--border)" stroke-width="6"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="var(--accent)" stroke-width="6"
+                stroke-dasharray="201" stroke-dashoffset="201"
+                stroke-linecap="round" id="donut-arc"
+                style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .5s ease"/>
+      </svg>
+      <div class="donut-center"><span id="donut-pct">0%</span></div>
+    </div>
+    <div class="donut-label">Score</div>
+
+    <div class="load-progress" id="load-progress" style="display:none">
+      <div class="load-bar"><div class="load-fill" id="load-fill"></div></div>
+      <span id="load-label">Questions : 0 / 10</span>
+    </div>
+  </aside>
+
+  <main class="question-panel">
+    <div class="waiting-state" id="waiting-state">
+      <div class="waiting-spinner"></div>
+      <p class="waiting-text">Dr. Layla prépare votre quiz…</p>
+      <div class="skeleton-block">
+        <div class="skeleton-line long"></div>
+        <div class="skeleton-line medium"></div>
+        <div class="choices-skeleton">
+          <div class="choice-skel"></div>
+          <div class="choice-skel"></div>
+          <div class="choice-skel"></div>
+          <div class="choice-skel"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="question-area" style="display:none">
+      <div class="question-card">
+        <div class="question-meta">
+          <span class="q-number" id="q-number">Q1</span>
+          <span class="q-topic" id="q-topic">—</span>
+          <span class="q-difficulty-badge" id="q-difficulty-badge">Moyen</span>
+        </div>
+        <h2 class="question-text" id="question-text"></h2>
+      </div>
+
+      <div class="choices-grid" id="choices-grid"></div>
+
+      <div class="explanation-box" id="explanation-box" style="display:none">
+        <div class="explanation-icon" id="explanation-icon">✓</div>
+        <div class="explanation-content">
+          <p class="explanation-verdict" id="explanation-verdict">Bonne réponse !</p>
+          <p class="explanation-text" id="explanation-text"></p>
+        </div>
+      </div>
+
+      <div class="action-row" id="action-row" style="display:none">
+        <button class="next-btn" id="next-btn">
+          Question suivante
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ─── RESULTS SCREEN ───────────────────────────────────────────────────── -->
+<section class="results-screen" id="results-screen" style="display:none">
+  <div class="results-card">
+    <div class="results-avatar-wrap">
+      <div class="results-avatar-ring" id="results-ring">
+        <div class="results-avatar-initials">L</div>
+      </div>
+    </div>
+    <h2 class="results-title" id="results-title">Quiz terminé !</h2>
+    <p class="results-message" id="results-message"></p>
+    <div class="results-score-big">
+      <span id="results-score-num">0</span>
+      <span class="results-score-denom" id="results-score-denom">/ 10</span>
+    </div>
+    <div class="results-breakdown" id="results-breakdown"></div>
+    <div class="results-actions">
+      <button class="restart-btn" id="restart-btn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 8A6 6 0 1 0 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M2 2V8H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Recommencer
+      </button>
+      <a href="index.html" class="home-btn">Accueil</a>
+    </div>
+  </div>
+</section>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":         "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="js/avatar.js"></script>
+<script src="js/quiz-medical.js"></script>
+</body>
+</html>

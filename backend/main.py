@@ -23,6 +23,9 @@ from backend.api.routes_chat  import router as chat_router
 from backend.api.routes_voice import router as voice_router
 from backend.api.routes_tts import router as tts_router
 
+from backend.api.routes_quiz_medicale import router as quiz_medicale_router
+from backend.api.routes_quiz_commercial import router as quiz_commercial_router
+
 
 app = FastAPI(
     title="VitalAgent API",
@@ -43,6 +46,9 @@ app.include_router(voice_router, prefix="/voice", tags=["Voice"])
 app.include_router(tts_router, prefix="/tts", tags=["TTS"])
 app.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 
+app.include_router(quiz_medicale_router, prefix="/quiz", tags=["Quiz"])
+
+app.include_router(quiz_commercial_router, prefix="/quiz-commercial", tags=["Quiz Commercial"])
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "VitalAgent"}

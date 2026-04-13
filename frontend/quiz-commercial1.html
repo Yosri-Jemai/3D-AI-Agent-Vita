@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Quiz Commercial — VitalAgent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="css/quiz-medical.css"/>
+<style>
+  /* ── Overrides thème commercial (orange/ambre) ── */
+  :root {
+    --accent:        #f59e0b;
+    --accent-dim:    rgba(245,158,11,0.15);
+    --accent-glow:   rgba(245,158,11,0.35);
+    --correct-color: #10b981;
+    --wrong-color:   #ef4444;
+  }
+
+  /* Badge compétence vente */
+  .sales-skill-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(245,158,11,0.12);
+    border: 1px solid rgba(245,158,11,0.3);
+    color: #f59e0b;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+  }
+  .sales-skill-badge svg { opacity: 0.85; }
+
+  /* Setup card — couleur tag module */
+  .brand-module { color: #f59e0b !important; }
+
+  /* Pill active — ambre */
+  .diff-pill.active,
+  .qc-pill.active {
+    background: var(--accent) !important;
+    color: #0a0a0a !important;
+    border-color: var(--accent) !important;
+  }
+
+  /* Start button */
+  .start-btn {
+    background: var(--accent) !important;
+    color: #0a0a0a !important;
+  }
+  .start-btn:hover { filter: brightness(1.1); }
+
+  /* Next button */
+  .next-btn { border-color: var(--accent) !important; color: var(--accent) !important; }
+  .next-btn:hover { background: var(--accent-dim) !important; }
+
+  /* Donut arc color override via JS */
+  .agent-role { color: #f59e0b !important; }
+
+  /* Scenario badge */
+  .scenario-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 9px;
+    border-radius: 12px;
+    background: rgba(245,158,11,0.1);
+    border: 1px solid rgba(245,158,11,0.25);
+    color: #f59e0b;
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* Setup icon override */
+  .setup-title::before {
+    content: "💼 ";
+  }
+</style>
+</head>
+<body>
+
+<div id="mic-btn"        style="display:none"></div>
+<div id="avatar-loading" style="display:none"></div>
+<div id="chunk-count"    style="display:none"></div>
+
+<!-- ─── HEADER ──────────────────────────────────────────────────────────── -->
+<header class="app-header">
+  <div class="header-left">
+    <a href="index.html" class="back-btn">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Retour
+    </a>
+    <div class="header-brand">
+      <span class="brand-dot" style="background:#f59e0b"></span>
+      <span class="brand-name">VitalAgent</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-module">Quiz Délégué Commercial</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="quiz-progress-header" id="progress-header" style="display:none">
+      <span id="q-counter">Question 1 / 10</span>
+      <div class="progress-bar-mini">
+        <div class="progress-fill-mini" id="progress-fill-mini" style="background:#f59e0b"></div>
+      </div>
+    </div>
+    <div class="score-badge" id="score-badge" style="display:none">
+      <span id="score-live">0 / 0</span>
+    </div>
+  </div>
+</header>
+
+<!-- ─── SETUP SCREEN ────────────────────────────────────────────────────── -->
+<section class="setup-screen" id="setup-screen">
+  <div class="setup-card">
+
+    <div class="setup-avatar-wrap">
+      <div id="avatarDiv" class="setup-avatar-div"></div>
+      <div class="setup-avatar-pulse" id="setup-pulse"></div>
+    </div>
+
+    <div class="agent-status-setup">
+      <div class="status-dot loading" id="status-dot"></div>
+      <span id="status-text">Chargement de l'avatar…</span>
+    </div>
+
+    <h1 class="setup-title">Quiz de Formation Commerciale</h1>
+    <p class="setup-subtitle">
+      Vita va vous entraîner à <strong>vendre</strong> les produits VITAL SA.<br>
+      Pitchs, objections, arguments clients — maîtrisez l'art de la vente en pharmacie.
+    </p>
+
+    <div class="setup-options">
+
+      <!-- ── Sélecteur produits ──────────────────────────────────────── -->
+      <div class="option-group">
+        <label class="option-label">Produit(s)</label>
+        <div class="product-selector" id="product-dropdown">
+          <button class="product-trigger" id="product-dropdown-btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+            <span id="selection-label">Tous les produits</span>
+            <svg class="trigger-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="product-panel">
+            <div class="product-panel-header">
+              <input type="text" id="product-search" class="product-search" placeholder="Rechercher un produit…" autocomplete="off"/>
+              <button class="clear-btn" id="clear-selection" type="button">Réinitialiser</button>
+            </div>
+            <div class="product-list" id="product-list">
+              <div class="product-loading">Chargement…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Difficulté commerciale ──────────────────────────────────── -->
+      <div class="option-group">
+        <label class="option-label">Niveau commercial</label>
+        <div class="difficulty-pills">
+          <button class="diff-pill active" data-level="facile" title="Pitch de base & profil client">Débutant</button>
+          <button class="diff-pill" data-level="moyen"    title="Objections & techniques FAB">Confirmé</button>
+          <button class="diff-pill" data-level="difficile" title="Négociation & scénarios complexes">Expert</button>
+        </div>
+      </div>
+
+      <div class="option-group">
+        <label class="option-label">Nombre de questions</label>
+        <div class="q-count-pills">
+          <button class="qc-pill" data-count="5">5</button>
+          <button class="qc-pill active" data-count="10">10</button>
+          <button class="qc-pill" data-count="15">15</button>
+        </div>
+      </div>
+    </div>
+
+    <button class="start-btn" id="start-btn">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M6 4L14 9L6 14V4Z" fill="currentColor"/>
+      </svg>
+      Commencer le Quiz
+    </button>
+
+  </div>
+</section>
+
+<!-- ─── QUIZ SCREEN ──────────────────────────────────────────────────────── -->
+<section class="quiz-screen" id="quiz-screen" style="display:none">
+
+  <aside class="avatar-panel">
+    <div class="avatar-scene">
+      <div class="speak-ring r1"></div>
+      <div class="speak-ring r2"></div>
+      <div class="speak-ring r3"></div>
+      <div class="avatar-glow"></div>
+      <div id="avatar-scene-slot"></div>
+      <div class="avatar-reaction" id="avatar-reaction"></div>
+    </div>
+
+    <div class="agent-info">
+      <div class="agent-name">Vita</div>
+      <div class="agent-role">Coach Vente Pharmaceutique</div>
+    </div>
+
+    <div class="speech-bubble" id="speech-bubble">
+      <p id="bubble-text">Prêt(e) à vendre ?</p>
+    </div>
+
+    <div class="donut-wrap">
+      <svg class="donut" viewBox="0 0 80 80">
+        <circle cx="40" cy="40" r="32" fill="none" stroke="var(--border)" stroke-width="6"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#f59e0b" stroke-width="6"
+                stroke-dasharray="201" stroke-dashoffset="201"
+                stroke-linecap="round" id="donut-arc"
+                style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .5s ease"/>
+      </svg>
+      <div class="donut-center"><span id="donut-pct">0%</span></div>
+    </div>
+    <div class="donut-label">Score</div>
+
+    <div class="load-progress" id="load-progress" style="display:none">
+      <div class="load-bar"><div class="load-fill" id="load-fill" style="background:#f59e0b"></div></div>
+      <span id="load-label">Scénarios : 0 / 10</span>
+    </div>
+  </aside>
+
+  <main class="question-panel">
+    <div class="waiting-state" id="waiting-state">
+      <div class="waiting-spinner" style="border-top-color:#f59e0b"></div>
+      <p class="waiting-text">Vita prépare vos scénarios de vente…</p>
+      <div class="skeleton-block">
+        <div class="skeleton-line long"></div>
+        <div class="skeleton-line medium"></div>
+        <div class="choices-skeleton">
+          <div class="choice-skel"></div>
+          <div class="choice-skel"></div>
+          <div class="choice-skel"></div>
+          <div class="choice-skel"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="question-area" style="display:none">
+      <div class="question-card">
+        <div class="question-meta">
+          <span class="q-number" id="q-number">Q1</span>
+          <span class="q-topic" id="q-topic">—</span>
+          <span class="q-difficulty-badge" id="q-difficulty-badge">Confirmé</span>
+          <span class="sales-skill-badge" id="sales-skill-badge" style="display:none">
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1L7.5 4.5L11 5L8.5 7.5L9 11L6 9.5L3 11L3.5 7.5L1 5L4.5 4.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+            </svg>
+            <span id="sales-skill-text">Pitch</span>
+          </span>
+        </div>
+        <h2 class="question-text" id="question-text"></h2>
+      </div>
+
+      <div class="choices-grid" id="choices-grid"></div>
+
+      <div class="explanation-box" id="explanation-box" style="display:none">
+        <div class="explanation-icon" id="explanation-icon">✓</div>
+        <div class="explanation-content">
+          <p class="explanation-verdict" id="explanation-verdict">Excellent pitch !</p>
+          <p class="explanation-text" id="explanation-text"></p>
+        </div>
+      </div>
+
+      <div class="action-row" id="action-row" style="display:none">
+        <button class="next-btn" id="next-btn">
+          Scénario suivant
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ─── RESULTS SCREEN ───────────────────────────────────────────────────── -->
+<section class="results-screen" id="results-screen" style="display:none">
+  <div class="results-card">
+    <div class="results-avatar-wrap">
+      <div class="results-avatar-ring" id="results-ring">
+        <div class="results-avatar-initials">V</div>
+      </div>
+    </div>
+    <h2 class="results-title" id="results-title">Quiz terminé !</h2>
+    <p class="results-message" id="results-message"></p>
+    <div class="results-score-big">
+      <span id="results-score-num">0</span>
+      <span class="results-score-denom" id="results-score-denom">/ 10</span>
+    </div>
+    <!-- Résumé des compétences -->
+    <div class="skills-summary" id="skills-summary" style="margin:14px 0 4px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center"></div>
+    <div class="results-breakdown" id="results-breakdown"></div>
+    <div class="results-actions">
+      <button class="restart-btn" id="restart-btn" style="border-color:#f59e0b;color:#f59e0b">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 8A6 6 0 1 0 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M2 2V8H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Recommencer
+      </button>
+      <a href="index.html" class="home-btn">Accueil</a>
+    </div>
+  </div>
+</section>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":         "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="js/avatar.js"></script>
+
+<!-- ─── QUIZ COMMERCIAL JS ───────────────────────────────────────────────── -->
+<script>
+/**
+ * quiz-commercial.js — Formation Vente Pharmacien / Para
+ *
+ * Calqué sur quiz-medical.js mais adapté au contexte commercial :
+ *  - Endpoint : /quiz-commercial/generate/stream
+ *  - Badge "compétence vente" sur chaque question
+ *  - Messages Vita (coach vente) au lieu de Dr. Layla
+ *  - Résumé des compétences à l'écran de résultats
+ */
+
+const API_BASE = window.API_BASE || "http://localhost:8000";
+
+// ── État global ──────────────────────────────────────────────────────────────
+let state = {
+  questions: [],
+  current: 0,
+  score: 0,
+  answered: false,
+  difficulty: "facile",
+  questionCount: 10,
+  selectedProducts: [],
+  history: [],
+  streamDone: false,
+  totalExpected: 10,
+  generating: false,
+};
+
+let allProducts = [];
+
+const $ = id => document.getElementById(id);
+
+// ── TTS / Avatar ──────────────────────────────────────────────────────────────
+function speak(text) {
+  const el = $("bubble-text");
+  if (el) {
+    el.style.opacity = "0";
+    setTimeout(() => { el.textContent = text; el.style.opacity = "1"; }, 150);
+  }
+  if (typeof window.speakWithAvatar === "function") {
+    window.speakWithAvatar(text, "fr");
+  }
+}
+
+function moveAvatarToQuizPanel() {
+  const avatarDiv = document.getElementById("avatarDiv");
+  const slot = document.getElementById("avatar-scene-slot");
+  if (!avatarDiv || !slot || slot.contains(avatarDiv)) return;
+  slot.innerHTML = "";
+  slot.appendChild(avatarDiv);
+}
+
+function moveAvatarToSetup() {
+  const avatarDiv = document.getElementById("avatarDiv");
+  const setupWrap = document.querySelector(".setup-avatar-wrap");
+  if (!avatarDiv || !setupWrap || setupWrap.contains(avatarDiv)) return;
+  setupWrap.insertBefore(avatarDiv, setupWrap.firstChild);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  loadProducts();
+  setupProductSearch();
+  waitForAvatar(() => {
+    speak("Bonjour ! Je suis Vita, votre coach commercial. Configurez votre quiz et entraînez-vous à vendre !");
+    const loadEl = $("avatar-loading");
+    if (loadEl) loadEl.style.display = "none";
+  });
+});
+
+function waitForAvatar(callback) {
+  const iv = setInterval(() => {
+    if (window._avatarReady !== undefined) { clearInterval(iv); callback(); }
+  }, 150);
+  setTimeout(() => { clearInterval(iv); callback(); }, 8000);
+}
+
+// ── Chargement produits ───────────────────────────────────────────────────────
+async function loadProducts() {
+  try {
+    const res = await fetch(`${API_BASE}/products`);
+    const data = await res.json();
+    allProducts = (data.products || []).sort();
+    renderProductList(allProducts);
+    updateSelectionLabel();
+  } catch (e) {
+    console.warn("[QuizCommercial] Produits non chargés depuis /products");
+    $("product-list").innerHTML = `<div class="product-empty">Impossible de charger les produits</div>`;
+  }
+}
+
+function renderProductList(products) {
+  const list = $("product-list");
+  list.innerHTML = "";
+  products.forEach(name => {
+    const isChecked = state.selectedProducts.includes(name);
+    const item = document.createElement("label");
+    item.className = "product-item" + (isChecked ? " checked" : "");
+    item.innerHTML = `
+      <input type="checkbox" class="product-checkbox" value="${escHtml(name)}" ${isChecked ? "checked" : ""}>
+      <span class="product-item-name">${escHtml(name)}</span>
+    `;
+    item.querySelector("input").addEventListener("change", (e) => {
+      toggleProduct(name, e.target.checked);
+      item.classList.toggle("checked", e.target.checked);
+    });
+    list.appendChild(item);
+  });
+}
+
+function toggleProduct(name, checked) {
+  if (checked) {
+    if (!state.selectedProducts.includes(name)) state.selectedProducts.push(name);
+  } else {
+    state.selectedProducts = state.selectedProducts.filter(p => p !== name);
+  }
+  updateSelectionLabel();
+}
+
+function updateSelectionLabel() {
+  const label = $("selection-label");
+  const count = state.selectedProducts.length;
+  if (count === 0) {
+    label.textContent = "Tous les produits";
+    label.classList.remove("has-selection");
+  } else if (count === 1) {
+    label.textContent = state.selectedProducts[0];
+    label.classList.add("has-selection");
+  } else {
+    label.textContent = `${count} produits sélectionnés`;
+    label.classList.add("has-selection");
+  }
+}
+
+function setupProductSearch() {
+  const searchInput = $("product-search");
+  if (!searchInput) return;
+  searchInput.addEventListener("input", (e) => {
+    const query = e.target.value.toLowerCase().trim();
+    const filtered = query ? allProducts.filter(p => p.toLowerCase().includes(query)) : allProducts;
+    renderProductList(filtered);
+  });
+}
+
+$("product-dropdown-btn") && $("product-dropdown-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  $("product-dropdown").classList.toggle("open");
+});
+
+document.addEventListener("click", (e) => {
+  const dropdown = $("product-dropdown");
+  if (dropdown && !dropdown.contains(e.target) && e.target !== $("product-dropdown-btn")) {
+    dropdown.classList.remove("open");
+  }
+});
+
+$("clear-selection") && $("clear-selection").addEventListener("click", (e) => {
+  e.stopPropagation();
+  state.selectedProducts = [];
+  renderProductList(allProducts);
+  updateSelectionLabel();
+});
+
+// ── Setup options ─────────────────────────────────────────────────────────────
+document.querySelectorAll(".diff-pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".diff-pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.difficulty = btn.dataset.level;
+  });
+});
+
+document.querySelectorAll(".qc-pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".qc-pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.questionCount = parseInt(btn.dataset.count);
+  });
+});
+
+// ── Démarrage ─────────────────────────────────────────────────────────────────
+$("start-btn").addEventListener("click", startQuiz);
+
+async function startQuiz() {
+  Object.assign(state, {
+    current: 0,
+    score: 0,
+    answered: false,
+    history: [],
+    questions: [],
+    streamDone: false,
+    generating: true,
+    totalExpected: state.questionCount,
+  });
+
+  $("product-dropdown") && $("product-dropdown").classList.remove("open");
+  moveAvatarToQuizPanel();
+
+  $("setup-screen").style.display    = "none";
+  $("quiz-screen").style.display     = "flex";
+  $("progress-header").style.display = "flex";
+  $("score-badge").style.display     = "flex";
+
+  showLoadingState();
+
+  const selCount = state.selectedProducts.length;
+  if (selCount === 1) {
+    speak(`Je prépare ${state.questionCount} scénarios de vente sur ${state.selectedProducts[0]}…`);
+  } else if (selCount > 1) {
+    speak(`Je prépare ${state.questionCount} scénarios sur ${selCount} produits sélectionnés…`);
+  } else {
+    speak("Je prépare vos scénarios de vente, un moment…");
+  }
+
+  startSSEStream();
+}
+
+function showLoadingState() {
+  $("waiting-state").style.display  = "flex";
+  $("question-area").style.display  = "none";
+  const lp = $("load-progress");
+  if (lp) lp.style.display = "flex";
+  updateLoadBar(0, state.totalExpected);
+}
+
+// ── SSE Stream ────────────────────────────────────────────────────────────────
+function startSSEStream() {
+  const body = {
+    products:       state.selectedProducts,
+    difficulty:     state.difficulty,
+    question_count: state.questionCount,
+  };
+
+  fetch(`${API_BASE}/quiz-commercial/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer    = "";
+
+    function pump() {
+      reader.read().then(({ done, value }) => {
+        if (done) { state.streamDone = true; state.generating = false; checkAutoStart(); return; }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try { processSSEEvent(JSON.parse(line.slice(6))); } catch (_) {}
+          }
+        }
+        pump();
+      }).catch(err => {
+        console.error("[QuizCommercial] Stream error:", err);
+        state.streamDone = true;
+        state.generating = false;
+        if (state.questions.length === 0)
+          returnToSetup("Erreur lors du chargement des questions.");
+        else checkAutoStart();
+      });
+    }
+    pump();
+  }).catch(err => {
+    console.error("[QuizCommercial] Fetch error:", err);
+    returnToSetup("Impossible de contacter le serveur.");
+  });
+}
+
+function checkAutoStart() {
+  if (state.questions.length > 0 && $("waiting-state").style.display !== "none") {
+    $("waiting-state").style.display = "none";
+    $("question-area").style.display = "block";
+    loadQuestion(0);
+  }
+}
+
+function processSSEEvent(event) {
+  if (event.type === "loading") {
+    state.totalExpected = event.total || state.questionCount;
+    updateLoadBar(0, state.totalExpected);
+  }
+
+  if (event.type === "question") {
+    const q = event.question;
+    state.questions.push(q);
+    updateLoadBar(state.questions.length, state.totalExpected);
+
+    if (state.questions.length === 1) {
+      $("waiting-state").style.display = "none";
+      $("question-area").style.display = "block";
+      loadQuestion(0);
+    }
+    if (_waitingForNext && state.questions.length > state.current + 1) {
+      _waitingForNext = false;
+      $("next-btn").disabled = false;
+      loadQuestion(state.current + 1);
+    }
+  }
+
+  if (event.type === "done") {
+    state.streamDone = true;
+    state.generating = false;
+    updateLoadBar(state.questions.length, state.questions.length);
+    const lp = $("load-progress");
+    if (lp) setTimeout(() => lp.style.display = "none", 1500);
+    if (state.questions.length === 0)
+      returnToSetup("Aucune question générée. Vérifiez votre base de données.");
+  }
+
+  if (event.type === "error") {
+    console.error("[QuizCommercial] Erreur serveur:", event.message);
+    if (state.questions.length === 0)
+      returnToSetup(event.message || "Erreur lors de la génération des questions.");
+  }
+}
+
+function updateLoadBar(loaded, total) {
+  const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+  if ($("load-fill")) $("load-fill").style.width = `${pct}%`;
+  if ($("load-label")) $("load-label").textContent = `Scénarios prêts : ${loaded} / ${total}`;
+}
+
+// ── Affichage d'une question ──────────────────────────────────────────────────
+function loadQuestion(idx) {
+  if (idx >= state.questions.length) return;
+
+  const q = state.questions[idx];
+  state.current  = idx;
+  state.answered = false;
+  updateHeader();
+
+  $("q-number").textContent = `Q${idx + 1}`;
+  $("q-topic").textContent  = q.product || "Formation VITAL SA";
+
+  const levelLabels = { facile: "Débutant", moyen: "Confirmé", difficile: "Expert" };
+  $("q-difficulty-badge").textContent = levelLabels[state.difficulty] || state.difficulty;
+
+  // Badge compétence vente
+  const skillBadge = $("sales-skill-badge");
+  const skillText  = $("sales-skill-text");
+  if (q.sales_skill && skillBadge && skillText) {
+    skillText.textContent   = q.sales_skill;
+    skillBadge.style.display = "inline-flex";
+  } else if (skillBadge) {
+    skillBadge.style.display = "none";
+  }
+
+  $("question-text").textContent = q.question;
+
+  const grid    = $("choices-grid");
+  grid.innerHTML = "";
+  const letters  = ["A", "B", "C", "D"];
+
+  q.choices.forEach((choice, i) => {
+    const btn = document.createElement("button");
+    btn.className = "choice-btn";
+    btn.innerHTML = `
+      <span class="choice-letter">${letters[i]}</span>
+      <span class="choice-text">${choice}</span>
+    `;
+    btn.addEventListener("click", () => handleAnswer(i, q));
+    grid.appendChild(btn);
+  });
+
+  $("explanation-box").style.display = "none";
+  $("action-row").style.display      = "none";
+
+  const panel = document.querySelector(".question-panel");
+  if (panel) panel.scrollTop = 0;
+
+  speak(`Scénario ${idx + 1} : ${q.question}`);
+}
+
+function updateHeader() {
+  const total = state.streamDone ? state.questions.length : state.totalExpected;
+  if ($("q-counter"))
+    $("q-counter").textContent = `Question ${state.current + 1} / ${total}`;
+  if ($("progress-fill-mini"))
+    $("progress-fill-mini").style.width = `${((state.current) / Math.max(total, 1)) * 100}%`;
+  if ($("score-live"))
+    $("score-live").textContent = `${state.score} / ${state.current}`;
+  updateDonut();
+}
+
+function updateDonut() {
+  const total = state.current;
+  const pct   = total > 0 ? Math.round((state.score / total) * 100) : 0;
+  const arc   = $("donut-arc");
+  const donutPct = $("donut-pct");
+  if (arc) {
+    const circumference = 201;
+    arc.style.strokeDashoffset = circumference - (circumference * pct / 100);
+    // couleur ambre fixe pour le quiz commercial
+    arc.style.stroke = pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : "#ef4444";
+  }
+  if (donutPct) donutPct.textContent = `${pct}%`;
+}
+
+// ── Réponse ────────────────────────────────────────────────────────────────────
+function handleAnswer(chosenIdx, q) {
+  if (state.answered) return;
+  state.answered = true;
+
+  const correct = q.correct_index;
+  const isOk    = chosenIdx === correct;
+  if (isOk) state.score++;
+
+  const buttons = $("choices-grid").querySelectorAll(".choice-btn");
+  buttons.forEach((btn, i) => {
+    btn.disabled = true;
+    if (i === correct) btn.classList.add("correct");
+    if (i === chosenIdx && !isOk) btn.classList.add("wrong");
+  });
+
+  state.history.push({
+    question:    q.question,
+    product:     q.product || "—",
+    sales_skill: q.sales_skill || "—",
+    chosen:      q.choices[chosenIdx],
+    correct:     q.choices[correct],
+    ok:          isOk,
+    explanation: q.explanation || "",
+  });
+
+  $("explanation-icon").textContent    = isOk ? "✓" : "✗";
+  $("explanation-icon").className      = `explanation-icon ${isOk ? "ok" : "bad"}`;
+  $("explanation-verdict").textContent = isOk
+    ? "Excellente approche commerciale !"
+    : "Pas tout à fait — voici la meilleure approche :";
+  $("explanation-text").textContent = q.explanation || "Consultez les fiches de vente pour plus de détails.";
+  $("explanation-box").style.display = "flex";
+
+  const isLast = state.current >= state.questions.length - 1 && state.streamDone;
+  const nextBtn = $("next-btn");
+  nextBtn.innerHTML = isLast
+    ? `Voir mes résultats <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+    : `Scénario suivant <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+  $("action-row").style.display = "flex";
+  updateHeader();
+
+  if (isOk) {
+    speak("Parfait ! C'est exactement le bon argument.");
+  } else {
+    speak(`La meilleure approche était : ${q.choices[correct]}.`);
+  }
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+let _waitingForNext = false;
+
+$("next-btn").addEventListener("click", goToNext);
+
+function goToNext() {
+  const nextIdx = state.current + 1;
+  if (nextIdx < state.questions.length) { loadQuestion(nextIdx); return; }
+  if (state.streamDone) { showResults(); return; }
+  _waitingForNext = true;
+  $("next-btn").disabled    = true;
+  $("next-btn").textContent = "Chargement…";
+  const check = setInterval(() => {
+    if (state.questions.length > nextIdx) {
+      clearInterval(check);
+      _waitingForNext = false;
+      $("next-btn").disabled = false;
+      loadQuestion(nextIdx);
+    } else if (state.streamDone) {
+      clearInterval(check);
+      _waitingForNext = false;
+      showResults();
+    }
+  }, 200);
+}
+
+// ── Résultats ──────────────────────────────────────────────────────────────────
+function showResults() {
+  $("quiz-screen").style.display     = "none";
+  $("results-screen").style.display  = "flex";
+  $("progress-header").style.display = "none";
+  $("score-badge").style.display     = "none";
+
+  const total = state.history.length;
+  const pct   = total ? Math.round((state.score / total) * 100) : 0;
+
+  $("results-score-num").textContent   = state.score;
+  $("results-score-denom").textContent = `/ ${total}`;
+
+  let title, message;
+  if (pct >= 80) {
+    title   = "Top vendeur ! 🏆";
+    message = `Vous maîtrisez parfaitement les techniques de vente VITAL SA. Score : ${pct}%`;
+  } else if (pct >= 60) {
+    title   = "Bon commercial ! 👍";
+    message = `Vous êtes sur la bonne voie. Quelques objections à travailler encore. Score : ${pct}%`;
+  } else {
+    title   = "À renforcer 📚";
+    message = `Les techniques de vente demandent de la pratique. Retravaillez les scénarios. Score : ${pct}%`;
+  }
+
+  $("results-title").textContent   = title;
+  $("results-message").textContent = message;
+
+  // Résumé des compétences travaillées
+  const skillsContainer = $("skills-summary");
+  if (skillsContainer) {
+    const skillCounts = {};
+    const skillOk     = {};
+    state.history.forEach(item => {
+      const s = item.sales_skill || "Autre";
+      skillCounts[s] = (skillCounts[s] || 0) + 1;
+      skillOk[s]     = (skillOk[s] || 0) + (item.ok ? 1 : 0);
+    });
+    skillsContainer.innerHTML = "";
+    Object.entries(skillCounts).forEach(([skill, count]) => {
+      const ok  = skillOk[skill] || 0;
+      const pct = Math.round((ok / count) * 100);
+      const tag = document.createElement("span");
+      tag.className = "sales-skill-badge";
+      tag.style.borderColor = pct >= 70 ? "rgba(16,185,129,0.4)" : "rgba(245,158,11,0.3)";
+      tag.style.color       = pct >= 70 ? "#10b981" : "#f59e0b";
+      tag.innerHTML = `${skill} <strong style="margin-left:4px">${pct}%</strong>`;
+      skillsContainer.appendChild(tag);
+    });
+  }
+
+  // Détail par question
+  const breakdown = $("results-breakdown");
+  breakdown.innerHTML = "";
+  state.history.forEach((item, i) => {
+    const div = document.createElement("div");
+    div.className = `result-item ${item.ok ? "correct" : "wrong"}`;
+    div.innerHTML = `
+      <div class="result-item-header">
+        <span class="result-icon">${item.ok ? "✓" : "✗"}</span>
+        <span class="result-product">${item.product}</span>
+        <span class="result-qnum">Q${i + 1}</span>
+        ${item.sales_skill && item.sales_skill !== "—" ? `<span class="sales-skill-badge" style="font-size:10px">${item.sales_skill}</span>` : ""}
+      </div>
+      <p class="result-question">${item.question}</p>
+      ${!item.ok ? `
+        <p class="result-wrong-answer">Votre réponse : <em>${item.chosen}</em></p>
+        <p class="result-correct-answer">Meilleure approche : <strong>${item.correct}</strong></p>
+      ` : ""}
+      ${item.explanation ? `<p class="result-explanation">${item.explanation}</p>` : ""}
+    `;
+    breakdown.appendChild(div);
+  });
+
+  const ring = $("results-ring");
+  if (ring) ring.style.borderColor = pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : "#ef4444";
+
+  speak(title + " " + message);
+}
+
+// ── Retour setup ───────────────────────────────────────────────────────────────
+function returnToSetup(msg) {
+  $("quiz-screen").style.display     = "none";
+  $("setup-screen").style.display    = "flex";
+  $("progress-header").style.display = "none";
+  $("score-badge").style.display     = "none";
+  moveAvatarToSetup();
+  if (msg) {
+    const statusEl = $("status-text");
+    if (statusEl) statusEl.textContent = msg;
+    else alert(msg);
+  }
+}
+
+$("restart-btn").addEventListener("click", () => {
+  $("results-screen").style.display = "none";
+  $("setup-screen").style.display   = "flex";
+  moveAvatarToSetup();
+  speak("Configurez votre quiz et recommencez quand vous êtes prêt !");
+});
+
+// ── Utilitaire ─────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+</script>
+</body>
+</html>
