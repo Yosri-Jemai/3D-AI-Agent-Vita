@@ -599,7 +599,7 @@ async def get_suggestions(req: SuggestionsRequest):
         fallback = _FALLBACK_SUGGESTIONS.get(mode, _FALLBACK_SUGGESTIONS["medical"])[:req.n]
         return {"suggestions": fallback, "lang": lang, "mode": mode, "fallback": True}
 === ./backend/api/routes_mindmap.py ===
-# backend/api/routes_mindmap.py - Version complète avec Token Factory
+# backend/api/routes_mindmap.py
 
 import os
 import json
@@ -608,14 +608,13 @@ import math
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 router = APIRouter()
 
-# Utiliser Token Factory (qui fonctionne déjà)
-TOKEN_FACTORY_API_KEY = os.getenv("TOKEN_FACTORY_API_KEY", "")
+TOKEN_FACTORY_API_KEY  = os.getenv("TOKEN_FACTORY_API_KEY", "")
 TOKEN_FACTORY_BASE_URL = os.getenv("TOKEN_FACTORY_BASE_URL", "https://tokenfactory.esprit.tn")
-TOKEN_FACTORY_MODEL = os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct")
+TOKEN_FACTORY_MODEL    = os.getenv("TOKEN_FACTORY_MODEL", "hosted_vllm/Llama-3.1-70B-Instruct")
 
 
 class ConvMsg(BaseModel):
@@ -624,260 +623,100 @@ class ConvMsg(BaseModel):
 
 class MindmapRequest(BaseModel):
     conversation: List[ConvMsg]
-    mode: Optional[str] = "medical"
-    lang: Optional[str] = "fr"
+    mode:         Optional[str] = "medical"
+    lang:         Optional[str] = "fr"
 
+
+# ── LLM extraction ────────────────────────────────────────────────────────────
 
 async def extract_concepts(conversation: list, mode: str, lang: str) -> dict:
-    """Call Token Factory to extract mindmap concepts from conversation."""
+    # Only keep meaningful exchanges (skip greetings/mode-selection messages)
+    meaningful = [
+        m for m in conversation
+        if len(m.get("text", "").strip()) > 40
+        and not any(kw in m.get("text", "").lower() for kw in [
+            "formation médicale", "formation commerciale", "lequel de ces",
+            "bienvenue", "mode de formation", "quel mode", "which mode",
+        ])
+    ]
+    recent = meaningful[-20:] if len(meaningful) > 20 else meaningful
 
-    conv_text = "\n".join([
-        f"{m['role'].upper()}: {m['text'][:250]}"
-        for m in conversation[-30:]
+    # Build conversation text — user questions + AI answers only
+    conv_text = "\n\n".join([
+        f"{'[QUESTION]' if m['role'] == 'user' else '[RÉPONSE]'}: {m['text'][:350]}"
+        for m in recent
     ])
 
     if lang == "ar":
-        lang_instruction = "Respond with labels in Arabic. Keep product names and scientific terms in French/English."
+        lang_instruction = "Write all labels in Arabic. Keep product names and scientific terms in French/English."
     elif lang == "en":
-        lang_instruction = "Respond with all labels in English."
+        lang_instruction = "Write all labels in English."
     else:
-        lang_instruction = "Respond with all labels in French."
+        lang_instruction = "Write all labels in French."
 
-    prompt = f"""You are an expert pharmaceutical trainer analyzing a training session.
-Analyze this conversation and extract a structured mindmap.
+    prompt = f"""You are extracting a mindmap from a real pharmaceutical training conversation.
 
 CONVERSATION:
 {conv_text}
 
+Your task: build a mindmap that summarizes EXACTLY what was discussed above — nothing else.
+
 {lang_instruction}
 
-Return ONLY valid JSON (no markdown, no explanation):
+MANDATORY RULES:
+1. The "center" node = the PRODUCT NAME mentioned (e.g. "Guarana", "Dermalo"). If no product, use the main topic.
+2. Each BRANCH = a THEME that was ACTUALLY discussed in the conversation above.
+   Examples of valid branches based on content: "Effets positifs", "Composition", "Mécanisme d'action", "Points forts", "Contre-indications"
+   FORBIDDEN: generic branches like "Techniques de vente", "Avantages cliniques", "Introduction", "Conclusion" if they were NOT mentioned.
+3. Each CHILD = a SPECIFIC FACT, INGREDIENT, or CONCEPT that was EXPLICITLY mentioned in the conversation.
+   Example: if the conversation says "guaranine, un alcaloïde similaire à la caféine", then children = ["Guaranine", "Alcaloïde caféine"]
+4. DO NOT invent or hallucinate — every branch and child must come from the conversation text above.
+5. Labels must be SHORT (branch: max 3 words, children: max 4 words) and COMPLETE — never truncate with "..."
+
+Return ONLY valid JSON:
 {{
-  "center": "Main topic or product name (short, max 3 words)",
+  "center": "product or topic name",
   "branches": [
     {{
-      "label": "Branch name (2-4 words)",
+      "label": "theme from conversation",
       "color": "#hexcolor",
-      "children": ["concept 1", "concept 2", "concept 3"]
+      "children": ["specific fact 1", "specific fact 2", "specific fact 3"]
     }}
   ]
 }}
 
-Rules:
-- 4 to 6 branches maximum
-- Each branch: 2 to 4 children
-- Branch colors: choose from #7eb8f7, #c084fc, #34d399, #f59e0b, #f87171, #60a5fa
-- Labels must be short and specific to THIS conversation
-- Focus on: products discussed, key benefits, objections raised, clinical concepts, sales techniques
-- No generic labels like "Introduction" or "General"
-"""
+Colors to use: #7eb8f7, #c084fc, #34d399, #f59e0b, #f87171, #60a5fa
+Max 5 branches, max 3 children per branch.
+JSON only, no markdown, no explanation:"""
 
     headers = {
         "Authorization": f"Bearer {TOKEN_FACTORY_API_KEY}",
         "Content-Type": "application/json",
     }
-
     payload = {
         "model": TOKEN_FACTORY_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens": 800,
+        "temperature": 0.2,
+        "max_tokens": 700,
     }
-
     url = f"{TOKEN_FACTORY_BASE_URL}/api/chat/completions"
 
     async with httpx.AsyncClient(timeout=45.0, verify=False) as client:
-        try:
-            res = await client.post(url, headers=headers, json=payload)
-            res.raise_for_status()
-            data = res.json()
-        except httpx.HTTPStatusError as e:
-            print(f"[mindmap] HTTP error: {e.response.status_code}")
-            print(f"[mindmap] Response: {e.response.text[:200]}")
-            raise ValueError(f"API error: {e.response.status_code}")
-        except Exception as e:
-            print(f"[mindmap] Request error: {e}")
-            raise
+        res = await client.post(url, headers=headers, json=payload)
+        res.raise_for_status()
+        data = res.json()
 
     raw = data["choices"][0]["message"]["content"].strip()
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().strip("`")
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not match:
-        raise ValueError(f"No JSON found in response: {raw[:200]}")
+        raise ValueError(f"No JSON in response: {raw[:200]}")
     return json.loads(match.group())
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SVG GENERATOR - À AJOUTER (ces fonctions manquaient)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
-    """
-    Generate a beautiful radial mindmap SVG in pure Python.
-    No external dependencies — just math and string building.
-    """
-
-    W, H = 900, 700
-    CX, CY = W // 2, H // 2
-
-    center_label = data.get("center", "Session")
-    branches = data.get("branches", [])
-    if not branches:
-        branches = [{"label": "No concepts", "color": "#7eb8f7", "children": []}]
-
-    # Clamp branches
-    branches = branches[:6]
-    n_branches = len(branches)
-
-    # ── SVG header + defs ────────────────────────────────────────────────────
-    lines = []
-    lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" style="background:transparent;font-family:\'Jost\',system-ui,sans-serif;">')
-
-    # Defs: gradients + filters
-    lines.append('<defs>')
-
-    # Center gradient
-    lines.append('''
-  <radialGradient id="centerGrad" cx="50%" cy="50%" r="50%">
-    <stop offset="0%" stop-color="#1e2d4a"/>
-    <stop offset="100%" stop-color="#0d1120"/>
-  </radialGradient>
-  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-    <feGaussianBlur stdDeviation="3" result="blur"/>
-    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-  </filter>
-  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-    <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(0,0,0,0.4)"/>
-  </filter>
-  <filter id="nodeShadow" x="-30%" y="-30%" width="160%" height="160%">
-    <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="rgba(0,0,0,0.3)"/>
-  </filter>
-''')
-
-    # Branch gradients
-    for i, branch in enumerate(branches):
-        color = branch.get("color", "#7eb8f7")
-        lines.append(f'''
-  <linearGradient id="branchGrad{i}" x1="0%" y1="0%" x2="100%" y2="0%">
-    <stop offset="0%" stop-color="{color}" stop-opacity="0.9"/>
-    <stop offset="100%" stop-color="{color}" stop-opacity="0.5"/>
-  </linearGradient>''')
-
-    lines.append('</defs>')
-
-    # ── Background subtle grid ───────────────────────────────────────────────
-    lines.append(f'''
-<rect width="{W}" height="{H}" fill="url(#centerGrad)" rx="16"/>
-<g opacity="0.04" stroke="white" stroke-width="0.5">''')
-    for gx in range(0, W, 40):
-        lines.append(f'  <line x1="{gx}" y1="0" x2="{gx}" y2="{H}"/>')
-    for gy in range(0, H, 40):
-        lines.append(f'  <line x1="0" y1="{gy}" x2="{W}" y2="{gy}"/>')
-    lines.append('</g>')
-
-    # ── Outer decorative ring ────────────────────────────────────────────────
-    lines.append(f'<circle cx="{CX}" cy="{CY}" r="280" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>')
-    lines.append(f'<circle cx="{CX}" cy="{CY}" r="200" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>')
-
-    # ── Branch radius settings ────────────────────────────────────────────────
-    R_BRANCH = 160
-    R_CHILD = 260
-    BRANCH_NODE_R = 36
-    CHILD_NODE_R = 22
-
-    branch_angles = []
-    for i in range(n_branches):
-        angle_deg = (360 / n_branches) * i - 90
-        branch_angles.append(math.radians(angle_deg))
-
-    # ── Draw connections (lines) FIRST ────────────────────────────────────────
-    for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
-        color = branch.get("color", "#7eb8f7")
-        bx = CX + R_BRANCH * math.cos(angle)
-        by = CY + R_BRANCH * math.sin(angle)
-        children = branch.get("children", [])
-        n_children = len(children)
-
-        # Center → Branch
-        lines.append(f'<line x1="{CX}" y1="{CY}" x2="{bx:.1f}" y2="{by:.1f}" stroke="{color}" stroke-width="2.5" stroke-opacity="0.6" stroke-linecap="round"/>')
-
-        # Branch → Children
-        if n_children:
-            spread = math.radians(25)
-            child_start = angle - spread * (n_children - 1) / 2
-            for j, child in enumerate(children[:4]):
-                child_angle = child_start + spread * j
-                r_child = R_CHILD + (j % 2) * 20
-                cx2 = CX + r_child * math.cos(child_angle)
-                cy2 = CY + r_child * math.sin(child_angle)
-                lines.append(f'<line x1="{bx:.1f}" y1="{by:.1f}" x2="{cx2:.1f}" y2="{cy2:.1f}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.35" stroke-linecap="round" stroke-dasharray="4 3"/>')
-
-    # ── Draw branch nodes ─────────────────────────────────────────────────────
-    for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
-        color = branch.get("color", "#7eb8f7")
-        label = branch.get("label", f"Branch {i+1}")
-        children = branch.get("children", [])
-
-        bx = CX + R_BRANCH * math.cos(angle)
-        by = CY + R_BRANCH * math.sin(angle)
-
-        # Branch node circle
-        lines.append(f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{BRANCH_NODE_R}" fill="{color}" fill-opacity="0.18" stroke="{color}" stroke-width="2" filter="url(#nodeShadow)"/>')
-        lines.append(f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{BRANCH_NODE_R - 8}" fill="{color}" fill-opacity="0.1"/>')
-
-        # Branch label — wrap at ~12 chars
-        words = label.split()
-        if len(label) > 12 and len(words) > 1:
-            mid = len(words) // 2
-            line1 = " ".join(words[:mid])
-            line2 = " ".join(words[mid:])
-            lines.append(f'<text x="{bx:.1f}" y="{by - 5:.1f}" text-anchor="middle" fill="{color}" font-size="11" font-weight="600" letter-spacing="0.3">{_esc(line1)}</text>')
-            lines.append(f'<text x="{bx:.1f}" y="{by + 8:.1f}" text-anchor="middle" fill="{color}" font-size="11" font-weight="600" letter-spacing="0.3">{_esc(line2)}</text>')
-        else:
-            lines.append(f'<text x="{bx:.1f}" y="{by + 4:.1f}" text-anchor="middle" fill="{color}" font-size="11" font-weight="600" letter-spacing="0.3">{_esc(label)}</text>')
-
-        # Children nodes
-        n_children = len(children)
-        spread = math.radians(25)
-        child_start = angle - spread * (n_children - 1) / 2
-        for j, child in enumerate(children[:4]):
-            child_angle = child_start + spread * j
-            r_child = R_CHILD + (j % 2) * 20
-            cx2 = CX + r_child * math.cos(child_angle)
-            cy2 = CY + r_child * math.sin(child_angle)
-
-            child_label = str(child)
-            if len(child_label) > 16:
-                child_label = child_label[:14] + "…"
-
-            lines.append(f'<circle cx="{cx2:.1f}" cy="{cy2:.1f}" r="{CHILD_NODE_R}" fill="rgba(13,17,32,0.85)" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
-            lines.append(f'<text x="{cx2:.1f}" y="{cy2 + 4:.1f}" text-anchor="middle" fill="rgba(232,234,240,0.85)" font-size="9.5" font-weight="400">{_esc(child_label)}</text>')
-
-    # ── Center node ───────────────────────────────────────────────────────────
-    CENTER_R = 54
-    lines.append(f'<circle cx="{CX}" cy="{CY}" r="{CENTER_R + 8}" fill="none" stroke="rgba(126,184,247,0.15)" stroke-width="1.5"/>')
-    lines.append(f'<circle cx="{CX}" cy="{CY}" r="{CENTER_R}" fill="url(#centerGrad)" stroke="rgba(126,184,247,0.5)" stroke-width="2" filter="url(#shadow)"/>')
-
-    # Center text wrapping
-    center_words = center_label.split()
-    if len(center_label) > 14 and len(center_words) > 1:
-        mid = len(center_words) // 2
-        l1 = " ".join(center_words[:mid])
-        l2 = " ".join(center_words[mid:])
-        lines.append(f'<text x="{CX}" y="{CY - 5}" text-anchor="middle" fill="white" font-size="13" font-weight="600" letter-spacing="0.5">{_esc(l1)}</text>')
-        lines.append(f'<text x="{CX}" y="{CY + 11}" text-anchor="middle" fill="white" font-size="13" font-weight="600" letter-spacing="0.5">{_esc(l2)}</text>')
-    else:
-        lines.append(f'<text x="{CX}" y="{CY + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="600" letter-spacing="0.5">{_esc(center_label)}</text>')
-
-    # ── Watermark ─────────────────────────────────────────────────────────────
-    lines.append(f'<text x="{W - 12}" y="{H - 8}" text-anchor="end" fill="rgba(255,255,255,0.12)" font-size="9" font-style="italic">VitalAgent · AI Mindmap</text>')
-
-    lines.append('</svg>')
-    return "\n".join(lines)
-
+# ── SVG generator — pill nodes, full text, clean layout ──────────────────────
 
 def _esc(s: str) -> str:
-    """Escape XML special chars."""
     return (str(s)
             .replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -885,19 +724,260 @@ def _esc(s: str) -> str:
             .replace('"', "&quot;"))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# API ENDPOINT
-# ══════════════════════════════════════════════════════════════════════════════
+def _wrap_words(label: str, max_chars: int = 14) -> list[str]:
+    """Split label into lines of at most max_chars characters."""
+    words = label.split()
+    lines, current = [], ""
+    for w in words:
+        if current and len(current) + 1 + len(w) > max_chars:
+            lines.append(current)
+            current = w
+        else:
+            current = (current + " " + w).strip() if current else w
+    if current:
+        lines.append(current)
+    return lines or [label]
+
+
+def _pill(x: float, y: float, text: str, color: str,
+          font_size: int = 11, padding_x: int = 14, padding_y: int = 8,
+          is_branch: bool = False) -> tuple[str, float, float]:
+    """
+    Render a pill (rounded rect) centered at (x, y).
+    Returns (svg_string, half_width, half_height).
+    """
+    lines      = _wrap_words(text, max_chars=16 if is_branch else 18)
+    line_h     = font_size + 4
+    total_h    = len(lines) * line_h + padding_y * 2
+    max_chars  = max(len(l) for l in lines)
+    total_w    = max(max_chars * (font_size * 0.62) + padding_x * 2, 70 if is_branch else 80)
+
+    hw = total_w / 2
+    hh = total_h / 2
+    rx = min(hh, 14)
+
+    fill_opacity  = "0.20" if is_branch else "0.14"
+    stroke_w      = "2"    if is_branch else "1.5"
+    stroke_opacity = "1"   if is_branch else "0.6"
+    fw            = "700"  if is_branch else "500"
+
+    parts = []
+    parts.append(
+        f'<rect x="{x - hw:.1f}" y="{y - hh:.1f}" '
+        f'width="{total_w:.1f}" height="{total_h:.1f}" rx="{rx}" '
+        f'fill="{color}" fill-opacity="{fill_opacity}" '
+        f'stroke="{color}" stroke-width="{stroke_w}" stroke-opacity="{stroke_opacity}"/>'
+    )
+
+    # Multi-line text
+    start_y = y - (len(lines) - 1) * line_h / 2
+    for i, line in enumerate(lines):
+        ly = start_y + i * line_h
+        parts.append(
+            f'<text x="{x:.1f}" y="{ly:.1f}" '
+            f'text-anchor="middle" dominant-baseline="central" '
+            f'fill="{color}" font-size="{font_size}" font-weight="{fw}" '
+            f'letter-spacing="0.2">{_esc(line)}</text>'
+        )
+
+    return "\n".join(parts), hw, hh
+
+
+def _child_pill(x: float, y: float, text: str, color: str) -> tuple[str, float, float]:
+    """Small child node — dark bg, colored border, white text."""
+    lines   = _wrap_words(text, max_chars=16)
+    font_sz = 10
+    line_h  = font_sz + 4
+    total_h = len(lines) * line_h + 10
+    max_c   = max(len(l) for l in lines)
+    total_w = max(max_c * (font_sz * 0.64) + 20, 70)
+
+    hw = total_w / 2
+    hh = total_h / 2
+    rx = min(hh, 10)
+
+    parts = []
+    parts.append(
+        f'<rect x="{x - hw:.1f}" y="{y - hh:.1f}" '
+        f'width="{total_w:.1f}" height="{total_h:.1f}" rx="{rx}" '
+        f'fill="rgba(10,14,30,0.88)" '
+        f'stroke="{color}" stroke-width="1.5" stroke-opacity="0.7"/>'
+    )
+    start_y = y - (len(lines) - 1) * line_h / 2
+    for i, line in enumerate(lines):
+        ly = start_y + i * line_h
+        parts.append(
+            f'<text x="{x:.1f}" y="{ly:.1f}" '
+            f'text-anchor="middle" dominant-baseline="central" '
+            f'fill="rgba(230,234,244,0.92)" font-size="{font_sz}" font-weight="400">'
+            f'{_esc(line)}</text>'
+        )
+
+    return "\n".join(parts), hw, hh
+
+
+def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
+    W, H   = 1000, 720
+    CX, CY = W // 2, H // 2
+
+    center_label = data.get("center", "Session")
+    branches     = data.get("branches", [])[:5]
+    n_branches   = len(branches)
+
+    if not branches:
+        branches   = [{"label": "No concepts", "color": "#7eb8f7", "children": []}]
+        n_branches = 1
+
+    lines = []
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
+        f'style="background:transparent;font-family:\'Inter\',\'Jost\',system-ui,sans-serif;">'
+    )
+
+    # ── Defs ─────────────────────────────────────────────────────────────────
+    lines.append('<defs>')
+    lines.append('''
+  <radialGradient id="bgGrad" cx="50%" cy="50%" r="70%">
+    <stop offset="0%" stop-color="#0f1829"/>
+    <stop offset="100%" stop-color="#070b14"/>
+  </radialGradient>
+  <radialGradient id="centerGrad" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#1a2540"/>
+    <stop offset="100%" stop-color="#0a0f1e"/>
+  </radialGradient>
+  <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+    <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="rgba(0,0,0,0.5)"/>
+  </filter>
+  <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="4" result="blur"/>
+    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>''')
+    lines.append('</defs>')
+
+    # ── Background ────────────────────────────────────────────────────────────
+    lines.append(f'<rect width="{W}" height="{H}" fill="url(#bgGrad)" rx="18"/>')
+
+    # Subtle dot pattern
+    lines.append('<g opacity="0.035">')
+    for gx in range(30, W, 36):
+        for gy in range(30, H, 36):
+            lines.append(f'<circle cx="{gx}" cy="{gy}" r="1" fill="white"/>')
+    lines.append('</g>')
+
+    # Outer decorative rings
+    lines.append(f'<circle cx="{CX}" cy="{CY}" r="295" fill="none" stroke="rgba(255,255,255,0.025)" stroke-width="1"/>')
+    lines.append(f'<circle cx="{CX}" cy="{CY}" r="195" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="6 4"/>')
+
+    # ── Branch positions ──────────────────────────────────────────────────────
+    R_BRANCH = 175   # center → branch node center
+    R_CHILD  = 295   # center → child node center (approx, adjusted per branch)
+
+    branch_angles = []
+    for i in range(n_branches):
+        deg = (360 / n_branches) * i - 90
+        branch_angles.append(math.radians(deg))
+
+    # Pre-compute branch positions
+    branch_positions = [
+        (CX + R_BRANCH * math.cos(a), CY + R_BRANCH * math.sin(a))
+        for a in branch_angles
+    ]
+
+    # ── Draw connector lines FIRST (under nodes) ──────────────────────────────
+    for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
+        color    = branch.get("color", "#7eb8f7")
+        bx, by   = branch_positions[i]
+        children = branch.get("children", [])[:3]
+        n_ch     = len(children)
+
+        # Center → branch (solid)
+        lines.append(
+            f'<line x1="{CX}" y1="{CY}" x2="{bx:.1f}" y2="{by:.1f}" '
+            f'stroke="{color}" stroke-width="2.5" stroke-opacity="0.55" stroke-linecap="round"/>'
+        )
+
+        # Branch → children (dashed, spread evenly around branch angle)
+        if n_ch:
+            spread = math.radians(22)
+            start  = angle - spread * (n_ch - 1) / 2
+            for j in range(n_ch):
+                child_angle = start + spread * j
+                # Alternate distances slightly for visual rhythm
+                r = R_CHILD + (10 if j % 2 == 0 else -10)
+                cx2 = CX + r * math.cos(child_angle)
+                cy2 = CY + r * math.sin(child_angle)
+                lines.append(
+                    f'<line x1="{bx:.1f}" y1="{by:.1f}" x2="{cx2:.1f}" y2="{cy2:.1f}" '
+                    f'stroke="{color}" stroke-width="1.5" stroke-opacity="0.35" '
+                    f'stroke-linecap="round" stroke-dasharray="5 4"/>'
+                )
+
+    # ── Draw branch nodes ─────────────────────────────────────────────────────
+    for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
+        color    = branch.get("color", "#7eb8f7")
+        label    = branch.get("label", f"Branche {i+1}")
+        children = branch.get("children", [])[:3]
+        n_ch     = len(children)
+        bx, by   = branch_positions[i]
+
+        svg_pill, hw, hh = _pill(bx, by, label, color, font_size=12,
+                                 padding_x=16, padding_y=9, is_branch=True)
+        lines.append(f'<g filter="url(#shadow)">{svg_pill}</g>')
+
+        # ── Children ──────────────────────────────────────────────────────────
+        if n_ch:
+            spread = math.radians(22)
+            start  = angle - spread * (n_ch - 1) / 2
+            for j, child in enumerate(children):
+                child_angle = start + spread * j
+                r = R_CHILD + (10 if j % 2 == 0 else -10)
+                cx2 = CX + r * math.cos(child_angle)
+                cy2 = CY + r * math.sin(child_angle)
+                svg_child, _, _ = _child_pill(cx2, cy2, str(child), color)
+                lines.append(svg_child)
+
+    # ── Center node ───────────────────────────────────────────────────────────
+    center_lines = _wrap_words(center_label, max_chars=12)
+    center_r     = 56
+    line_h_c     = 16
+    lines.append(
+        f'<circle cx="{CX}" cy="{CY}" r="{center_r + 10}" '
+        f'fill="none" stroke="rgba(126,184,247,0.12)" stroke-width="2"/>'
+    )
+    lines.append(
+        f'<circle cx="{CX}" cy="{CY}" r="{center_r}" '
+        f'fill="url(#centerGrad)" '
+        f'stroke="rgba(126,184,247,0.55)" stroke-width="2.5" '
+        f'filter="url(#shadow)"/>'
+    )
+    start_y_c = CY - (len(center_lines) - 1) * line_h_c / 2
+    for k, cl in enumerate(center_lines):
+        ly = start_y_c + k * line_h_c
+        lines.append(
+            f'<text x="{CX}" y="{ly:.1f}" '
+            f'text-anchor="middle" dominant-baseline="central" '
+            f'fill="white" font-size="14" font-weight="700" letter-spacing="0.4">'
+            f'{_esc(cl)}</text>'
+        )
+
+    # ── Watermark ─────────────────────────────────────────────────────────────
+    lines.append(
+        f'<text x="{W - 14}" y="{H - 10}" text-anchor="end" '
+        f'fill="rgba(255,255,255,0.1)" font-size="9" font-style="italic">'
+        f'VitalAgent · AI Mindmap</text>'
+    )
+
+    lines.append('</svg>')
+    return "\n".join(lines)
+
+
+# ── API endpoint ──────────────────────────────────────────────────────────────
 
 @router.post("/mindmap")
 async def generate_mindmap(request: MindmapRequest):
-    """
-    Generate a radial SVG mindmap from the session conversation.
-    Uses Token Factory for concept extraction.
-    """
     if not TOKEN_FACTORY_API_KEY:
         raise HTTPException(status_code=500, detail="TOKEN_FACTORY_API_KEY not set in .env")
-
     if len(request.conversation) < 2:
         raise HTTPException(status_code=400, detail="Conversation too short to generate a mindmap")
 
@@ -905,25 +985,18 @@ async def generate_mindmap(request: MindmapRequest):
 
     try:
         concepts = await extract_concepts(conversation, request.mode, request.lang)
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Token Factory API error: {e.response.status_code}")
     except Exception as e:
         print(f"[mindmap] concept extraction error: {e}")
-        # Fallback: generic structure
         concepts = {
             "center": "Session",
             "branches": [
-                {"label": "Topics", "color": "#7eb8f7", "children": ["Review conversation"]},
-                {"label": "Products", "color": "#c084fc", "children": ["Check session log"]},
-            ]
+                {"label": "Produits", "color": "#7eb8f7",  "children": ["Voir historique"]},
+                {"label": "Concepts", "color": "#c084fc",  "children": ["Relire session"]},
+            ],
         }
 
     svg = build_mindmap_svg(concepts, request.mode)
-    return {
-        "success": True,
-        "svg": svg,
-        "concepts": concepts,
-    }=== ./backend/api/routes_tts.py ===
+    return {"success": True, "svg": svg, "concepts": concepts}=== ./backend/api/routes_tts.py ===
 """
 backend/api/routes_tts.py
 ==========================
@@ -3391,6 +3464,68 @@ kbd{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;b
   max-width: 380px;
   line-height: 1.5;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   MINDMAP EXPORT BUTTONS — ajouter à la fin de style.css
+   ══════════════════════════════════════════════════════════════ */
+
+/* Les 3 boutons SVG / PNG / JPG partagent la même base */
+#mindmap-dl-png,
+#mindmap-dl-jpg,
+#mindmap-dl-svg {
+  padding: 5px 11px;
+  border-radius: 7px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* PNG — vert */
+#mindmap-dl-png {
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.07);
+  color: #22c55e;
+}
+#mindmap-dl-png:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: rgba(34, 197, 94, 0.6);
+}
+
+/* JPG — amber */
+#mindmap-dl-jpg {
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.07);
+  color: #f59e0b;
+}
+#mindmap-dl-jpg:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.6);
+}
+
+/* SVG — accent bleu */
+#mindmap-dl-svg {
+  border: 1px solid rgba(126, 184, 247, 0.35);
+  background: rgba(126, 184, 247, 0.07);
+  color: var(--accent);
+}
+#mindmap-dl-svg:hover:not(:disabled) {
+  background: rgba(126, 184, 247, 0.18);
+  border-color: rgba(126, 184, 247, 0.6);
+}
+
+/* Disabled state commun */
+#mindmap-dl-png:disabled,
+#mindmap-dl-jpg:disabled,
+#mindmap-dl-svg:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 === ./frontend/index.html ===
 <!DOCTYPE html>
 <html lang="en">
@@ -5286,27 +5421,26 @@ window.openMindmap = async function () {
   overlay.classList.add('open');
 
   // Reset UI
-  document.getElementById('mindmap-loading').style.display = 'flex';
+  document.getElementById('mindmap-loading').style.display    = 'flex';
   document.getElementById('mindmap-svg-container').style.display = 'none';
-  document.getElementById('mindmap-error').style.display = 'none';
-  document.getElementById('mindmap-dl-btn').disabled = true;
+  document.getElementById('mindmap-error').style.display      = 'none';
+  document.getElementById('mindmap-dl-btn').disabled          = true;
   _mindmapSvgCache = null;
 
-  // Détecter la langue depuis la conversation
+  // Détecter la langue
   const allText = window.conversationLog.map(m => m.text || '').join(' ');
   const arRatio = (allText.match(/[\u0600-\u06FF]/g) || []).length / Math.max(allText.length, 1);
-  const lang = arRatio > 0.15 ? 'ar'
+  const lang    = arRatio > 0.15 ? 'ar'
     : /\b(the|is|are|what|how)\b/i.test(allText) ? 'en'
     : 'fr';
 
-  // Détecter le mode (main.js expose trainingMode, commercial.js expose MODE)
   const mode = window.trainingMode || window.MODE || 'medical';
 
   try {
     const res = await fetch(`${_MINDMAP_API}/analytics/mindmap`, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body:    JSON.stringify({
         conversation: window.conversationLog.map(m => ({
           role: m.role === 'ai' ? 'assistant' : m.role,
           text: m.text || m.content || '',
@@ -5332,21 +5466,284 @@ window.openMindmap = async function () {
     container.innerHTML = data.svg;
     const svgEl = container.querySelector('svg');
     if (svgEl) {
-      svgEl.style.width  = '100%';
-      svgEl.style.height = '100%';
-      svgEl.style.maxHeight = '520px';
-      svgEl.style.borderRadius = '10px';
+      svgEl.style.width     = '100%';
+      svgEl.style.height    = '100%';
+      svgEl.style.maxHeight = '560px';
+      svgEl.style.borderRadius = '12px';
     }
 
-    // Mettre à jour le badge de topic
-    const center = data.concepts?.center || 'Session';
+    // Badge sujet
+    const center   = data.concepts?.center || 'Session';
     const subtitle = document.getElementById('mindmap-subtitle');
     if (subtitle) subtitle.textContent = `Sujet : ${center}`;
 
-    // Afficher
+    document.getElementById('mindmap-loading').style.display    = 'none';
+    container.style.display                                      = 'flex';
+    document.getElementById('mindmap-dl-btn').disabled          = false;
+
+  } catch (err) {
+    console.error('[mindmap]', err);
     document.getElementById('mindmap-loading').style.display = 'none';
-    container.style.display = 'flex';
-    document.getElementById('mindmap-dl-btn').disabled = false;
+    const errEl  = document.getElementById('mindmap-error');
+    errEl.style.display = 'flex';
+    const detail = document.getElementById('mindmap-error-detail');
+    if (detail) detail.textContent = err.message || 'Erreur inconnue';
+  }
+};
+
+// ── Fermer ─────────────────────────────────────────────────────────────────
+window.closeMindmap = function () {
+  document.getElementById('mindmap-overlay')?.classList.remove('open');
+};
+window.closeMindmapOnBg = function (e) {
+  if (e.target === document.getElementById('mindmap-overlay')) window.closeMindmap();
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ★ EXPORT — SVG / PNG / JPG
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert the cached SVG to a Blob via Canvas.
+ * @param {string} format  'image/png' | 'image/jpeg'
+ * @param {number} scale   pixel density multiplier (2 = @2x)
+ */
+async function _svgToBlob(format = 'image/png', scale = 2) {
+  if (!_mindmapSvgCache) throw new Error('Aucune mindmap disponible');
+
+  // 1. Parse SVG dimensions
+  const parser = new DOMParser();
+  const doc    = parser.parseFromString(_mindmapSvgCache, 'image/svg+xml');
+  const svgEl  = doc.querySelector('svg');
+  const W      = parseFloat(svgEl?.getAttribute('width')  || '1000');
+  const H      = parseFloat(svgEl?.getAttribute('height') || '720');
+
+  // 2. Create a Blob URL for the SVG
+  const svgBlob = new Blob([_mindmapSvgCache], { type: 'image/svg+xml;charset=utf-8' });
+  const svgUrl  = URL.createObjectURL(svgBlob);
+
+  // 3. Draw onto canvas
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas  = document.createElement('canvas');
+      canvas.width  = W * scale;
+      canvas.height = H * scale;
+
+      const ctx = canvas.getContext('2d');
+
+      // For JPEG: fill white background (JPEG has no transparency)
+      if (format === 'image/jpeg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0, W, H);
+      URL.revokeObjectURL(svgUrl);
+
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob);
+        else      reject(new Error('Canvas toBlob failed'));
+      }, format, format === 'image/jpeg' ? 0.94 : undefined);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(svgUrl);
+      reject(new Error('Failed to load SVG as image'));
+    };
+    img.src = svgUrl;
+  });
+}
+
+function _triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function _dateStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// ── Public download functions ──────────────────────────────────────────────
+
+window.downloadMindmapSVG = function () {
+  if (!_mindmapSvgCache) return;
+  const blob = new Blob([_mindmapSvgCache], { type: 'image/svg+xml' });
+  _triggerDownload(blob, `vitalagent-mindmap-${_dateStr()}.svg`);
+};
+
+window.downloadMindmapPNG = async function () {
+  const btn = document.getElementById('mindmap-dl-png');
+  if (btn) { btn.disabled = true; btn.textContent = 'Export…'; }
+  try {
+    const blob = await _svgToBlob('image/png', 2);
+    _triggerDownload(blob, `vitalagent-mindmap-${_dateStr()}.png`);
+  } catch (e) {
+    console.error('[mindmap export]', e);
+    _mindmapToast('Export PNG échoué : ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = _pngBtnLabel(); }
+  }
+};
+
+window.downloadMindmapJPG = async function () {
+  const btn = document.getElementById('mindmap-dl-jpg');
+  if (btn) { btn.disabled = true; btn.textContent = 'Export…'; }
+  try {
+    const blob = await _svgToBlob('image/jpeg', 2);
+    _triggerDownload(blob, `vitalagent-mindmap-${_dateStr()}.jpg`);
+  } catch (e) {
+    console.error('[mindmap export]', e);
+    _mindmapToast('Export JPG échoué : ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = _jpgBtnLabel(); }
+  }
+};
+
+function _pngBtnLabel() {
+  return `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> PNG`;
+}
+function _jpgBtnLabel() {
+  return `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> JPG`;
+}
+
+// ── Inject extra buttons into header (called once after DOM ready) ─────────
+function _injectExportButtons() {
+  const actionsEl = document.querySelector('.mindmap-modal-actions');
+  if (!actionsEl || document.getElementById('mindmap-dl-png')) return;
+
+  // Remove old single SVG download button and replace with 3 buttons
+  const oldBtn = document.getElementById('mindmap-dl-btn');
+
+  const pngBtn = document.createElement('button');
+  pngBtn.id        = 'mindmap-dl-png';
+  pngBtn.className = 'mindmap-download-btn';
+  pngBtn.disabled  = true;
+  pngBtn.innerHTML = _pngBtnLabel();
+  pngBtn.onclick   = window.downloadMindmapPNG;
+
+  const jpgBtn = document.createElement('button');
+  jpgBtn.id        = 'mindmap-dl-jpg';
+  jpgBtn.className = 'mindmap-download-btn';
+  jpgBtn.disabled  = true;
+  jpgBtn.innerHTML = _jpgBtnLabel();
+  jpgBtn.onclick   = window.downloadMindmapJPG;
+
+  const svgBtn = document.createElement('button');
+  svgBtn.id        = 'mindmap-dl-svg';
+  svgBtn.className = 'mindmap-download-btn';
+  svgBtn.disabled  = true;
+  svgBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> SVG`;
+  svgBtn.onclick   = window.downloadMindmapSVG;
+
+  // Insert before close button
+  const closeBtn = actionsEl.querySelector('.mindmap-close-btn');
+  if (closeBtn) {
+    actionsEl.insertBefore(svgBtn, closeBtn);
+    actionsEl.insertBefore(jpgBtn, closeBtn);
+    actionsEl.insertBefore(pngBtn, closeBtn);
+    if (oldBtn) oldBtn.remove();
+  } else {
+    actionsEl.appendChild(pngBtn);
+    actionsEl.appendChild(jpgBtn);
+    actionsEl.appendChild(svgBtn);
+    if (oldBtn) oldBtn.remove();
+  }
+}
+
+// Enable all 3 export buttons after SVG is ready
+function _enableExportButtons() {
+  ['mindmap-dl-png', 'mindmap-dl-jpg', 'mindmap-dl-svg'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = false;
+  });
+  // Backward compat: also enable old button if still present
+  const old = document.getElementById('mindmap-dl-btn');
+  if (old) old.disabled = false;
+}
+function _disableExportButtons() {
+  ['mindmap-dl-png', 'mindmap-dl-jpg', 'mindmap-dl-svg'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = true;
+  });
+}
+
+// Override openMindmap to also manage the new buttons
+const _origOpenMindmap = window.openMindmap;
+window.openMindmap = async function () {
+  _injectExportButtons();
+  _disableExportButtons();
+
+  if (!window.conversationLog || window.conversationLog.length < 2) {
+    _mindmapToast('Commence une conversation d\'abord !');
+    return;
+  }
+
+  const overlay = document.getElementById('mindmap-overlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+
+  document.getElementById('mindmap-loading').style.display       = 'flex';
+  document.getElementById('mindmap-svg-container').style.display = 'none';
+  document.getElementById('mindmap-error').style.display         = 'none';
+  _mindmapSvgCache = null;
+
+  const allText = window.conversationLog.map(m => m.text || '').join(' ');
+  const arRatio = (allText.match(/[\u0600-\u06FF]/g) || []).length / Math.max(allText.length, 1);
+  const lang    = arRatio > 0.15 ? 'ar'
+    : /\b(the|is|are|what|how)\b/i.test(allText) ? 'en'
+    : 'fr';
+
+  const mode = window.trainingMode || window.MODE || 'medical';
+
+  try {
+    const res = await fetch(`${_MINDMAP_API}/analytics/mindmap`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        conversation: window.conversationLog.map(m => ({
+          role: m.role === 'ai' ? 'assistant' : m.role,
+          text: m.text || m.content || '',
+        })),
+        mode,
+        lang,
+      }),
+      signal: AbortSignal.timeout(45000),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Erreur HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.svg) throw new Error('Aucun SVG reçu du serveur');
+
+    _mindmapSvgCache = data.svg;
+
+    const container = document.getElementById('mindmap-svg-container');
+    container.innerHTML = data.svg;
+    const svgEl = container.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.width        = '100%';
+      svgEl.style.height       = '100%';
+      svgEl.style.maxHeight    = '560px';
+      svgEl.style.borderRadius = '12px';
+    }
+
+    const center   = data.concepts?.center || 'Session';
+    const subtitle = document.getElementById('mindmap-subtitle');
+    if (subtitle) subtitle.textContent = `Sujet : ${center}`;
+
+    document.getElementById('mindmap-loading').style.display       = 'none';
+    container.style.display                                         = 'flex';
+    _enableExportButtons();
 
   } catch (err) {
     console.error('[mindmap]', err);
@@ -5358,62 +5755,35 @@ window.openMindmap = async function () {
   }
 };
 
-// ── Fermer ─────────────────────────────────────────────────────────────────
-window.closeMindmap = function () {
-  document.getElementById('mindmap-overlay')?.classList.remove('open');
-};
-
-window.closeMindmapOnBg = function (e) {
-  if (e.target === document.getElementById('mindmap-overlay')) {
-    window.closeMindmap();
-  }
-};
-
-// ── Télécharger le SVG ─────────────────────────────────────────────────────
-window.downloadMindmapSVG = function () {
-  if (!_mindmapSvgCache) return;
-  const blob = new Blob([_mindmapSvgCache], { type: 'image/svg+xml' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `vitalagent-mindmap-${new Date().toISOString().slice(0, 10)}.svg`;
-  a.click();
-  URL.revokeObjectURL(url);
-};
-
-// ── Activer le bouton dès qu'une conversation démarre ─────────────────────
-// On patche logUser qui est définie dans main.js / commercial.js
-const _origLogUser = window.logUser;  // peut être undefined si logUser n'est pas global
-// Alternative : on observe conversationLog via un MutationObserver sur le DOM
-// Plus simple : on surveille le bouton report — quand il s'active, on active mindmap aussi
+// ── Activate mindmap button when conversation starts ───────────────────────
 const _reportBtn  = document.getElementById('report-btn');
 const _mindmapBtn = document.getElementById('mindmap-btn');
-
 if (_reportBtn && _mindmapBtn) {
-  // Polling léger : dès que report-btn est enabled, mindmap-btn l'est aussi
-  const _checkReportBtn = setInterval(() => {
+  const _check = setInterval(() => {
     if (!_reportBtn.disabled) {
       _mindmapBtn.disabled = false;
-      clearInterval(_checkReportBtn);
+      clearInterval(_check);
     }
   }, 500);
 }
 
-// ── Toast interne (fallback si showToast pas dispo) ───────────────────────
+// ── Toast helper ───────────────────────────────────────────────────────────
 function _mindmapToast(msg) {
   if (typeof showToast === 'function') { showToast(msg); return; }
   const t = document.createElement('div');
   t.textContent = msg;
   Object.assign(t.style, {
-    position:'fixed', bottom:'24px', left:'50%', transform:'translateX(-50%)',
-    background:'#1e2d4a', color:'#e8eaf0', padding:'10px 20px',
-    borderRadius:'10px', fontSize:'13px', zIndex:'9999',
-    border:'1px solid rgba(126,184,247,0.3)', fontFamily:'system-ui',
+    position: 'fixed', bottom: '24px', left: '50%',
+    transform: 'translateX(-50%)',
+    background: '#1e2d4a', color: '#e8eaf0',
+    padding: '10px 20px', borderRadius: '10px',
+    fontSize: '13px', zIndex: '9999',
+    border: '1px solid rgba(126,184,247,0.3)',
+    fontFamily: 'system-ui',
   });
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
-}
-=== ./frontend/package-lock.json ===
+}=== ./frontend/package-lock.json ===
 {
   "name": "frontend",
   "version": "1.0.0",
