@@ -8,6 +8,18 @@
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/quiz-medical.css"/>
 </head>
+<script>
+  // Lance l'avatar dès que le module avatar.js est prêt
+  window.addEventListener("load", () => {
+    const waitInit = setInterval(() => {
+      if (typeof window.initAvatar === "function") {
+        clearInterval(waitInit);
+        window.initAvatar();
+      }
+    }, 100);
+    setTimeout(() => clearInterval(waitInit), 8000);
+  });
+</script>
 <body>
 
 <div id="mic-btn"        style="display:none"></div>
@@ -207,13 +219,30 @@
 
       <div class="explanation-box" id="explanation-box" style="display:none">
         <div class="explanation-icon" id="explanation-icon">✓</div>
-        <div class="explanation-content">
+        <div class="explanation-content" style="flex:1">
           <p class="explanation-verdict" id="explanation-verdict">Bonne réponse !</p>
           <p class="explanation-text" id="explanation-text"></p>
+          <!-- AJOUT : feedback typing Dr. Layla sur mauvaise réponse uniquement -->
+          <div class="feedback-typing-box" id="feedback-typing-box" style="display:none">
+            <div class="feedback-typing-label">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 3v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="8" cy="12" r=".75" fill="currentColor"/>
+              </svg>
+              Conseil de Dr. Layla
+            </div>
+            <span id="feedback-typing-text"></span><span class="typing-cursor" id="typing-cursor" style="display:none"></span>
+          </div>
         </div>
       </div>
 
       <div class="action-row" id="action-row" style="display:none">
+        <button class="prev-btn" id="prev-btn" style="display:none">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Précédente
+        </button>
         <button class="next-btn" id="next-btn">
           Question suivante
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -240,6 +269,39 @@
       <span class="results-score-denom" id="results-score-denom">/ 10</span>
     </div>
     <div class="results-breakdown" id="results-breakdown"></div>
+
+    <!-- AJOUT : bilan final Dr. Layla -->
+    <div class="final-feedback-section" id="final-feedback-section" style="display:none">
+      <div class="final-feedback-header">
+        <div class="final-feedback-avatar">L</div>
+        <div>
+          <div class="final-feedback-name">Dr. Layla</div>
+          <div class="final-feedback-role">Bilan de formation</div>
+        </div>
+      </div>
+      <div id="final-feedback-text">
+        <div class="final-feedback-loading">
+          <div class="feedback-typing-spinner">
+            <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+          </div>
+          Dr. Layla rédige votre bilan…
+        </div>
+      </div>
+    </div>
+
+    <!-- AJOUT : certificat si score >= 60% -->
+    <div class="certificate-section" id="certificate-section" style="display:none">
+      <div class="certificate-trophy">🏆</div>
+      <div class="certificate-title">Félicitations !</div>
+      <div class="certificate-subtitle">Vous avez atteint le seuil de validation (≥ 60%)</div>
+      <button class="certificate-download-btn" id="download-certificate-btn" onclick="downloadCertificate()">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Télécharger mon certificat
+      </button>
+    </div>
+
     <div class="results-actions">
       <button class="restart-btn" id="restart-btn">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -262,6 +324,7 @@
 }
 </script>
 
+<script>window._API = window.API_BASE || "http://localhost:8000";</script>
 <script type="module" src="js/avatar.js"></script>
 <script src="js/quiz-medical.js"></script>
 </body>

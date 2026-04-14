@@ -2,12 +2,7 @@
 backend/api/routes_quiz_medicale.py
 ====================================
 Quiz endpoints — VERSION REFONTE COMPLÈTE
-Corrections :
-  1. Génération en parallèle (asyncio)
-  2. Prompt renforcé → questions pédagogiques, jamais de codes/IDs
-  3. Contexte nettoyé → suppression codes articles, IDs numériques
-  4. [FIX] 1 produit sélectionné → N questions UNIQUEMENT sur ce produit
-  5. [FIX] Multi-produits → questions UNIQUEMENT sur les produits sélectionnés
+
 """
 
 import json
@@ -383,3 +378,126 @@ def _is_valid_question(q: Optional[dict], expected_product: str) -> bool:
     if any(len(str(c).strip()) < 5 for c in choices):
         return False
     return True
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOUVEAUX ENDPOINTS — AJOUT UNIQUEMENT, rien au-dessus n'a été touché
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FeedbackRequest(BaseModel):
+    question: str
+    correct_answer: str
+    chosen_answer: str
+    product: str
+    explanation: str
+
+
+class FinalFeedbackRequest(BaseModel):
+    score: int
+    total: int
+    history: List[dict]
+
+
+_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Le délégué vient de répondre incorrectement à une question. Rédige EXACTEMENT 1 phrase courte :
+- Rappelle uniquement le point clé correct à retenir
+- Jamais "Docteur," au début
+- 1 seule phrase, pas plus"""
+
+
+_FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Génère un bilan global de la performance du délégué.
+
+STRUCTURE OBLIGATOIRE — commence TOUJOURS par le score :
+
+CAS 1 — Score parfait (100%) :
+"Score [X]/[X] (100%). Parfait ! Vous maîtrisez parfaitement [liste tous les produits]. Continuez sur cette lancée, c'est exactement le niveau attendu d'un délégué VITAL SA !"
+
+CAS 2 — Score inférieur à 100% (même 99%) :
+"Score [X]/[Y] ([Z]%). Des lacunes persistent sur [notion précise : posologie / mécanisme / indication / conservation / contre-indication] de [produit raté]. Reprenez les fiches de [liste produits ratés]. [1 phrase d'encouragement court.]"
+
+RÈGLES ABSOLUES :
+- La PREMIÈRE PHRASE commence TOUJOURS par "Score [X]/[Y] ([Z]%)."
+- Si score < 100% → citer obligatoirement les lacunes précises, même si le score est 90% ou 95%
+- Si score = 100% → féliciter sans mentionner de lacunes
+- EXACTEMENT 2 à 3 phrases, jamais plus
+- ZÉRO titre, ZÉRO liste, ZÉRO puce, ZÉRO numéro
+- JAMAIS "Docteur," au début
+- Prose fluide uniquement, en français"""
+
+@router.post("/feedback/stream")
+async def stream_question_feedback(req: FeedbackRequest):
+    from backend.rag.engine import engine
+    from langchain_core.messages import SystemMessage, HumanMessage
+    engine.initialize()
+
+    prompt = (
+        f"Produit : {req.product}\n"
+        f"Bonne réponse : {req.correct_answer}\n"
+        f"Réponse du délégué : {req.chosen_answer}\n\n"
+        f"Rédige 1 phrase courte rappelant le point clé correct."
+    )
+
+    async def gen():
+        try:
+            for chunk in engine.llm.stream([
+                SystemMessage(content=_FEEDBACK_SYSTEM),
+                HumanMessage(content=prompt)
+            ]):
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+            yield f'data: {json.dumps({"type": "done"})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/feedback/final/stream")
+async def stream_final_feedback(req: FinalFeedbackRequest):
+    from backend.rag.engine import engine
+    from langchain_core.messages import SystemMessage, HumanMessage
+    engine.initialize()
+
+    pct = round((req.score / req.total) * 100) if req.total > 0 else 0
+
+    good_products = list({h.get("product", "?") for h in req.history if h.get("ok")})
+
+    # Une ligne par produit raté — notion précise manquante uniquement
+    bad_summary = []
+    seen = set()
+    for h in req.history:
+        if not h.get("ok"):
+            p = h.get("product", "?")
+            if p not in seen:
+                seen.add(p)
+                bad_summary.append(f"- {p} : la bonne réponse était « {h.get('correct', '')} »")
+
+    if bad_summary:
+        prompt = (
+            f"Score : {req.score}/{req.total} ({pct}%)\n"
+            f"Produits maîtrisés : {', '.join(good_products) if good_products else 'aucun'}\n"
+            f"Produits ratés :\n" + "\n".join(bad_summary) +
+            "\n\nGénère le bilan final en suivant exactement le squelette."
+        )
+    else:
+        prompt = (
+            f"Score : {req.score}/{req.total} ({pct}%)\n"
+            f"Tous les produits maîtrisés : {', '.join(good_products)}\n\n"
+            f"Génère le bilan final en suivant exactement le squelette."
+        )
+
+    async def gen():
+        try:
+            for chunk in engine.llm.stream([
+                SystemMessage(content=_FINAL_FEEDBACK_SYSTEM),
+                HumanMessage(content=prompt)
+            ]):
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+            yield f'data: {json.dumps({"type": "done"})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
