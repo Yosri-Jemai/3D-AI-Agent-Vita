@@ -7,6 +7,72 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/style.css"/>
+
+<!-- VÉRIFICATION D'AUTHENTIFICATION -->
+<script>
+(function() {
+    const SPRING_BOOT_URL = 'http://localhost:8080';
+    const FASTAPI_URL = 'http://localhost:8000';
+    
+    // Vérifier le token dans localStorage
+    const token = localStorage.getItem('auth_token');
+    const userJson = localStorage.getItem('user');
+    
+    if (!token || !userJson) {
+        console.log('Non authentifié, redirection vers auth.html');
+        window.location.href = 'auth.html';
+        return;
+    }
+    
+    try {
+        const user = JSON.parse(userJson);
+        // Vérifier le rôle (PROFESSIONAL)
+        if (user.role !== 'PROFESSIONAL') {
+            console.log('Rôle incorrect, redirection vers commercial.html');
+            window.location.href = 'commercial.html';
+            return;
+        }
+        
+        // Stocker les infos utilisateur pour la session
+        window._currentUser = {
+            id: user.id,
+            fullName: user.fullName,
+            email: user.email,
+            numTelephone: user.numTelephone,
+            role: user.role,
+            profileImageUrl: user.profileImageUrl
+        };
+        
+        // Stocker aussi dans sessionStorage pour compatibilité
+        sessionStorage.setItem('vita_user', JSON.stringify({
+            id: user.id,
+            firstname: user.fullName?.split(' ')[0] || '',
+            lastname: user.fullName?.split(' ').slice(1).join(' ') || '',
+            email: user.email,
+            role: 'professional',
+            fullName: user.fullName,
+            numTelephone: user.numTelephone
+        }));
+        
+        console.log('✅ Connecté en tant que:', user.fullName, '(Professional)');
+        
+        // Vérifier la validité du token (optionnel - appel à un endpoint /verify)
+        fetch(`${SPRING_BOOT_URL}/verify`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        }).catch(() => {
+            // Si erreur, on ne redirige pas immédiatement
+            console.log('Token verification skipped');
+        });
+        
+    } catch(e) {
+        console.error('Erreur de vérification:', e);
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+        window.location.href = 'auth.html';
+    }
+})();
+</script>
+
 </head>
 <body>
 <div class="bg-orbs">
@@ -92,34 +158,38 @@
         <p>Select a product then ask questions about it</p>
       </div>
       <div class="header-right" style="display:flex;align-items:center;gap:8px;">
-        <span id="mode-badge" class="mode-badge" style="display:none"></span>
+        <div class="user-badge" style="padding:5px 12px;border-radius:8px;background:rgba(46,125,50,0.1);border:1px solid rgba(46,125,50,0.3);color:#2e7d32;font-size:11px;display:flex;align-items:center;gap:6px;">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span id="user-name">Loading...</span>
+        </div>
         
         <!-- TEST DROPDOWN -->
-<div class="test-dropdown-wrap" id="test-dropdown-wrap">
-  <button class="test-btn" onclick="toggleTestMenu()" id="test-btn">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    Assess Knowledge
-    <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-  </button>
-  <div class="test-menu" id="test-menu">
-    <div class="test-menu-header">Take a certification test</div>
-    <a class="test-menu-item medical-item" href="quiz-medical.html" target="_blank">
-      <span class="test-menu-icon">🩺</span>
-      <div>
-        <div class="test-menu-label">Medical Representative</div>
-        <div class="test-menu-sub">Clinical knowledge assessment · 10 questions</div>
-      </div>
-    </a>
-<a class="test-menu-item commercial-item" href="quiz-commercial.html" target="_blank">
-      <span class="test-menu-icon">💼</span>
-      <div>
-        <div class="test-menu-label">Commercial Representative</div>
-        <div class="test-menu-sub">Sales skills assessment · 10 questions</div>
-      </div>
-    </a>
-  </div>
-</div>
-<button class="mindmap-btn" id="mindmap-btn" onclick="openMindmap()" disabled title="Générer la mindmap de session">
+        <div class="test-dropdown-wrap" id="test-dropdown-wrap">
+          <button class="test-btn" onclick="toggleTestMenu()" id="test-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Assess Knowledge
+            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="test-menu" id="test-menu">
+            <div class="test-menu-header">Take a certification test</div>
+            <a class="test-menu-item medical-item" href="quiz-medical.html" target="_blank">
+              <span class="test-menu-icon">🩺</span>
+              <div>
+                <div class="test-menu-label">Medical Representative</div>
+                <div class="test-menu-sub">Clinical knowledge assessment · 10 questions</div>
+              </div>
+            </a>
+            <a class="test-menu-item commercial-item" href="quiz-commercial.html" target="_blank">
+              <span class="test-menu-icon">💼</span>
+              <div>
+                <div class="test-menu-label">Commercial Representative</div>
+                <div class="test-menu-sub">Sales skills assessment · 10 questions</div>
+              </div>
+            </a>
+          </div>
+        </div>
+        
+        <button class="mindmap-btn" id="mindmap-btn" onclick="openMindmap()" disabled title="Générer la mindmap de session">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
             <line x1="12" y1="2" x2="12" y2="5"/>
@@ -132,11 +202,18 @@
             <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
           </svg>
           Mindmap
-</button>
+        </button>
+        
         <button class="report-btn" id="report-btn" onclick="openReport()" disabled title="Generate session report">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           Report
         </button>
+        
+        <button class="logout-btn" onclick="logout()" style="padding:5px 12px;border-radius:8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#f87171;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Logout
+        </button>
+        
         <div id="product-badge" class="no-product-badge" onclick="openModal()">
           <span>⬡</span><span id="badge-text">Select a product</span>
         </div>
@@ -177,6 +254,7 @@
     </div>
   </main>
 </div>
+
 <div id="mindmap-overlay" class="mindmap-overlay" onclick="closeMindmapOnBg(event)">
   <div class="mindmap-modal">
     <div class="mindmap-modal-header">
@@ -213,7 +291,8 @@
     </div>
   </div>
 </div>
-<!-- ★ importmap : résout "three" pour TalkingHead ★ -->
+
+<!-- importmap : résout "three" pour TalkingHead -->
 <script type="importmap">
 {
   "imports": {
@@ -229,6 +308,24 @@
 <!-- 2. Main Logic (Chat, Voice, Products, Report) -->
 <script src="js/main.js"></script>
 <script src="js/mindmap.js"></script>
+
+<!-- Fonction de déconnexion -->
+<script>
+function logout() {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('vita_user');
+    window.location.href = 'auth.html';
+}
+
+// Afficher le nom de l'utilisateur
+if (window._currentUser) {
+    const userNameSpan = document.getElementById('user-name');
+    if (userNameSpan) {
+        userNameSpan.textContent = window._currentUser.fullName;
+    }
+}
+</script>
 
 </body>
 </html>

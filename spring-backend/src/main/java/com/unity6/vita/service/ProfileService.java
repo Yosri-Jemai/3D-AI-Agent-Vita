@@ -57,31 +57,61 @@ public class ProfileService {
 
     public ProfileDTO registerProfile(ProfileDTO profileDTO) {
         Profile newProfile = toEntity(profileDTO);
-        newProfile.setActivationToken(UUID.randomUUID().toString());
+        String activationToken = UUID.randomUUID().toString();
+        newProfile.setActivationToken(activationToken);
+        newProfile.setIsActive(false); // Explicitly set to false
+
         Profile savedProfile = profileRepository.save(newProfile);
-        String activationLink = "http://localhost:8080/api/v1/activate?token=" + savedProfile.getActivationToken();
-        String subject = "Activate your Money Map account";
-        String body = "Click the following Link to activate your Money Map account: "+ activationLink;
-        emailService.sendEmail(savedProfile.getEmail(), subject, body);
-        return  toDTO(savedProfile);
+        System.out.println("✅ Profile registered: " + savedProfile.getEmail());
+        System.out.println("🔑 Activation token: " + activationToken);
+
+        // Correct activation link with /api/v1
+        String activationLink = "http://localhost:8080/api/v1/activate?token=" + activationToken;
+        String subject = "Activez votre compte VitalAgent";
+        String body = "Bonjour " + savedProfile.getFullName() + ",\n\n" +
+                "Cliquez sur le lien suivant pour activer votre compte VitalAgent :\n\n" +
+                activationLink + "\n\n" +
+                "Ce lien expire dans 24 heures.\n\n" +
+                "Cordialement,\n" +
+                "L'équipe VitalAgent";
+
+        try {
+            emailService.sendEmail(savedProfile.getEmail(), subject, body);
+            System.out.println("📧 Activation email sent to: " + savedProfile.getEmail());
+        } catch (Exception e) {
+            System.err.println("❌ Failed to send email: " + e.getMessage());
+        }
+
+        return toDTO(savedProfile);
     }
 
     public boolean activateAccount(String activationToken) {
+        System.out.println("🔑 Activating account with token: " + activationToken);
+
         return profileRepository.findByActivationToken(activationToken)
-                .map(profile-> {
-                        profile.setIsActive(true);
-                        profileRepository.save(profile);
-                        return true;
+                .map(profile -> {
+                    System.out.println("📧 Found profile: " + profile.getEmail());
+                    System.out.println("Current isActive: " + profile.getIsActive());
+
+                    profile.setIsActive(true);
+                    profile.setActivationToken(null); // Clear the token after activation
+                    Profile saved = profileRepository.save(profile);
+
+                    System.out.println("✅ After save - isActive: " + saved.getIsActive());
+                    return true;
                 }).orElse(false);
     }
 
     public boolean isAccountActive(String email) {
         return profileRepository.findByEmail(email)
-                .map(Profile::getIsActive)
+                .map(profile -> {
+                    Boolean isActive = profile.getIsActive();
+                    System.out.println("Checking account: " + email + " - isActive: " + isActive);
+                    return isActive != null && isActive;
+                })
                 .orElse(false);
     }
 
-    // User Session
     public Profile getCurrentProfile() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return profileRepository.findByEmail(authentication.getName())
@@ -91,20 +121,29 @@ public class ProfileService {
     public ProfileDTO getPublicProfile(String email) {
         if(email == null) {
             return toDTO(getCurrentProfile());
-        }else {
+        } else {
             return toDTO(profileRepository.findByEmail(email)
                     .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email)));
         }
     }
 
     public Map<String, Object> authenticateAndGenerateToken(AuthDTO authDTO) {
-        try{
-            authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(authDTO.getEmail(), authDTO.getPassword()));
-            String token = jwtUtil.generateToken(authDTO.getEmail());
-            return Map.of("token", token,
-                    "user",getPublicProfile(authDTO.getEmail())
+        try {
+            System.out.println("🔐 Authenticating user: " + authDTO.getEmail());
+
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(authDTO.getEmail(), authDTO.getPassword())
             );
-        }catch (Exception e) {
+
+            String token = jwtUtil.generateToken(authDTO.getEmail());
+            System.out.println("🎫 Token generated for: " + authDTO.getEmail());
+
+            return Map.of(
+                    "token", token,
+                    "user", getPublicProfile(authDTO.getEmail())
+            );
+        } catch (Exception e) {
+            System.err.println("❌ Authentication failed: " + e.getMessage());
             throw new UsernameNotFoundException("Invalid email or password");
         }
     }
@@ -116,7 +155,6 @@ public class ProfileService {
                 .collect(Collectors.toList());
     }
 
-    // Dans ProfileService.java, ajoutez :
     public Profile getProfileById(Long id) {
         return profileRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Profile not found with id: " + id));
