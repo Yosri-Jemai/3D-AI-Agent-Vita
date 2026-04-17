@@ -24,7 +24,7 @@ class GroqExtractor:
             for msg in recent
         ])
         
-        
+
         prompt = f"""You are a pharmaceutical commercial sales analyst. Analyze the conversation below between a doctor (USER) and Vita (ASSISTANT) – Vita is the delegate.
 
 CONVERSATION:
@@ -37,6 +37,7 @@ Return ONLY valid JSON with the following structure. Include a field only if the
     {{
       "name": "exact product name mentioned",
       "interest": "high|medium|low",
+      "covered": [],
       "concerns": [],
       "liked": []
     }}
@@ -71,20 +72,23 @@ STRICT RULES (follow exactly):
 3. **LIKED** – Only include if the doctor explicitly says something positive (e.g., “I like that”, “That’s good”, “I’m convinced”).  
    - Do NOT infer from lack of objection.
 
-4. **INTEREST** – Based on the doctor’s questions:  
+4. **COVERED** (inside each product) – List the key information that Vita explained about the product. This includes benefits, usage, dosage, mechanism, safety, comparisons, etc. Use short phrases (5‑10 words).  
+- Only include what Vita actually said; do not invent.
+
+5. **INTEREST** – Based on the doctor’s questions:  
    - **high** → specific, detailed questions (e.g., “What’s the dosage for children?”)  
    - **medium** → general but relevant questions (e.g., “Tell me more”)  
    - **low** → vague or one‑word answers.
 
-5. **RESOLVED** (in objections) – true if the doctor agrees or says they are convinced; false if they remain doubtful or ask for more evidence.
+6. **RESOLVED** (in objections) – true if the doctor agrees or says they are convinced; false if they remain doubtful or ask for more evidence.
 
-6. **ENGAGEMENT_SCORE** (1‑5) – Based on conversation length, number of doctor questions, and depth.
+7. **ENGAGEMENT_SCORE** (1‑5) – Based on conversation length, number of doctor questions, and depth.
 
-7. **TOPICS** – Short readable phrases (3‑8 words) describing each discussion point. Use the doctor’s perspective.
+8. **TOPICS** – Short readable phrases (3‑8 words) describing each discussion point. Use the doctor’s perspective.
 
-8. **LANGUAGE** – Detect from the **doctor’s messages only**. If the doctor uses English → “english”. Mixed → “mixed”. French → “french”. Arabic → “arabic”.
+9. **LANGUAGE** – Detect from the **doctor’s messages only**. If the doctor uses English → “english”. Mixed → “mixed”. French → “french”. Arabic → “arabic”.
 
-9. **No fixed number** – Output as many items as appear. Use empty arrays if none.
+10. **No fixed number** – Output as many items as appear. Use empty arrays if none.
 
 JSON:"""
 
@@ -103,6 +107,18 @@ JSON:"""
             
             # Parse JSON response
             result = json.loads(response.choices[0].message.content)
+            
+            #Remove duplicates in objections based on quote
+            if "objections" in result and isinstance(result["objections"], list):
+                seen = set()
+                unique = []
+                for obj in result["objections"]:
+                    quote = obj.get("quote", "").strip()
+                    if quote and quote not in seen:
+                        seen.add(quote)
+                        unique.append(obj)
+                result["objections"] = unique
+            
             result["_metadata"] = {
                 "extraction_time_ms": elapsed_ms,
                 "model": self.model,
