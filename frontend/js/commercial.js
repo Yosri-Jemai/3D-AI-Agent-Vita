@@ -648,7 +648,7 @@ function logUser(text, isVoice) {
   document.getElementById('mindmap-btn')?.removeAttribute('disabled');
 }
 function logAI(text, sources) {
-  conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() });
+  conversationLog.push({ role: 'assistant', text, sources: sources || [], time: new Date() });
 }
 window.closeReport = function() {
   document.getElementById('report-overlay').classList.remove('open');
@@ -662,7 +662,7 @@ function buildReportContent() {
   const timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const products = [...new Set(conversationLog.flatMap(e => (e.sources || []).map(s => s.name)))].filter(Boolean);
   const userCount = conversationLog.filter(e => e.role === 'user').length;
-  const aiCount = conversationLog.filter(e => e.role === 'ai').length;
+  const aiCount = conversationLog.filter(e => e.role === 'assistant').length;
   const exchangesHtml = conversationLog.map(entry => {
     if (entry.role === 'user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
     const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
