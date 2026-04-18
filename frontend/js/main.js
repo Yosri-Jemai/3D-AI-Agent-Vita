@@ -114,9 +114,11 @@ async function loadGreeting() {
 function setMode(mode) {
   trainingMode = mode;
   const badge = document.getElementById('mode-badge');
-  badge.style.display = 'inline-block';
-  badge.className = `mode-badge ${mode}`;
-  badge.textContent = mode==='medical' ? '🩺 Medical' : '💼 Commercial';
+  if (badge) {
+    badge.style.display = 'inline-block';
+    badge.className = `mode-badge ${mode}`;
+    badge.textContent = mode==='medical' ? '🩺 Medical' : '💼 Commercial';
+  }
   document.querySelectorAll('.mode-select-btns').forEach(el=>el.remove());
   addSystemMsg(mode==='medical'
     ? 'Mode: Medical delegate — deep product knowledge training'
