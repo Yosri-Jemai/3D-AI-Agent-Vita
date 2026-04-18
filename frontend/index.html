@@ -26,8 +26,8 @@
     
     try {
         const user = JSON.parse(userJson);
-        // Vérifier le rôle (PROFESSIONAL)
-        if (user.role !== 'PROFESSIONAL') {
+        // Vérifier le rôle (DELEGATE)
+        if (user.role !== 'DELEGATE') {
             console.log('Rôle incorrect, redirection vers commercial.html');
             window.location.href = 'commercial.html';
             return;
@@ -54,7 +54,7 @@
             numTelephone: user.numTelephone
         }));
         
-        console.log('✅ Connecté en tant que:', user.fullName, '(Professional)');
+        console.log('✅ Connecté en tant que:', user.fullName, '(Delegate)');
         
         // Vérifier la validité du token (optionnel - appel à un endpoint /verify)
         fetch(`${SPRING_BOOT_URL}/verify`, {

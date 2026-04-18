@@ -22,8 +22,8 @@
     
     try {
         const user = JSON.parse(userJson);
-        // Vérifier le rôle (DELEGATE)
-        if (user.role !== 'DELEGATE') {
+        // Vérifier le rôle (PROFESSIONAL)
+        if (user.role !== 'PROFESSIONAL') {
             console.log('Rôle incorrect, redirection vers index.html');
             window.location.href = 'index.html';
             return;
@@ -50,7 +50,7 @@
             numTelephone: user.numTelephone
         }));
         
-        console.log('✅ Connecté en tant que:', user.fullName, '(Commercial Delegate)');
+        console.log('✅ Connecté en tant que:', user.fullName, '(Professional)');
         
     } catch(e) {
         console.error('Erreur de vérification:', e);

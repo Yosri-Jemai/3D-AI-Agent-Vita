@@ -65,7 +65,7 @@ function saveAuthData(token, user) {
         firstname: user.fullName?.split(' ')[0] || '',
         lastname: user.fullName?.split(' ').slice(1).join(' ') || '',
         email: user.email,
-        role: user.role === 'DELEGATE' ? 'commercial' : 'professional',
+        role: user.role === 'DELEGATE' ? 'professional' : 'commercial',
         fullName: user.fullName,
         numTelephone: user.numTelephone
     };
@@ -81,9 +81,9 @@ function clearAuthData() {
 function redirectBasedOnRole(role) {
     console.log('🔄 Redirection basée sur le rôle:', role);
     if (role === 'DELEGATE') {
-        window.location.href = 'commercial.html';
-    } else if (role === 'PROFESSIONAL') {
         window.location.href = 'index.html';
+    } else if (role === 'PROFESSIONAL') {
+        window.location.href = 'commercial.html';
     }
 }
 
