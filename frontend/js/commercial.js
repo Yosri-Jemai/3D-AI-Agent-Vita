@@ -282,6 +282,7 @@ window.openReport = async function() {
 };
 
 // New function to display AI report
+// New function to display a static message instead of the AI report
 function displayAIReport(extraction) {
     const reportContent = document.getElementById('report-content');
     if (!reportContent) {
@@ -289,43 +290,14 @@ function displayAIReport(extraction) {
         return;
     }
     
-    const metadata = extraction._metadata || {};
-    const html = `
-        <div class="extraction-report">
-            <div class="r-header">
-                <div class="r-logo">VITAL AI Analysis</div>
-                <div class="r-subtitle">Powered by Groq (${metadata.extraction_time_ms || '?'}ms)</div>
-            </div>
-            
-            <div class="r-section-title">Products Discussed</div>
-            <div class="r-products">
-                ${extraction.products?.map(p => `<span class="r-product-tag">${escHtml(p)}</span>`).join('') || 'None'}
-            </div>
-            
-            <div class="r-section-title">Objections Raised</div>
-            ${extraction.objections?.map(o => `
-                <div class="r-exchange">
-                    <div class="r-text">Type: ${o.type} - ${o.resolved ? '✓ Resolved' : '✗ Unresolved'}</div>
-                </div>
-            `).join('') || 'None'}
-            
-            <div class="r-section-title">Engagement Score</div>
-            <div class="r-text">${extraction.engagement_score}/5</div>
-            
-            <div class="r-section-title">Topics</div>
-            <div class="r-text">${extraction.topics?.join(', ') || 'None'}</div>
-            
-            <div class="r-section-title">Language</div>
-            <div class="r-text">${extraction.language}</div>
-            
-            <div class="r-section-title">Training Recommendations</div>
-            <ul>
-                ${extraction.recommendations?.map(r => `<li>${escHtml(r)}</li>`).join('') || 'None'}
-            </ul>
+    // Set static message (ignore the extraction data)
+    reportContent.innerHTML = `
+        <div style="text-align: center; padding: 40px 20px;">
+            <h3>Session terminée</h3>
+            <p>Merci d'avoir utilisé Vita. La conversation a été enregistrée.</p>
+            <p>Vous pouvez fermer cette fenêtre.</p>
         </div>
     `;
-    
-    reportContent.innerHTML = html;
     
     // Show the overlay
     const overlay = document.getElementById('report-overlay');
@@ -347,32 +319,6 @@ window.closeReportOnBg = function(e) {
     }
 };
 
-window.downloadReport = function() {
-    const content = document.getElementById('report-content');
-    if (!content) return;
-    
-    const win = window.open('', '_blank');
-    win.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>VITAL Report</title>
-            <style>
-                body { font-family: Arial, sans-serif; padding: 40px; }
-                .r-header { border-bottom: 2px solid #c084fc; margin-bottom: 20px; }
-                .r-section-title { font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
-                .r-product-tag { display: inline-block; background: #f3e8ff; padding: 2px 8px; border-radius: 10px; margin: 2px; }
-            </style>
-        </head>
-        <body>
-            ${content.innerHTML}
-        </body>
-        </html>
-    `);
-    win.document.close();
-    win.print();
-  
-};
 
 // ── Voice ─────────────────────────────────────────────────────
 window.toggleMic = async function() {
@@ -648,7 +594,7 @@ function logUser(text, isVoice) {
   document.getElementById('mindmap-btn')?.removeAttribute('disabled');
 }
 function logAI(text, sources) {
-  conversationLog.push({ role: 'ai', text, sources: sources || [], time: new Date() });
+  conversationLog.push({ role: 'assistant', text, sources: sources || [], time: new Date() });
 }
 window.closeReport = function() {
   document.getElementById('report-overlay').classList.remove('open');
@@ -662,7 +608,7 @@ function buildReportContent() {
   const timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const products = [...new Set(conversationLog.flatMap(e => (e.sources || []).map(s => s.name)))].filter(Boolean);
   const userCount = conversationLog.filter(e => e.role === 'user').length;
-  const aiCount = conversationLog.filter(e => e.role === 'ai').length;
+  const aiCount = conversationLog.filter(e => e.role === 'assistant').length;
   const exchangesHtml = conversationLog.map(entry => {
     if (entry.role === 'user') return `<div class="r-exchange user-ex"><div class="r-role user-role">Doctor ${entry.isVoice ? '(voice)' : '(text)'}</div><div class="r-text">${entry.isVoice ? '🎤 ' : ''}${escHtml(entry.text)}</div></div>`;
     const tags = entry.sources?.length ? `<div class="r-products">${entry.sources.map(s => `<span class="r-product-tag">${escHtml(s.name)}</span>`).join('')}</div>` : '';
@@ -680,31 +626,6 @@ function buildReportContent() {
     <div class="r-section-title">Full conversation</div>${exchangesHtml}
     <div class="r-footer"><span>Generated by VitalAgent · VITAL SA</span><span>${dateStr}</span></div>`;
 }
-
-window.downloadReport = function() {
-  const content = document.getElementById('report-content'); if (!content) return;
-  const now = new Date();
-  const win = window.open('', '_blank', 'width=800,height=900');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>vital-commercial-${now.toISOString().slice(0,10)}.pdf</title>
-    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Georgia,serif;color:#111;background:#fff}
-    #report-content{padding:32px 40px;font-size:13px;line-height:1.7}
-    .r-header{border-bottom:2px solid #c084fc;padding-bottom:18px;margin-bottom:24px}
-    .r-logo{font-size:26px;color:#c084fc}.r-subtitle{font-size:11px;color:#6b7280;margin-top:3px;font-family:system-ui}
-    .r-meta{display:flex;gap:20px;margin-top:14px;flex-wrap:wrap}.r-meta-item{font-size:11px;font-family:system-ui}
-    .r-meta-item strong{display:block;font-size:9px;text-transform:uppercase;color:#374151;margin-bottom:1px}
-    .r-section-title{font-size:10px;text-transform:uppercase;color:#6b7280;font-family:system-ui;font-weight:600;margin:24px 0 10px;border-bottom:1px solid #e5e7eb;padding-bottom:5px}
-    .r-exchange{margin-bottom:16px;padding:12px 16px;border-radius:6px;border-left:3px solid #e5e7eb;page-break-inside:avoid}
-    .r-exchange.user-ex{background:#f8f5ff;border-left-color:#c084fc}.r-exchange.ai-ex{background:#fafafa;border-left-color:#6b7280}
-    .r-role{font-size:9px;text-transform:uppercase;font-family:system-ui;font-weight:600;margin-bottom:5px}
-    .r-role.user-role{color:#c084fc}.r-role.ai-role{color:#374151}
-    .r-text{font-size:12px;line-height:1.6;color:#1f2937}
-    .r-products{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
-    .r-product-tag{padding:2px 8px;border-radius:10px;font-size:10px;background:#f3e8ff;color:#c084fc;border:1px solid #e9d5ff;font-family:system-ui}
-    .r-footer{margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;font-family:system-ui;display:flex;justify-content:space-between}
-    @page{margin:1.5cm}</style></head><body>${content.outerHTML}
-    <script>window.onload=function(){window.print();setTimeout(()=>window.close(),1000)}<\/script></body></html>`);
-  win.document.close();
-};
 
 function escHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
