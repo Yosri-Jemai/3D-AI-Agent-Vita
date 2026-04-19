@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vital - Authentification | Laboratoires Vital</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        /* Container principal */
+        .auth-container {
+            width: 100%;
+            max-width: 1200px;
+            background: white;
+            border-radius: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        /* Section gauche - Branding */
+        .brand-section {
+            flex: 1;
+            min-width: 300px;
+            background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+            padding: 60px 40px;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .logo {
+            margin-bottom: 40px;
+        }
+
+        .logo h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .logo p {
+            font-size: 1rem;
+            opacity: 0.9;
+        }
+
+        .brand-features {
+            margin-top: 40px;
+        }
+
+        .feature {
+            display: flex;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .feature-icon {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-size: 1.5rem;
+        }
+
+        .feature-text h3 {
+            font-size: 1.1rem;
+            margin-bottom: 5px;
+        }
+
+        .feature-text p {
+            font-size: 0.85rem;
+            opacity: 0.8;
+        }
+
+        /* Section droite - Formulaires */
+        .forms-section {
+            flex: 1;
+            min-width: 400px;
+            background: white;
+            padding: 60px 40px;
+        }
+
+        /* Toggle buttons */
+        .toggle-buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 40px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .toggle-btn {
+            background: none;
+            border: none;
+            padding: 12px 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+            cursor: pointer;
+            color: #666;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .toggle-btn.active {
+            color: #2e7d32;
+        }
+
+        .toggle-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #2e7d32;
+            border-radius: 3px;
+        }
+
+        /* Formulaires */
+        .form {
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .form.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #2e7d32;
+            box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.1);
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(46, 125, 50, 0.3);
+        }
+
+        .btn-submit:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Messages */
+        .message {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .message.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+            display: block;
+        }
+
+        .message.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef9a9a;
+            display: block;
+        }
+
+        .message.info {
+            background: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #90caf9;
+            display: block;
+        }
+
+        /* Spinner */
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .brand-section {
+                display: none;
+            }
+            .forms-section {
+                min-width: 100%;
+            }
+        }
+
+        .role-hint {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <!-- Section gauche - Branding -->
+        <div class="brand-section">
+            <div class="logo">
+                <h1>🌿 Laboratoires Vital</h1>
+                <p>Créateurs de bien-être au naturel !</p>
+            </div>
+            <div class="brand-features">
+                <div class="feature">
+                    <div class="feature-icon">🏆</div>
+                    <div class="feature-text">
+                        <h3>Leader africain</h3>
+                        <p>Des compléments alimentaires naturels à base de plantes</p>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">⏱️</div>
+                    <div class="feature-text">
+                        <h3>20 ans d'expertise</h3>
+                        <p>Science, origine maîtrisée et parfaite sécurité</p>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🤝</div>
+                    <div class="feature-text">
+                        <h3>Laboratoire engagé</h3>
+                        <p>Aux côtés des professionnels de santé</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section droite - Formulaires -->
+        <div class="forms-section">
+            <div class="toggle-buttons">
+                <button class="toggle-btn active" data-form="signin">Se connecter</button>
+                <button class="toggle-btn" data-form="signup">Créer un compte</button>
+            </div>
+
+            <!-- Formulaire de connexion -->
+            <div id="signin-form" class="form active">
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label>📧 Email</label>
+                        <input type="email" id="loginEmail" required placeholder="exemple@vital.com">
+                    </div>
+                    <div class="form-group">
+                        <label>🔒 Mot de passe</label>
+                        <input type="password" id="loginPassword" required placeholder="Votre mot de passe">
+                    </div>
+                    <button type="submit" class="btn-submit">Se connecter</button>
+                </form>
+                <div id="loginMessage" class="message"></div>
+            </div>
+
+            <!-- Formulaire d'inscription -->
+            <div id="signup-form" class="form">
+                <form id="registerForm">
+                    <div class="form-group">
+                        <label>👤 Nom complet</label>
+                        <input type="text" id="fullName" required placeholder="Votre nom et prénom">
+                    </div>
+                    <div class="form-group">
+                        <label>📧 Email</label>
+                        <input type="email" id="email" required placeholder="exemple@vital.com">
+                    </div>
+                    <div class="form-group">
+                        <label>📱 Téléphone</label>
+                        <input type="tel" id="numTelephone" placeholder="+216 XX XXX XXX">
+                    </div>
+                    <div class="form-group">
+                        <label>🔒 Mot de passe</label>
+                        <input type="password" id="password" required placeholder="Minimum 6 caractères">
+                    </div>
+                    <div class="form-group">
+                        <label>🔒 Confirmer le mot de passe</label>
+                        <input type="password" id="confirmPassword" required placeholder="Retapez votre mot de passe">
+                    </div>
+                    <div class="form-group">
+                        <label>👔 Rôle</label>
+                        <select id="role" required>
+                            <option value="DELEGATE">Délégué(e) médicale ou commercial</option>
+                            <option value="PROFESSIONAL">Professionnel de santé</option>
+                        </select>
+                        <div class="role-hint">
+                            💡 Délégué → Accès à l'espace professionnel (index)<br>
+                            💡 Professionnel → Accès à l'espace commercial
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-submit">Créer mon compte</button>
+                </form>
+                <div id="registerMessage" class="message"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+</body>
+</html>
