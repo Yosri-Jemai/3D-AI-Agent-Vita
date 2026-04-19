@@ -24,76 +24,71 @@ class GroqExtractor:
             for msg in recent
         ])
         
-        prompt = f"""You are a pharmaceutical COMMERCIAL sales analyst. Analyze this sales conversation between a doctor (USER) and Vita (ASSISTANT) - Vita is the pharmaceutical delegate.
+
+        prompt = f"""You are a pharmaceutical commercial sales analyst. Analyze the conversation below between a doctor (USER) and Vita (ASSISTANT) – Vita is the delegate.
 
 CONVERSATION:
 {conv_text}
 
-Return ONLY valid JSON. Focus on SALES insights.
+Return ONLY valid JSON with the following structure. Include a field only if the conversation contains relevant information. Do NOT invent content. Do NOT use placeholders.
 
 {{
-
-  "engagement_score": 1-5,
-  "language": "french|english|arabic|mixed",
-  "topics": ["topic1", "topic2", "topic3"],
-  "recommendations": ["specific training recommendation 1", "specific training recommendation 2"],
-
   "products": [
     {{
-      "name": "product name",
-      "doctor_interest": "very_high|high|medium|low|none",
-      "doctor_familiarity": "expert|familiar|unfamiliar",
-      "prescription_intent": "definitely|probably|unsure|probably_not",
-      "key_concerns": ["concern1", "concern2"],
-      "what_doctor_liked": ["liked aspect1", "liked aspect2"]
+      "name": "exact product name mentioned",
+      "interest": "high|medium|low",
+      "covered": [],
+      "concerns": [],
+      "liked": []
     }}
   ],
-  
   "objections": [
-    {{
-      "objection_exact_quote": "exact words the doctor said",
-      "type": "price|efficacy|safety|competition|reimbursement|trust",
-      "severity": "severe|moderate|mild",
-      "how_vita_responded": "summary of how Vita responded",
-      "resolution": "resolved|partially_resolved|unresolved",
-      "what_worked": "specific technique or argument that helped",
-      "what_didnt_work": "what Vita said that failed"
-    }}
-  ],
-  
-  "vita_performance": {{
-    "strengths": ["strength1", "strength2"],
-    "weaknesses": ["weakness1", "weakness2"],
-    "objection_handling_skill": 1-5,
-    "rapport_building": 1-5,
-    "closing_ability": 1-5,
-    "specific_coaching_needed": ["coaching point1", "coaching point2"]
-  }},
-  
-  "sales_techniques": {{
-    "what_worked_well": ["technique1", "technique2"],
-    "what_failed": ["approach1", "approach2"],
-    "missed_opportunities": ["opportunity1", "opportunity2"]
-  }},
-  
-  "competitors": [
-    {{
-      "name": "competitor name",
-      "doctor_perception": "prefers|considering|neutral|against",
-      "how_vita_responded": "what Vita said about competitor"
-    }}
-  ],
-  
-  "business_insights": {{
-    "doctor_convinced": true/false,
-    "price_sensitivity": "high|medium|low",
-    "decision_factors": ["factor1", "factor2"],
-    "follow_up_needed": true/false,
-    "winning_arguments": ["argument that worked"],
-    "lost_arguments": ["argument that failed"]
-  }},
-  
+            {{
+              "quote": "exact words the doctor said",
+              "response": "summary of Vita's reply",
+              "resolved": true|false
+            }}
+          ],
+  "engagement_score": 3,
+  "topics": [],
+  "language": "french|english|arabic|mixed",
+  "recommendations": ["specific, actionable training point"]
 }}
+
+STRICT RULES (follow exactly):
+
+1. **OBJECTIONS** – Extract ONLY from messages where the role is **USER** (doctor).  
+   - NEVER extract from ASSISTANT (Vita) messages.  
+   - Do NOT include polite closing phrases, simple thank‑yous, or Vita’s error messages.  
+   - Only include statements where the doctor expresses disagreement (e.g., “I’m not convinced”, “That’s too expensive”).  
+   - If no valid objection exists → use empty array [].
+
+2. **CONCERNS** (inside each product) – Capture any explicit worry, risk, or negative aspect mentioned by the doctor about that product.  
+   - Include hypothetical questions that express worry (e.g., “what if patients have an allergic reaction?”).  
+   - Include statements like “I’m worried about side effects”, “Is it safe for long‑term use?”.  
+   - Do NOT invent generic concerns (e.g., “side effects”) unless the doctor actually says them.  
+   - If no concerns → use empty array [].
+
+3. **LIKED** – Only include if the doctor explicitly says something positive (e.g., “I like that”, “That’s good”, “I’m convinced”).  
+   - Do NOT infer from lack of objection.
+
+4. **COVERED** (inside each product) – List the key information that Vita explained about the product. This includes benefits, usage, dosage, mechanism, safety, comparisons, etc. Use short phrases (5‑10 words).  
+- Only include what Vita actually said; do not invent.
+
+5. **INTEREST** – Based on the doctor’s questions:  
+   - **high** → specific, detailed questions (e.g., “What’s the dosage for children?”)  
+   - **medium** → general but relevant questions (e.g., “Tell me more”)  
+   - **low** → vague or one‑word answers.
+
+6. **RESOLVED** (in objections) – true if the doctor agrees or says they are convinced; false if they remain doubtful or ask for more evidence.
+
+7. **ENGAGEMENT_SCORE** (1‑5) – Based on conversation length, number of doctor questions, and depth.
+
+8. **TOPICS** – Short readable phrases (3‑8 words) describing each discussion point. Use the doctor’s perspective.
+
+9. **LANGUAGE** – Detect from the **doctor’s messages only**. If the doctor uses English → “english”. Mixed → “mixed”. French → “french”. Arabic → “arabic”.
+
+10. **No fixed number** – Output as many items as appear. Use empty arrays if none.
 
 JSON:"""
 
@@ -112,6 +107,18 @@ JSON:"""
             
             # Parse JSON response
             result = json.loads(response.choices[0].message.content)
+            
+            #Remove duplicates in objections based on quote
+            if "objections" in result and isinstance(result["objections"], list):
+                seen = set()
+                unique = []
+                for obj in result["objections"]:
+                    quote = obj.get("quote", "").strip()
+                    if quote and quote not in seen:
+                        seen.add(quote)
+                        unique.append(obj)
+                result["objections"] = unique
+            
             result["_metadata"] = {
                 "extraction_time_ms": elapsed_ms,
                 "model": self.model,
