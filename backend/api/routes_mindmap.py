@@ -29,7 +29,7 @@ class MindmapRequest(BaseModel):
 # ── LLM extraction ────────────────────────────────────────────────────────────
 
 async def extract_concepts(conversation: list, mode: str, lang: str) -> dict:
-    # Only keep meaningful exchanges (skip greetings/mode-selection messages)
+    # Garder uniquement les échanges significatifs (ignorer salutations/sélection mode)
     meaningful = [
         m for m in conversation
         if len(m.get("text", "").strip()) > 40
@@ -40,23 +40,43 @@ async def extract_concepts(conversation: list, mode: str, lang: str) -> dict:
     ]
     recent = meaningful[-20:] if len(meaningful) > 20 else meaningful
 
-    # Build conversation text — user questions + AI answers only
+    # Séparer questions user et réponses agent
+    user_msgs      = [m for m in recent if m["role"] == "user"]
+    assistant_msgs = [m for m in recent if m["role"] in ("assistant", "ai")]
+
+    # Texte complet de la conversation pour le contexte
     conv_text = "\n\n".join([
-        f"{'[QUESTION]' if m['role'] == 'user' else '[RÉPONSE]'}: {m['text'][:350]}"
+        f"{'[QUESTION]' if m['role'] == 'user' else '[RÉPONSE]'}: {m['text'][:400]}"
         for m in recent
     ])
 
+    # Résumé des questions posées (pour les descriptions)
+    user_summary = " | ".join([m["text"][:120] for m in user_msgs[:6]])
+    # Résumé des réponses agent (pour les descriptions)
+    agent_summary = " | ".join([m["text"][:200] for m in assistant_msgs[:6]])
+
     if lang == "ar":
         lang_instruction = "Write all labels in Arabic. Keep product names and scientific terms in French/English."
+        desc_instruction = "Write descriptions in Arabic (2 sentences max). Keep product names/terms in French/English."
     elif lang == "en":
         lang_instruction = "Write all labels in English."
+        desc_instruction = "Write descriptions in English (2 sentences max)."
     else:
         lang_instruction = "Write all labels in French."
+        desc_instruction = "Write descriptions in French (2 sentences max)."
 
     prompt = f"""You are extracting a mindmap from a real pharmaceutical training conversation.
 
 CONVERSATION:
 {conv_text}
+
+---
+QUESTIONS POSÉES PAR LE DÉLÉGUÉ (résumé) :
+{user_summary}
+
+RÉPONSES DE L'AGENT (résumé) :
+{agent_summary}
+---
 
 Your task: build a mindmap that summarizes EXACTLY what was discussed above — nothing else.
 
@@ -65,21 +85,32 @@ Your task: build a mindmap that summarizes EXACTLY what was discussed above — 
 MANDATORY RULES:
 1. The "center" node = the PRODUCT NAME mentioned (e.g. "Guarana", "Dermalo"). If no product, use the main topic.
 2. Each BRANCH = a THEME that was ACTUALLY discussed in the conversation above.
-   Examples of valid branches based on content: "Effets positifs", "Composition", "Mécanisme d'action", "Points forts", "Contre-indications"
-   FORBIDDEN: generic branches like "Techniques de vente", "Avantages cliniques", "Introduction", "Conclusion" if they were NOT mentioned.
-3. Each CHILD = a SPECIFIC FACT, INGREDIENT, or CONCEPT that was EXPLICITLY mentioned in the conversation.
-   Example: if the conversation says "guaranine, un alcaloïde similaire à la caféine", then children = ["Guaranine", "Alcaloïde caféine"]
-4. DO NOT invent or hallucinate — every branch and child must come from the conversation text above.
-5. Labels must be SHORT (branch: max 3 words, children: max 4 words) and COMPLETE — never truncate with "..."
+3. Each CHILD = a SPECIFIC FACT, INGREDIENT, or CONCEPT explicitly mentioned.
+4. DO NOT invent or hallucinate — every branch and child must come from the conversation text.
+5. Labels must be SHORT (branch: max 3 words, children: max 4 words).
+
+DESCRIPTION RULES (IMPORTANT):
+- For the "center": write a SHORT description (1-2 sentences) based on what the DELEGATE asked AND what the AGENT answered about this product/topic. Extract the key learning from both sides.
+- For each BRANCH: write a SHORT description (1-2 sentences) combining what the delegate asked about this theme AND the most important thing the agent said about it.
+- For each CHILD: write a SHORT description (1 sentence) — what the agent said specifically about this element, OR why the delegate asked about it.
+- {desc_instruction}
+- Descriptions must be SPECIFIC to this conversation, not generic definitions.
 
 Return ONLY valid JSON:
 {{
   "center": "product or topic name",
+  "center_description": "What the delegate asked + key point from agent answer about this product (1-2 sentences).",
   "branches": [
     {{
       "label": "theme from conversation",
+      "description": "What delegate asked about this theme + key agent explanation (1-2 sentences).",
       "color": "#hexcolor",
-      "children": ["specific fact 1", "specific fact 2", "specific fact 3"]
+      "children": [
+        {{
+          "label": "specific fact",
+          "description": "What agent said about this specific element (1 sentence)."
+        }}
+      ]
     }}
   ]
 }}
@@ -96,7 +127,7 @@ JSON only, no markdown, no explanation:"""
         "model": TOKEN_FACTORY_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
-        "max_tokens": 700,
+        "max_tokens": 1200,
     }
     url = f"{TOKEN_FACTORY_BASE_URL}/api/chat/completions"
 
@@ -110,10 +141,24 @@ JSON only, no markdown, no explanation:"""
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not match:
         raise ValueError(f"No JSON in response: {raw[:200]}")
-    return json.loads(match.group())
+
+    result = json.loads(match.group())
+
+    # ── Normaliser : s'assurer que children est toujours une liste de dicts ──
+    for branch in result.get("branches", []):
+        normalized_children = []
+        for child in branch.get("children", []):
+            if isinstance(child, str):
+                # Ancien format : juste un string → convertir en dict sans description
+                normalized_children.append({"label": child, "description": ""})
+            elif isinstance(child, dict):
+                normalized_children.append(child)
+        branch["children"] = normalized_children
+
+    return result
 
 
-# ── SVG generator — pill nodes, full text, clean layout ──────────────────────
+# ── SVG generator ─────────────────────────────────────────────────────────────
 
 def _esc(s: str) -> str:
     return (str(s)
@@ -124,7 +169,6 @@ def _esc(s: str) -> str:
 
 
 def _wrap_words(label: str, max_chars: int = 14) -> list[str]:
-    """Split label into lines of at most max_chars characters."""
     words = label.split()
     lines, current = [], ""
     for w in words:
@@ -141,10 +185,6 @@ def _wrap_words(label: str, max_chars: int = 14) -> list[str]:
 def _pill(x: float, y: float, text: str, color: str,
           font_size: int = 11, padding_x: int = 14, padding_y: int = 8,
           is_branch: bool = False) -> tuple[str, float, float]:
-    """
-    Render a pill (rounded rect) centered at (x, y).
-    Returns (svg_string, half_width, half_height).
-    """
     lines      = _wrap_words(text, max_chars=16 if is_branch else 18)
     line_h     = font_size + 4
     total_h    = len(lines) * line_h + padding_y * 2
@@ -155,10 +195,10 @@ def _pill(x: float, y: float, text: str, color: str,
     hh = total_h / 2
     rx = min(hh, 14)
 
-    fill_opacity  = "0.20" if is_branch else "0.14"
-    stroke_w      = "2"    if is_branch else "1.5"
-    stroke_opacity = "1"   if is_branch else "0.6"
-    fw            = "700"  if is_branch else "500"
+    fill_opacity   = "0.20" if is_branch else "0.14"
+    stroke_w       = "2"    if is_branch else "1.5"
+    stroke_opacity = "1"    if is_branch else "0.6"
+    fw             = "700"  if is_branch else "500"
 
     parts = []
     parts.append(
@@ -168,7 +208,6 @@ def _pill(x: float, y: float, text: str, color: str,
         f'stroke="{color}" stroke-width="{stroke_w}" stroke-opacity="{stroke_opacity}"/>'
     )
 
-    # Multi-line text
     start_y = y - (len(lines) - 1) * line_h / 2
     for i, line in enumerate(lines):
         ly = start_y + i * line_h
@@ -183,7 +222,6 @@ def _pill(x: float, y: float, text: str, color: str,
 
 
 def _child_pill(x: float, y: float, text: str, color: str) -> tuple[str, float, float]:
-    """Small child node — dark bg, colored border, white text."""
     lines   = _wrap_words(text, max_chars=16)
     font_sz = 10
     line_h  = font_sz + 4
@@ -234,7 +272,6 @@ def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
         f'style="background:transparent;font-family:\'Inter\',\'Jost\',system-ui,sans-serif;">'
     )
 
-    # ── Defs ─────────────────────────────────────────────────────────────────
     lines.append('<defs>')
     lines.append('''
   <radialGradient id="bgGrad" cx="50%" cy="50%" r="70%">
@@ -254,55 +291,47 @@ def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
   </filter>''')
     lines.append('</defs>')
 
-    # ── Background ────────────────────────────────────────────────────────────
     lines.append(f'<rect width="{W}" height="{H}" fill="url(#bgGrad)" rx="18"/>')
 
-    # Subtle dot pattern
     lines.append('<g opacity="0.035">')
     for gx in range(30, W, 36):
         for gy in range(30, H, 36):
             lines.append(f'<circle cx="{gx}" cy="{gy}" r="1" fill="white"/>')
     lines.append('</g>')
 
-    # Outer decorative rings
     lines.append(f'<circle cx="{CX}" cy="{CY}" r="295" fill="none" stroke="rgba(255,255,255,0.025)" stroke-width="1"/>')
     lines.append(f'<circle cx="{CX}" cy="{CY}" r="195" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="6 4"/>')
 
-    # ── Branch positions ──────────────────────────────────────────────────────
-    R_BRANCH = 175   # center → branch node center
-    R_CHILD  = 295   # center → child node center (approx, adjusted per branch)
+    R_BRANCH = 175
+    R_CHILD  = 295
 
     branch_angles = []
     for i in range(n_branches):
         deg = (360 / n_branches) * i - 90
         branch_angles.append(math.radians(deg))
 
-    # Pre-compute branch positions
     branch_positions = [
         (CX + R_BRANCH * math.cos(a), CY + R_BRANCH * math.sin(a))
         for a in branch_angles
     ]
 
-    # ── Draw connector lines FIRST (under nodes) ──────────────────────────────
+    # Connecteurs
     for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
         color    = branch.get("color", "#7eb8f7")
         bx, by   = branch_positions[i]
         children = branch.get("children", [])[:3]
         n_ch     = len(children)
 
-        # Center → branch (solid)
         lines.append(
             f'<line x1="{CX}" y1="{CY}" x2="{bx:.1f}" y2="{by:.1f}" '
             f'stroke="{color}" stroke-width="2.5" stroke-opacity="0.55" stroke-linecap="round"/>'
         )
 
-        # Branch → children (dashed, spread evenly around branch angle)
         if n_ch:
             spread = math.radians(22)
             start  = angle - spread * (n_ch - 1) / 2
             for j in range(n_ch):
                 child_angle = start + spread * j
-                # Alternate distances slightly for visual rhythm
                 r = R_CHILD + (10 if j % 2 == 0 else -10)
                 cx2 = CX + r * math.cos(child_angle)
                 cy2 = CY + r * math.sin(child_angle)
@@ -312,7 +341,7 @@ def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
                     f'stroke-linecap="round" stroke-dasharray="5 4"/>'
                 )
 
-    # ── Draw branch nodes ─────────────────────────────────────────────────────
+    # Noeuds branches + enfants
     for i, (branch, angle) in enumerate(zip(branches, branch_angles)):
         color    = branch.get("color", "#7eb8f7")
         label    = branch.get("label", f"Branche {i+1}")
@@ -324,7 +353,6 @@ def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
                                  padding_x=16, padding_y=9, is_branch=True)
         lines.append(f'<g filter="url(#shadow)">{svg_pill}</g>')
 
-        # ── Children ──────────────────────────────────────────────────────────
         if n_ch:
             spread = math.radians(22)
             start  = angle - spread * (n_ch - 1) / 2
@@ -333,10 +361,12 @@ def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
                 r = R_CHILD + (10 if j % 2 == 0 else -10)
                 cx2 = CX + r * math.cos(child_angle)
                 cy2 = CY + r * math.sin(child_angle)
-                svg_child, _, _ = _child_pill(cx2, cy2, str(child), color)
+                # child peut être dict ou str
+                child_label = child.get("label", str(child)) if isinstance(child, dict) else str(child)
+                svg_child, _, _ = _child_pill(cx2, cy2, child_label, color)
                 lines.append(svg_child)
 
-    # ── Center node ───────────────────────────────────────────────────────────
+    # Noeud central
     center_lines = _wrap_words(center_label, max_chars=12)
     center_r     = 56
     line_h_c     = 16
@@ -360,7 +390,6 @@ def build_mindmap_svg(data: dict, mode: str = "medical") -> str:
             f'{_esc(cl)}</text>'
         )
 
-    # ── Watermark ─────────────────────────────────────────────────────────────
     lines.append(
         f'<text x="{W - 14}" y="{H - 10}" text-anchor="end" '
         f'fill="rgba(255,255,255,0.1)" font-size="9" font-style="italic">'
@@ -388,9 +417,10 @@ async def generate_mindmap(request: MindmapRequest):
         print(f"[mindmap] concept extraction error: {e}")
         concepts = {
             "center": "Session",
+            "center_description": "Session de formation VitalAgent.",
             "branches": [
-                {"label": "Produits", "color": "#7eb8f7",  "children": ["Voir historique"]},
-                {"label": "Concepts", "color": "#c084fc",  "children": ["Relire session"]},
+                {"label": "Produits", "description": "Produits discutés lors de la session.", "color": "#7eb8f7",  "children": [{"label": "Voir historique", "description": "Consultez l'historique de la conversation."}]},
+                {"label": "Concepts", "description": "Concepts abordés lors de la session.", "color": "#c084fc",  "children": [{"label": "Relire session", "description": "Relisez la session pour mémoriser."}]},
             ],
         }
 

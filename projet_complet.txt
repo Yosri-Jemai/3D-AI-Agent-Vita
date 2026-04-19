@@ -1,4 +1,28 @@
-=== ./backend/analytics/groq_extractor.py ===
+=== ./.env ===
+# ─── MySQL ───────────────────────────────────────────────────
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=vital_crm
+
+# ─── Token Factory ─────────────────────────────────
+TOKEN_FACTORY_API_KEY=sk-a9a024cd942045e89fbb327c1933c749
+TOKEN_FACTORY_BASE_URL=https://tokenfactory.esprit.tn
+TOKEN_FACTORY_MODEL=hosted_vllm/Llama-3.1-70B-Instruct 
+
+# ─── Ollama ──────────────────────────────────────────────────
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_LLM_MODEL=llama3.1
+OLLAMA_EMBED_MODEL=nomic-embed-text
+
+# ─── ChromaDB ────────────────────────────────────────────────
+CHROMA_PERSIST_DIR=./chroma_db
+CHROMA_COLLECTION_NAME=medical_products
+
+# ─── API ─────────────────────────────────────────────────────
+API_HOST=0.0.0.0
+API_PORT=8000=== ./backend/analytics/groq_extractor.py ===
 import os
 import json
 import time
@@ -12176,6 +12200,7 @@ python backend/main.py
 
 terminal 3 : 
 serve . --config serve.json
+=== ./projet_complet.txt ===
 === ./README.md ===
 # VitalAgent — 3D AI Medical Delegate Training Agent
 
