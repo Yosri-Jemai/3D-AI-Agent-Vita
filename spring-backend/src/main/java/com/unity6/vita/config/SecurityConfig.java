@@ -43,7 +43,8 @@ public class SecurityConfig {
                                 "/api/v1/activate",
                                 "/api/v1/auth-health",
                                 "/api/v1/verify",
-                                "/api/v1/check-activation"
+                                "/api/v1/check-activation",
+                                "/api/v1/sessions/**"
                         ).permitAll()
                         // OPTIONS pre-flight requests
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
