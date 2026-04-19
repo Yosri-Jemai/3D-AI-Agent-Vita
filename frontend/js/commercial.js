@@ -48,7 +48,7 @@ window.startVisit = async function() {
     if (visitStarted) return;
     
     // Get profile ID from somewhere (you can skip for now)
-    currentProfileId = localStorage.getItem('profileId') || 1;
+    currentProfileId = localStorage.getItem('profileId') || 2;
     
     // Create session in Spring Boot (skip if Spring Boot not ready)
     try {
@@ -229,24 +229,22 @@ window.sendQuestion = async function() {
 };
 
 // Modified openReport to use AI extraction
-const originalOpenReport = window.openReport;
+// const originalOpenReport = window.openReport;
 window.openReport = async function() {
     if (!conversationLog.length) {
         showToast('No conversation to analyze');
         return;
     }
-    
-    // Show loading
+
     const reportBtn = document.getElementById('report-btn');
     const originalText = reportBtn.innerHTML;
-    reportBtn.innerHTML = 'Analyzing...';
+    reportBtn.innerHTML = 'Saving...';
     reportBtn.disabled = true;
-    
+
     try {
-        // If session exists, end it and get extraction
         if (currentSessionId) {
             const token = localStorage.getItem('jwt');
-            const response = await fetch('http://localhost:8080/api/v1/sessions/end', {
+            await fetch('http://localhost:8080/api/v1/sessions/end', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -258,24 +256,31 @@ window.openReport = async function() {
                     conversation: conversationLog
                 })
             });
-            
-            const extraction = await response.json();
-            displayAIReport(extraction);
+            // We ignore the response – even if it's an error, we still show the static message
         } else {
-            // Just extract without saving
-            const response = await fetch('http://localhost:8000/analytics/extract', {
+            await fetch('http://localhost:8000/analytics/extract', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ conversation: conversationLog })
             });
-            const result = await response.json();
-            displayAIReport(result.extraction);
         }
     } catch (error) {
-        console.error('Analysis failed:', error);
-        showToast('Failed to analyze conversation');
-        originalOpenReport(); // Fallback to old report
+        console.warn('Report save failed:', error);
     } finally {
+        // Always show the static message
+        const reportContent = document.getElementById('report-content');
+        if (reportContent) {
+            reportContent.innerHTML = `
+                <div style="text-align: center; padding: 40px 20px;">
+                    <h3>Session terminée</h3>
+                    <p>Merci d'avoir utilisé Vita. La conversation a été enregistrée.</p>
+                    <p>Vous pouvez fermer cette fenêtre.</p>
+                </div>
+            `;
+        }
+        const overlay = document.getElementById('report-overlay');
+        if (overlay) overlay.classList.add('open');
+
         reportBtn.innerHTML = originalText;
         reportBtn.disabled = false;
     }

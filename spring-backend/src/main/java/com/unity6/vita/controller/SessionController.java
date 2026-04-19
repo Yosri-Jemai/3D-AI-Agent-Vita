@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/sessions")
+@RequestMapping("/api/v1/sessions")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "http://localhost:3000")
 public class SessionController {
@@ -27,7 +27,7 @@ public class SessionController {
     @PostMapping("/start")
     public ResponseEntity<SessionDTO> startSession(@RequestBody Map<String, String> request) {
 //        Long profileId = profileService.getCurrentProfile().getId();
-        Long profileId = 1L;
+        Long profileId = 2L;
         String mode = request.get("mode");
 
         SessionDTO session = sessionService.startSession(profileId, mode);
@@ -37,7 +37,7 @@ public class SessionController {
     // End session and generate report
     @PostMapping("/end")
     public ResponseEntity<ExtractionResultDTO> endSession(@RequestBody EndSessionRequestDTO request) {
-        request.setProfileId(1L);
+        request.setProfileId(2L);
         ExtractionResultDTO result = sessionService.endSessionAndExtract(request);
         return ResponseEntity.ok(result);
     }
@@ -46,7 +46,7 @@ public class SessionController {
     @GetMapping("/history")
     public ResponseEntity<List<SessionDTO>> getSessionHistory() {
 //        Long profileId = profileService.getCurrentProfile().getId();
-        Long profileId = 1L;
+        Long profileId = 2L;
         List<SessionDTO> history = sessionService.getSessionHistory(profileId);
         return ResponseEntity.ok(history);
     }
