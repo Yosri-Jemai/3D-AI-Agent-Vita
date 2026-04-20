@@ -1,4 +1,4 @@
-﻿=== ./.env ===RIMAAAAAAAAAAAAa
+﻿=== ./.env ===RIMAAAAAAAAAAAAaaaaaa
 # ─── MySQL ───────────────────────────────────────────────────
 MYSQL_HOST=localhost
 MYSQL_PORT=3306
