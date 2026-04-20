@@ -11,6 +11,7 @@ public interface ConversationExtractionRepository extends JpaRepository<Conversa
     List<ConversationExtraction> findByProfileIdOrderByExtractedAtDesc(Long profileId);
 
     Optional<ConversationExtraction> findBySessionId(Long sessionId);
+    List<ConversationExtraction> findTop20ByOrderByExtractedAtDesc();
 
     @Query(value = "SELECT * FROM conversation_extraction WHERE JSON_SEARCH(products, 'one', ?1) IS NOT NULL", nativeQuery = true)
     List<ConversationExtraction> findByProductName(String productName);

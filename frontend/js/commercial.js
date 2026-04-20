@@ -9,7 +9,7 @@ let audioChunks = [];
 let currentSessionId = null;
 let currentProfileId = null;
 
-const MODE = 'vita_commercial';
+const MODE = 'commercial';
 let visitStarted = false;
 
 // ── Init ──────────────────────────────────────────────────────
