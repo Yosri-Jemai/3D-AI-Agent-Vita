@@ -39,6 +39,7 @@ public class SecurityConfig {
                         // Public endpoints - Aucune authentification requise
                         .requestMatchers(
                                 "/api/v1/register",
+                                "/api/v1/admin/register",
                                 "/api/v1/login",
                                 "/api/v1/activate",
                                 "/api/v1/auth-health",

@@ -84,6 +84,8 @@ function redirectBasedOnRole(role) {
         window.location.href = 'index.html';
     } else if (role === 'PROFESSIONAL') {
         window.location.href = 'commercial.html';
+    } else if (role === 'ADMIN') {
+        window.location.href = 'admin/admin.html';
     }
 }
 

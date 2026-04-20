@@ -5,6 +5,7 @@ let isLoading = false, isRecording = false;
 let mediaRecorder = null, audioChunks = [];
 let allProducts = [], selectedProduct = null, selectedProductData = null;
 let trainingMode = null;
+let currentSessionId = null;
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -25,6 +26,35 @@ async function init() {
   await loadProducts();
   await avatarP;
   await loadGreeting();
+}
+
+function getCurrentProfileId() {
+  try {
+    const userRaw = localStorage.getItem('user');
+    if (!userRaw) return null;
+    const user = JSON.parse(userRaw);
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function startTrainingSession(mode) {
+  const profileId = getCurrentProfileId();
+  if (!profileId || !mode || currentSessionId) return;
+  try {
+    const res = await fetch('http://localhost:8080/api/v1/sessions/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, profileId })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      currentSessionId = data.id || null;
+    }
+  } catch (e) {
+    console.warn('Session tracking start failed:', e);
+  }
 }
 
 function setStatus(state, text) {
@@ -113,6 +143,7 @@ async function loadGreeting() {
 
 function setMode(mode) {
   trainingMode = mode;
+  startTrainingSession(mode);
   const badge = document.getElementById('mode-badge');
   if (badge) {
     badge.style.display = 'inline-block';

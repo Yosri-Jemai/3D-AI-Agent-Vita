@@ -8,6 +8,8 @@ import com.unity6.vita.service.ProfileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,6 +29,12 @@ public class ProfileController {
     @PostMapping("/register")
     public ResponseEntity<ProfileDTO> register(@RequestBody ProfileDTO profileDTO) {
         ProfileDTO registeredProfile = profileService.registerProfile(profileDTO);
+        return ResponseEntity.status(HttpStatus.CREATED).body(registeredProfile);
+    }
+
+    @PostMapping("/admin/register")
+    public ResponseEntity<ProfileDTO> registerAdmin(@RequestBody ProfileDTO profileDTO) {
+        ProfileDTO registeredProfile = profileService.registerAdminProfile(profileDTO);
         return ResponseEntity.status(HttpStatus.CREATED).body(registeredProfile);
     }
 
@@ -121,5 +129,19 @@ public class ProfileController {
                 "fullName", profile.getFullName(),
                 "message", profile.getIsActive() ? "Account is active" : "Account is not active"
         ));
+    }
+
+    @GetMapping("/admin/dashboard-stats")
+    public ResponseEntity<Map<String, Object>> dashboardStats() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        profileService.ensureAdminAccess(authentication.getName());
+        return ResponseEntity.ok(profileService.getAdminDashboardStats());
+    }
+
+    @GetMapping("/admin/commercial-tracking")
+    public ResponseEntity<Map<String, Object>> commercialTracking() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        profileService.ensureAdminAccess(authentication.getName());
+        return ResponseEntity.ok(profileService.getCommercialTrackingStats());
     }
 }

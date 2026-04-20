@@ -26,8 +26,8 @@
     
     try {
         const user = JSON.parse(userJson);
-        // Vérifier le rôle (DELEGATE)
-        if (user.role !== 'DELEGATE') {
+        // Vérifier le rôle (DELEGATE ou ADMIN)
+        if (user.role !== 'DELEGATE' && user.role !== 'ADMIN') {
             console.log('Rôle incorrect, redirection vers commercial.html');
             window.location.href = 'commercial.html';
             return;
@@ -54,15 +54,7 @@
             numTelephone: user.numTelephone
         }));
         
-        console.log('✅ Connecté en tant que:', user.fullName, '(Delegate)');
-        
-        // Vérifier la validité du token (optionnel - appel à un endpoint /verify)
-        fetch(`${SPRING_BOOT_URL}/verify`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        }).catch(() => {
-            // Si erreur, on ne redirige pas immédiatement
-            console.log('Token verification skipped');
-        });
+        console.log('✅ Connecté en tant que:', user.fullName, `(${user.role})`);
         
     } catch(e) {
         console.error('Erreur de vérification:', e);

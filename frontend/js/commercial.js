@@ -9,7 +9,7 @@ let audioChunks = [];
 let currentSessionId = null;
 let currentProfileId = null;
 
-const MODE = 'vita_commercial';
+const MODE = 'commercial';
 let visitStarted = false;
 
 // ── Init ──────────────────────────────────────────────────────
@@ -47,8 +47,14 @@ const originalStartVisit = window.startVisit;
 window.startVisit = async function() {
     if (visitStarted) return;
     
-    // Get profile ID from somewhere (you can skip for now)
-    currentProfileId = localStorage.getItem('profileId') || 2;
+    // Get profile ID from authenticated user
+    try {
+        const userRaw = localStorage.getItem('user');
+        const user = userRaw ? JSON.parse(userRaw) : null;
+        currentProfileId = user?.id || 2;
+    } catch {
+        currentProfileId = 2;
+    }
     
     // Create session in Spring Boot (skip if Spring Boot not ready)
     try {
@@ -57,7 +63,7 @@ window.startVisit = async function() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ mode: MODE })
+            body: JSON.stringify({ mode: MODE, profileId: currentProfileId })
         });
         
         if (response.ok) {

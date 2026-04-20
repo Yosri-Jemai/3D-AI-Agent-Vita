@@ -9,4 +9,5 @@ import java.util.List;
 public interface EvaluationRepository extends JpaRepository<Evaluation, Long> {
     List<Evaluation> findByProfile(Profile profile);
     List<Evaluation> findByProfileOrderByDateDesc(Profile profile);
+    long countByScoreGreaterThanEqual(Float score);
 }

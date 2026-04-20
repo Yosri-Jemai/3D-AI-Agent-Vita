@@ -25,10 +25,21 @@ public class SessionController {
 
     // Start a new session
     @PostMapping("/start")
-    public ResponseEntity<SessionDTO> startSession(@RequestBody Map<String, String> request) {
-//        Long profileId = profileService.getCurrentProfile().getId();
-        Long profileId = 2L;
-        String mode = request.get("mode");
+    public ResponseEntity<SessionDTO> startSession(@RequestBody Map<String, Object> request) {
+        Long profileId = null;
+        Object profileIdRaw = request.get("profileId");
+        if (profileIdRaw instanceof Number number) {
+            profileId = number.longValue();
+        } else if (profileIdRaw instanceof String value && !value.isBlank()) {
+            try {
+                profileId = Long.parseLong(value);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (profileId == null) {
+            profileId = 2L;
+        }
+        String mode = String.valueOf(request.getOrDefault("mode", "medical"));
 
         SessionDTO session = sessionService.startSession(profileId, mode);
         return ResponseEntity.status(HttpStatus.CREATED).body(session);
@@ -37,7 +48,9 @@ public class SessionController {
     // End session and generate report
     @PostMapping("/end")
     public ResponseEntity<ExtractionResultDTO> endSession(@RequestBody EndSessionRequestDTO request) {
-        request.setProfileId(2L);
+        if (request.getProfileId() == null) {
+            request.setProfileId(2L);
+        }
         ExtractionResultDTO result = sessionService.endSessionAndExtract(request);
         return ResponseEntity.ok(result);
     }

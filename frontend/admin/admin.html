@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin CRM - Vital</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main class="admin-shell">
+    <section id="authSection" class="auth-card">
+        <h1>Administration CRM</h1>
+        <p class="muted">Acces reserve aux administrateurs.</p>
+
+        <div class="tabs">
+            <button class="tab active" data-target="loginPanel">Connexion Admin</button>
+            <button class="tab" data-target="registerPanel">Creer compte Admin</button>
+        </div>
+
+        <div id="loginPanel" class="panel active">
+            <form id="adminLoginForm">
+                <label>Email</label>
+                <input type="email" id="adminLoginEmail" required>
+                <label>Mot de passe</label>
+                <input type="password" id="adminLoginPassword" required>
+                <button type="submit">Se connecter</button>
+            </form>
+        </div>
+
+        <div id="registerPanel" class="panel">
+            <form id="adminRegisterForm">
+                <label>Nom complet</label>
+                <input type="text" id="adminFullName" required>
+                <label>Email</label>
+                <input type="email" id="adminEmail" required>
+                <label>Telephone</label>
+                <input type="text" id="adminPhone">
+                <label>Mot de passe</label>
+                <input type="password" id="adminPassword" minlength="6" required>
+                <button type="submit">Creer un admin</button>
+            </form>
+        </div>
+
+        <div id="authMessage" class="message"></div>
+    </section>
+
+    <section id="dashboardSection" class="dashboard hidden">
+        <header class="dashboard-header">
+            <div class="title-wrap">
+                <h2>Dashboard Admin</h2>
+                <p class="muted">Suivi global des delegues, formations et progression.</p>
+            </div>
+            <div class="header-actions">
+                <div class="quick-links">
+                    <a class="quick-link" href="/index.html">Interface formation</a>
+                    <a class="quick-link" href="/commercial.html">Interface commercial</a>
+                </div>
+                <span id="adminIdentity" class="identity-badge"></span>
+                <button id="logoutBtn">Deconnexion</button>
+            </div>
+        </header>
+
+        <nav class="dashboard-nav">
+            <button class="view-btn active" data-view="statsView">Statistiques formation</button>
+            <button class="view-btn" data-view="commercialView">Suivi commercial</button>
+        </nav>
+
+        <section id="statsView" class="view active">
+            <div class="grid-cards" id="statsCards"></div>
+            <div class="charts-grid">
+                <article class="chart-card">
+                    <h3>Repartition des sessions</h3>
+                    <canvas id="sessionsChart"></canvas>
+                </article>
+                <article class="chart-card">
+                    <h3>Progression des delegues</h3>
+                    <canvas id="performanceChart"></canvas>
+                </article>
+            </div>
+            <h3>Dernieres sessions de formation</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Session</th>
+                            <th>Delegue</th>
+                            <th>Mode</th>
+                            <th>Debut</th>
+                            <th>Fin</th>
+                        </tr>
+                    </thead>
+                    <tbody id="latestSessionsBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="commercialView" class="view">
+            <div class="grid-cards" id="commercialCards"></div>
+            <div class="charts-grid single-chart">
+                <article class="chart-card">
+                    <h3>Top produits et suivi commercial</h3>
+                    <canvas id="productsChart"></canvas>
+                </article>
+            </div>
+            <h3>Performance des delegues</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Delegue</th>
+                        <th>Sessions</th>
+                        <th>Score performance</th>
+                        <th>Niveau</th>
+                    </tr>
+                    </thead>
+                    <tbody id="delegatesPerformanceBody"></tbody>
+                </table>
+            </div>
+            <h3>Top produits discutes</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Produit</th>
+                        <th>Mentions</th>
+                    </tr>
+                    </thead>
+                    <tbody id="topProductsBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

@@ -19,4 +19,9 @@ public interface TrainingSessionRepository extends JpaRepository<InteractionSess
     @Transactional
     @Query("UPDATE InteractionSession ts SET ts.endedAt = ?2 WHERE ts.id = ?1")
     void updateEndTime(Long sessionId, LocalDateTime endedAt);
+
+    long countByMode(String mode);
+    long countByModeIn(List<String> modes);
+
+    List<InteractionSession> findTop10ByOrderByStartedAtDesc();
 }
