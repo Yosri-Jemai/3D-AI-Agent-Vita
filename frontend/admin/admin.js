@@ -82,6 +82,25 @@ function formatDate(value) {
     return new Date(value).toLocaleString("fr-FR");
 }
 
+function normalizeMode(mode) {
+    const value = String(mode || "").toLowerCase();
+    if (value === "medical") return "Medical";
+    if (value === "commercial" || value === "vita_commercial") return "Commercial";
+    return mode || "-";
+}
+
+async function loadProfilesMap() {
+    try {
+        const profiles = await request("/profiles");
+        return profiles.reduce((acc, profile) => {
+            acc[String(profile.id)] = profile.fullName || `Utilisateur ${profile.id}`;
+            return acc;
+        }, {});
+    } catch {
+        return {};
+    }
+}
+
 function renderCards(containerId, entries) {
     const container = document.getElementById(containerId);
     container.innerHTML = entries.map(([label, value]) => `
@@ -92,13 +111,17 @@ function renderCards(containerId, entries) {
     `).join("");
 }
 
-function renderLatestSessions(sessions) {
+function renderLatestSessions(sessions, profilesMap = {}) {
     const body = document.getElementById("latestSessionsBody");
+    if (!sessions.length) {
+        body.innerHTML = `<tr><td colspan="5">Aucune session medicale disponible.</td></tr>`;
+        return;
+    }
     body.innerHTML = sessions.map((session) => `
         <tr>
             <td>${session.sessionUuid || "-"}</td>
-            <td>${session.profileId ?? "-"}</td>
-            <td>${session.mode || "-"}</td>
+            <td>${session.profileName || profilesMap[String(session.profileId)] || "Utilisateur inconnu"}</td>
+            <td>${normalizeMode(session.mode)}</td>
             <td>${formatDate(session.startedAt)}</td>
             <td>${formatDate(session.endedAt)}</td>
         </tr>
@@ -115,17 +138,24 @@ function renderTopProducts(products) {
     `).join("");
 }
 
-function buildDelegatesPerformanceRows(latestSessions = [], completionRate = 0, avgEngagement = 0) {
+function buildDelegatesPerformanceRows(latestSessions = [], completionRate = 0, avgEngagement = 0, profilesMap = {}) {
     const map = new Map();
     latestSessions.forEach((session) => {
         const id = session.profileId ?? "N/A";
         if (!map.has(id)) {
-            map.set(id, { profileId: id, sessions: 0, medical: 0, commercial: 0 });
+            map.set(id, {
+                profileId: id,
+                delegateName: session.profileName || profilesMap[String(id)] || "Utilisateur inconnu",
+                sessions: 0,
+                medical: 0,
+                commercial: 0
+            });
         }
         const item = map.get(id);
         item.sessions += 1;
-        if ((session.mode || "").toLowerCase() === "medical") item.medical += 1;
-        if ((session.mode || "").toLowerCase() === "commercial") item.commercial += 1;
+        const mode = String(session.mode || "").toLowerCase();
+        if (mode === "medical") item.medical += 1;
+        if (mode === "commercial" || mode === "vita_commercial") item.commercial += 1;
     });
 
     const rows = Array.from(map.values()).map((item) => {
@@ -141,6 +171,7 @@ function buildDelegatesPerformanceRows(latestSessions = [], completionRate = 0, 
 
         return {
             profileId: item.profileId,
+            delegateName: item.delegateName,
             sessions: item.sessions,
             score,
             level
@@ -158,7 +189,7 @@ function renderDelegatesPerformance(rows) {
     }
     body.innerHTML = rows.map((row) => `
         <tr>
-            <td>${row.profileId}</td>
+            <td>${row.delegateName}</td>
             <td>${row.sessions}</td>
             <td>${row.score}%</td>
             <td>${row.level}</td>
@@ -228,7 +259,7 @@ function drawPerformanceChart(rows) {
     performanceChart = new Chart(canvas, {
         type: "line",
         data: {
-            labels: topDelegates.map((row) => `ID ${row.profileId}`),
+            labels: topDelegates.map((row) => row.delegateName),
             datasets: [{
                 label: "Performance delegue (%)",
                 data: topDelegates.map((row) => row.score),
@@ -249,9 +280,10 @@ function drawPerformanceChart(rows) {
 }
 
 async function loadDashboardAndCommercial() {
-    const [dashboard, commercial] = await Promise.all([
+    const [dashboard, commercial, profilesMap] = await Promise.all([
         request("/admin/dashboard-stats"),
-        request("/admin/commercial-tracking")
+        request("/admin/commercial-tracking"),
+        loadProfilesMap()
     ]);
 
     renderCards("statsCards", [
@@ -264,7 +296,7 @@ async function loadDashboardAndCommercial() {
         ["Evaluations", dashboard.totalEvaluations ?? 0],
         ["Taux de progression", `${dashboard.completionRate ?? 0}%`]
     ]);
-    renderLatestSessions(dashboard.latestSessions || []);
+    renderLatestSessions(dashboard.latestSessions || [], profilesMap);
     renderCards("commercialCards", [
         ["Extractions recentes", commercial.recentExtractions ?? 0],
         ["Score engagement moyen", commercial.averageEngagementScore ?? 0],
@@ -275,7 +307,8 @@ async function loadDashboardAndCommercial() {
     const rows = buildDelegatesPerformanceRows(
         dashboard.latestSessions || [],
         Number(dashboard.completionRate || 0),
-        Number(commercial.averageEngagementScore || 0)
+        Number(commercial.averageEngagementScore || 0),
+        profilesMap
     );
     renderDelegatesPerformance(rows);
     drawSessionsChart(dashboard);

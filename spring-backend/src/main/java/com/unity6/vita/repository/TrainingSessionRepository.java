@@ -21,6 +21,7 @@ public interface TrainingSessionRepository extends JpaRepository<InteractionSess
     void updateEndTime(Long sessionId, LocalDateTime endedAt);
 
     long countByMode(String mode);
+    long countByModeIn(List<String> modes);
 
     List<InteractionSession> findTop10ByOrderByStartedAtDesc();
 }

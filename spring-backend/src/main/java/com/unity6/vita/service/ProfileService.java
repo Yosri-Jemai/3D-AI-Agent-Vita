@@ -205,18 +205,22 @@ public class ProfileService {
         long totalProfessionals = profileRepository.countByRole(Role.PROFESSIONAL);
         long totalAdmins = profileRepository.countByRole(Role.ADMIN);
         long totalMedicalSessions = trainingSessionRepository.countByMode("medical");
-        long totalCommercialSessions = trainingSessionRepository.countByMode("commercial");
+        long totalCommercialSessions = trainingSessionRepository.countByModeIn(List.of("commercial", "vita_commercial"));
         long successfulEvaluations = evaluationRepository.countByScoreGreaterThanEqual(70f);
         long totalEvaluations = evaluationRepository.count();
         double completionRate = totalEvaluations == 0 ? 0d : (successfulEvaluations * 100.0) / totalEvaluations;
 
         List<Map<String, Object>> latestSessions = trainingSessionRepository.findTop10ByOrderByStartedAtDesc()
                 .stream()
+                .limit(10)
                 .map(session -> {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("sessionUuid", session.getSessionUuid());
                     row.put("profileId", session.getProfileId());
-                    row.put("mode", session.getMode());
+                    row.put("profileName", profileRepository.findById(session.getProfileId())
+                            .map(Profile::getFullName)
+                            .orElse(null));
+                    row.put("mode", normalizeSessionMode(session.getMode()));
                     row.put("startedAt", session.getStartedAt());
                     row.put("endedAt", session.getEndedAt());
                     return row;
@@ -282,6 +286,17 @@ public class ProfileService {
         response.put("delegatesActiveInCommercialMode", delegatesInCommercialMode);
         response.put("topProducts", topProducts);
         return response;
+    }
+
+    private String normalizeSessionMode(String mode) {
+        if (mode == null) {
+            return "unknown";
+        }
+        String normalized = mode.trim().toLowerCase();
+        if ("vita_commercial".equals(normalized)) {
+            return "commercial";
+        }
+        return normalized;
     }
 
     public Profile getProfileById(Long id) {
