@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vital - Authentification | Laboratoires Vital</title>
+    
+    <!-- Font Awesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
     <style>
         * {
             margin: 0;
@@ -12,8 +16,8 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #f4f9f5 0%, #e8f2ea 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -21,13 +25,12 @@
             padding: 20px;
         }
 
-        /* Container principal */
         .auth-container {
             width: 100%;
-            max-width: 1200px;
+            max-width: 1180px;
             background: white;
-            border-radius: 30px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            border-radius: 32px;
+            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.13);
             overflow: hidden;
             display: flex;
             flex-wrap: wrap;
@@ -36,9 +39,9 @@
         /* Section gauche - Branding */
         .brand-section {
             flex: 1;
-            min-width: 300px;
-            background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
-            padding: 60px 40px;
+            min-width: 320px;
+            background: linear-gradient(135deg, #1e7a2e 0%, #145a22 100%);
+            padding: 70px 50px;
             color: white;
             display: flex;
             flex-direction: column;
@@ -46,228 +49,212 @@
         }
 
         .logo {
-            margin-bottom: 40px;
+            margin-bottom: 50px;
         }
 
         .logo h1 {
-            font-size: 2.5rem;
+            font-size: 2.75rem;
             font-weight: 700;
-            margin-bottom: 10px;
+            letter-spacing: -0.6px;
+            margin-bottom: 8px;
         }
 
         .logo p {
-            font-size: 1rem;
+            font-size: 1.05rem;
             opacity: 0.9;
         }
 
         .brand-features {
-            margin-top: 40px;
+            margin-top: 50px;
         }
 
         .feature {
             display: flex;
-            align-items: center;
-            margin-bottom: 25px;
+            align-items: flex-start;
+            margin-bottom: 34px;
         }
 
         .feature-icon {
-            width: 50px;
-            height: 50px;
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 12px;
+            width: 54px;
+            height: 54px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-right: 15px;
-            font-size: 1.5rem;
+            margin-right: 18px;
+            font-size: 1.65rem;
+            color: white;
+            flex-shrink: 0;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
         }
 
         .feature-text h3 {
-            font-size: 1.1rem;
-            margin-bottom: 5px;
+            font-size: 1.18rem;
+            margin-bottom: 7px;
+            font-weight: 600;
         }
 
         .feature-text p {
-            font-size: 0.85rem;
-            opacity: 0.8;
+            font-size: 0.92rem;
+            opacity: 0.88;
+            line-height: 1.45;
         }
 
         /* Section droite - Formulaires */
         .forms-section {
             flex: 1;
-            min-width: 400px;
+            min-width: 420px;
             background: white;
-            padding: 60px 40px;
+            padding: 60px 55px;
+            overflow-y: auto;           /* Permet le scroll uniquement si nécessaire */
+            max-height: 100vh;          /* Évite le débordement total */
         }
 
         /* Toggle buttons */
         .toggle-buttons {
             display: flex;
-            gap: 15px;
+            gap: 8px;
             margin-bottom: 40px;
-            border-bottom: 2px solid #e0e0e0;
+            background: #f8f9fa;
+            padding: 6px;
+            border-radius: 16px;
         }
 
         .toggle-btn {
-            background: none;
-            border: none;
-            padding: 12px 0;
-            font-size: 1.2rem;
+            flex: 1;
+            padding: 14px 0;
+            font-size: 1.08rem;
             font-weight: 600;
+            border: none;
+            background: transparent;
+            border-radius: 12px;
             cursor: pointer;
-            color: #666;
-            transition: all 0.3s ease;
-            position: relative;
+            color: #555;
+            transition: all 0.4s ease;
         }
 
         .toggle-btn.active {
-            color: #2e7d32;
+            background: white;
+            color: #1e7a2e;
+            box-shadow: 0 5px 18px rgba(0, 0, 0, 0.09);
         }
 
-        .toggle-btn.active::after {
-            content: '';
-            position: absolute;
-            bottom: -2px;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: #2e7d32;
-            border-radius: 3px;
+        /* Conteneur des formulaires avec hauteur adaptative */
+        .form-container {
+            position: relative;
+            min-height: 480px;           /* Hauteur suffisante pour les deux formulaires */
         }
 
-        /* Formulaires */
         .form {
-            display: none;
-            animation: fadeIn 0.5s ease;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            opacity: 0;
+            transform: translateX(40px);
+            visibility: hidden;
+            transition: all 0.6s cubic-bezier(0.25, 0.1, 0.25, 1);
         }
 
         .form.active {
-            display: block;
+            opacity: 1;
+            transform: translateX(0);
+            visibility: visible;
         }
 
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        .form.inactive-left {
+            transform: translateX(-60px);
+            opacity: 0;
+        }
+
+        .form.inactive-right {
+            transform: translateX(60px);
+            opacity: 0;
         }
 
         .form-group {
-            margin-bottom: 25px;
+            margin-bottom: 24px;
         }
 
         label {
             display: block;
-            margin-bottom: 8px;
+            margin-bottom: 9px;
             font-weight: 500;
             color: #333;
+            font-size: 0.96rem;
         }
 
         input, select {
             width: 100%;
-            padding: 14px 16px;
+            padding: 15px 18px;
             border: 2px solid #e0e0e0;
-            border-radius: 12px;
+            border-radius: 14px;
             font-size: 1rem;
             transition: all 0.3s ease;
-            font-family: inherit;
         }
 
         input:focus, select:focus {
             outline: none;
-            border-color: #2e7d32;
-            box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.1);
+            border-color: #1e7a2e;
+            box-shadow: 0 0 0 4px rgba(30, 122, 46, 0.12);
         }
 
         .btn-submit {
             width: 100%;
-            padding: 14px;
-            background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+            padding: 16px;
+            background: linear-gradient(135deg, #1e7a2e 0%, #145a22 100%);
             color: white;
             border: none;
-            border-radius: 12px;
-            font-size: 1rem;
+            border-radius: 14px;
+            font-size: 1.05rem;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s ease;
-            margin-top: 10px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            margin-top: 15px;
+            box-shadow: 0 6px 20px rgba(30, 122, 46, 0.28);
         }
 
         .btn-submit:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(46, 125, 50, 0.3);
+            transform: translateY(-3px);
+            box-shadow: 0 12px 28px rgba(30, 122, 46, 0.35);
         }
 
-        .btn-submit:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-            transform: none;
+        #signup-form .btn-submit {
+            margin-bottom: 30px;
         }
 
         /* Messages */
         .message {
             margin-top: 20px;
-            padding: 12px;
-            border-radius: 10px;
-            font-size: 0.9rem;
+            padding: 14px 16px;
+            border-radius: 12px;
+            font-size: 0.93rem;
             display: none;
+            border-left: 4px solid;
         }
 
-        .message.success {
-            background: #e8f5e9;
-            color: #2e7d32;
-            border: 1px solid #a5d6a7;
-            display: block;
-        }
+        .message.success { background: #e8f5e9; color: #1e7a2e; border-color: #4caf50; display: block; }
+        .message.error   { background: #ffebee; color: #c62828; border-color: #ef5350; display: block; }
 
-        .message.error {
-            background: #ffebee;
-            color: #c62828;
-            border: 1px solid #ef9a9a;
-            display: block;
-        }
-
-        .message.info {
-            background: #e3f2fd;
-            color: #1565c0;
-            border: 1px solid #90caf9;
-            display: block;
-        }
-
-        /* Spinner */
-        .spinner {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            border-top-color: white;
-            animation: spin 0.6s linear infinite;
-            margin-right: 8px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        .role-hint {
+            font-size: 0.83rem;
+            color: #666;
+            margin-top: 8px;
+            line-height: 1.5;
         }
 
         /* Responsive */
         @media (max-width: 768px) {
-            .brand-section {
-                display: none;
+            .brand-section { display: none; }
+            .forms-section { 
+                min-width: 100%; 
+                padding: 40px 25px;
+                max-height: none;           /* Supprime la limite sur mobile */
             }
-            .forms-section {
-                min-width: 100%;
+            .form-container {
+                min-height: 460px;
             }
-        }
-
-        .role-hint {
-            font-size: 0.8rem;
-            color: #666;
-            margin-top: 5px;
         }
     </style>
 </head>
@@ -276,29 +263,29 @@
         <!-- Section gauche - Branding -->
         <div class="brand-section">
             <div class="logo">
-                <h1>🌿 Laboratoires Vital</h1>
-                <p>Créateurs de bien-être au naturel !</p>
+                <h1><i class="fas fa-leaf"></i> Laboratoires Vital</h1>
+                <p>Excellence en phytothérapie et bien-être naturel</p>
             </div>
             <div class="brand-features">
                 <div class="feature">
-                    <div class="feature-icon">🏆</div>
+                    <div class="feature-icon"><i class="fas fa-award"></i></div>
                     <div class="feature-text">
-                        <h3>Leader africain</h3>
-                        <p>Des compléments alimentaires naturels à base de plantes</p>
+                        <h3>Leader en Afrique</h3>
+                        <p>Compléments alimentaires naturels de haute qualité</p>
                     </div>
                 </div>
                 <div class="feature">
-                    <div class="feature-icon">⏱️</div>
+                    <div class="feature-icon"><i class="fas fa-microscope"></i></div>
                     <div class="feature-text">
-                        <h3>20 ans d'expertise</h3>
-                        <p>Science, origine maîtrisée et parfaite sécurité</p>
+                        <h3>20 ans d’expertise scientifique</h3>
+                        <p>Traçabilité totale et normes internationales</p>
                     </div>
                 </div>
                 <div class="feature">
-                    <div class="feature-icon">🤝</div>
+                    <div class="feature-icon"><i class="fas fa-handshake"></i></div>
                     <div class="feature-text">
-                        <h3>Laboratoire engagé</h3>
-                        <p>Aux côtés des professionnels de santé</p>
+                        <h3>Partenaire des professionnels de santé</h3>
+                        <p>Accompagnement et formation continue</p>
                     </div>
                 </div>
             </div>
@@ -311,63 +298,94 @@
                 <button class="toggle-btn" data-form="signup">Créer un compte</button>
             </div>
 
-            <!-- Formulaire de connexion -->
-            <div id="signin-form" class="form active">
-                <form id="loginForm">
-                    <div class="form-group">
-                        <label>📧 Email</label>
-                        <input type="email" id="loginEmail" required placeholder="exemple@vital.com">
-                    </div>
-                    <div class="form-group">
-                        <label>🔒 Mot de passe</label>
-                        <input type="password" id="loginPassword" required placeholder="Votre mot de passe">
-                    </div>
-                    <button type="submit" class="btn-submit">Se connecter</button>
-                </form>
-                <div id="loginMessage" class="message"></div>
-            </div>
-
-            <!-- Formulaire d'inscription -->
-            <div id="signup-form" class="form">
-                <form id="registerForm">
-                    <div class="form-group">
-                        <label>👤 Nom complet</label>
-                        <input type="text" id="fullName" required placeholder="Votre nom et prénom">
-                    </div>
-                    <div class="form-group">
-                        <label>📧 Email</label>
-                        <input type="email" id="email" required placeholder="exemple@vital.com">
-                    </div>
-                    <div class="form-group">
-                        <label>📱 Téléphone</label>
-                        <input type="tel" id="numTelephone" placeholder="+216 XX XXX XXX">
-                    </div>
-                    <div class="form-group">
-                        <label>🔒 Mot de passe</label>
-                        <input type="password" id="password" required placeholder="Minimum 6 caractères">
-                    </div>
-                    <div class="form-group">
-                        <label>🔒 Confirmer le mot de passe</label>
-                        <input type="password" id="confirmPassword" required placeholder="Retapez votre mot de passe">
-                    </div>
-                    <div class="form-group">
-                        <label>👔 Rôle</label>
-                        <select id="role" required>
-                            <option value="DELEGATE">Délégué(e) médicale ou commercial</option>
-                            <option value="PROFESSIONAL">Professionnel de santé</option>
-                        </select>
-                        <div class="role-hint">
-                            💡 Délégué → Accès à l'espace professionnel (index)<br>
-                            💡 Professionnel → Accès à l'espace commercial
+            <div class="form-container">
+                <!-- Formulaire de connexion -->
+                <div id="signin-form" class="form active">
+                    <form id="loginForm">
+                        <div class="form-group">
+                            <label><i class="fas fa-envelope"></i> Adresse email</label>
+                            <input type="email" id="loginEmail" required placeholder="votre@email.com">
                         </div>
-                    </div>
-                    <button type="submit" class="btn-submit">Créer mon compte</button>
-                </form>
-                <div id="registerMessage" class="message"></div>
+                        <div class="form-group">
+                            <label><i class="fas fa-lock"></i> Mot de passe</label>
+                            <input type="password" id="loginPassword" required placeholder="Entrez votre mot de passe">
+                        </div>
+                        <button type="submit" class="btn-submit">Se connecter</button>
+                    </form>
+                    <div id="loginMessage" class="message"></div>
+                </div>
+
+                <!-- Formulaire d'inscription -->
+                <div id="signup-form" class="form">
+                    <form id="registerForm">
+                        <div class="form-group">
+                            <label><i class="fas fa-user"></i> Nom complet</label>
+                            <input type="text" id="fullName" required placeholder="Nom et prénom">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-envelope"></i> Adresse email</label>
+                            <input type="email" id="email" required placeholder="votre@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-phone"></i> Numéro de téléphone</label>
+                            <input type="tel" id="numTelephone" placeholder="+216 XX XXX XXX">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-lock"></i> Mot de passe</label>
+                            <input type="password" id="password" required placeholder="Minimum 6 caractères">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-lock"></i> Confirmer le mot de passe</label>
+                            <input type="password" id="confirmPassword" required placeholder="Confirmez votre mot de passe">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-briefcase"></i> Rôle</label>
+                            <select id="role" required>
+                                <option value="DELEGATE">Délégué(e) médical(e) ou commercial(e)</option>
+                                <option value="PROFESSIONAL">Professionnel de santé</option>
+                            </select>
+                            <div class="role-hint">
+                                Délégué → Accès à l’espace professionnel<br>
+                                Professionnel de santé → Accès à l’espace commercial
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-submit">Créer mon compte</button>
+                    </form>
+                    <div id="registerMessage" class="message"></div>
+                </div>
             </div>
         </div>
     </div>
 
     <script src="auth.js"></script>
+
+    <script>
+        // Gestion des transitions fluides entre les formulaires
+        document.querySelectorAll('.toggle-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetForm = btn.getAttribute('data-form');
+                
+                document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                const signinForm = document.getElementById('signin-form');
+                const signupForm = document.getElementById('signup-form');
+
+                if (targetForm === 'signin') {
+                    signupForm.classList.add('inactive-right');
+                    setTimeout(() => {
+                        signupForm.classList.remove('active', 'inactive-right');
+                        signinForm.classList.add('active');
+                    }, 300);
+                } else {
+                    signinForm.classList.add('inactive-left');
+                    setTimeout(() => {
+                        signinForm.classList.remove('active', 'inactive-left');
+                        signupForm.classList.add('active');
+                    }, 300);
+                }
+            });
+        });
+    </script>
 </body>
 </html>

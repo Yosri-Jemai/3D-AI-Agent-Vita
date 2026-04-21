@@ -601,10 +601,11 @@ function goToPrev() {
   loadQuestion(prevIdx);
 }
 // ── Résultats ─────────────────────────────────────────────────────────────
+// ── Résultats ─────────────────────────────────────────────────────────────
 function showResults() {
 
   stopSpeaking();
-  moveAvatarToResults();        // ← AJOUT
+  moveAvatarToResults();
 
   $("quiz-screen").style.display     = "none";
   $("results-screen").style.display  = "flex";
@@ -652,12 +653,16 @@ function showResults() {
   }
   speak(title + " " + message);
 
-  if (total > 0) {
-    setTimeout(() => streamFinalFeedback(), 400);
-  }
   const certSection = $("certificate-section");
   if (certSection) {
     certSection.style.display = pct >= 60 ? "block" : "none";
+  }
+
+  // ====================== CORRECTION IMPORTANTE ======================
+  if (total > 0) {
+    setTimeout(() => streamFinalFeedback(), 300);   // lance le bilan
+  } else {
+    setTimeout(saveQuizResult, 500);
   }
 }
 
@@ -765,10 +770,14 @@ async function streamQuestionFeedback(q, chosenIdx) {
 }
 
 // ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
+// ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
 async function streamFinalFeedback() {
   const section = $("final-feedback-section");
   const textEl  = $("final-feedback-text");
-  if (!section || !textEl) return;
+  if (!section || !textEl) {
+    saveQuizResult();   // sécurité
+    return;
+  }
 
   TypingEngine.reset();
   section.style.display = "block";
@@ -782,8 +791,13 @@ async function streamFinalFeedback() {
   textSpan.style.cssText = "white-space: pre-wrap; margin: 0; line-height: 1.7;";
   textEl.insertBefore(textSpan, finalCursor);
 
-  // Collecte le texte complet pour le lire à voix haute après
   let fullText = "";
+
+  // ← Quand le typing est terminé → on enregistre dans la base
+  TypingEngine.start(textSpan, finalCursor, () => {
+    speakFinalFeedback(fullText);
+    setTimeout(saveQuizResult, 800);     // ← Enregistrement ici
+  });
 
   const originalFetch = () => fetch(`${API_BASE}/quiz/feedback/final/stream`, {
     method:  "POST",
@@ -795,18 +809,18 @@ async function streamFinalFeedback() {
     }),
   });
 
-  // Stream SSE manuellement pour capturer le texte complet
-  TypingEngine.reset();
-  textSpan.textContent = "";
-  TypingEngine.start(textSpan, finalCursor, () => {
-    // Appelé quand toute l'animation est terminée → lire à voix haute
-    speakFinalFeedback(fullText);
-  });
-
   let res;
   try { res = await originalFetch(); }
-  catch (err) { textEl.textContent = "Bilan indisponible."; return; }
-  if (!res.ok) { textEl.textContent = "Bilan indisponible."; return; }
+  catch (err) { 
+    textEl.textContent = "Bilan indisponible."; 
+    setTimeout(saveQuizResult, 500);
+    return; 
+  }
+  if (!res.ok) { 
+    textEl.textContent = "Bilan indisponible."; 
+    setTimeout(saveQuizResult, 500);
+    return; 
+  }
 
   const reader  = res.body.getReader();
   const decoder = new TextDecoder();
@@ -913,4 +927,60 @@ function downloadCertificate() {
   a.href = url; a.download = "certificat-formation-vitale.html";
   document.body.appendChild(a); a.click();
   document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+
+/************ il tasjil fil base imta3 resultat quiz*************/
+// ── Enregistrer le résultat du quiz médical ───────────────────────────────
+// ── Enregistrer le résultat du quiz médical ───────────────────────────────
+async function saveQuizResult() {
+ 
+  const answered   = state.history.filter(h => h !== undefined && h !== null);
+  const total      = answered.length;
+  if (total === 0) { console.warn("[QuizSave] Historique vide, rien à enregistrer."); return; }
+ 
+  const score      = answered.filter(h => h.ok).length;
+  const percentage = Math.round((score / total) * 100);
+ 
+  // Texte du bilan Dr. Layla — on prend innerText pour ignorer le HTML du spinner
+  const feedbackEl  = document.getElementById("final-feedback-text");
+  let   feedbackTxt = null;
+  if (feedbackEl) {
+    const raw = (feedbackEl.innerText || feedbackEl.textContent || "").trim();
+    if (raw && !raw.includes("rédige votre bilan")) feedbackTxt = raw;
+  }
+ 
+  const payload = {
+    quiz_type:         "medical",
+    score:             score,
+    total_questions:   total,
+    percentage:        percentage,
+    feedback:          feedbackTxt,
+    difficulty:        state.difficulty || "moyen",
+    products_selected: state.selectedProducts.length > 0
+                         ? JSON.stringify(state.selectedProducts)
+                         : null,
+    id_user:           null,   // null → FK nullable, pas de risque de 409
+  };
+ 
+  console.log("[QuizSave] payload →", payload);
+ 
+  try {
+    const res = await fetch(`${API_BASE}/quizsave/save-result`, {   // ← URL mise à jour
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(payload),
+    });
+ 
+    if (res.ok) {
+      const data = await res.json();
+      console.log("✅ Résultat enregistré — id DB :", data.id);
+    } else {
+      let detail = `HTTP ${res.status}`;
+      try { const b = await res.json(); detail += " — " + (b.detail || JSON.stringify(b)); } catch(_) {}
+      console.error("❌ saveQuizResult erreur serveur :", detail);
+    }
+  } catch (err) {
+    console.error("❌ saveQuizResult erreur réseau :", err);
+  }
 }

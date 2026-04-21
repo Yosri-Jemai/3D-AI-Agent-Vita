@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vital - Accueil | Laboratoires Vital</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- TalkingHead -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "/node_modules/three/build/three.module.js",
+        "three/addons/": "/node_modules/three/examples/jsm/"
+      }
+    }
+    </script>
+    <script type="module" src="/TalkingHead-main/modules/talkinghead.mjs"></script>
+
+    <style>
+        :root {
+            --primary: #1e7a2e;
+            --primary-dark: #145a22;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #f8f9fa;
+            color: #333;
+        }
+        nav {
+            position: fixed; top:0; left:0; right:0;
+            background: rgba(255,255,255,0.97);
+            backdrop-filter: blur(12px);
+            z-index: 1000;
+            padding: 18px 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.08);
+        }
+        .logo { display:flex; align-items:center; gap:12px; color:var(--primary); text-decoration:none; }
+        .logo h1 { font-size:1.95rem; font-weight:700; }
+
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            padding: 130px 5% 100px;
+            background: linear-gradient(135deg, #f4f9f5 0%, #e8f2ea 100%);
+        }
+        .hero-content {
+            max-width: 1280px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 90px;
+            align-items: center;
+        }
+        .hero-text h1 { font-size: 3.7rem; line-height:1.12; color:#1e7a2e; margin-bottom:20px; }
+        .hero-text p { font-size:1.4rem; color:#444; margin-bottom:40px; }
+
+        .btn-hero {
+            padding: 18px 42px;
+            font-size: 1.18rem;
+            font-weight: 600;
+            border-radius: 50px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+        }
+        .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color:white; }
+        .btn-secondary { background:white; color:var(--primary); border:3px solid var(--primary); }
+
+        .avatar-scene {
+            background:white;
+            border-radius:32px;
+            padding:25px;
+            box-shadow: 0 35px 90px rgba(30,122,46,0.28);
+            position:relative;
+        }
+        #avatarDiv { width:100%; height:540px; border-radius:22px; }
+
+        .speak-ring {
+            position:absolute;
+            border:4px solid rgba(30,122,46,0.4);
+            border-radius:50%;
+            top:50%; left:50%;
+            transform:translate(-50%,-50%);
+            pointer-events:none;
+            animation:speakPulse 2.2s infinite ease-out;
+            opacity:0;
+        }
+        @keyframes speakPulse { 0%{transform:scale(0.6); opacity:0.7;} 100%{transform:scale(2.5); opacity:0;} }
+
+        .demo-btn {
+            margin-top:25px;
+            width:100%;
+            padding:18px;
+            background:linear-gradient(135deg, #1e7a2e, #145a22);
+            color:white;
+            border:none;
+            border-radius:18px;
+            font-size:1.15rem;
+            font-weight:600;
+            cursor:pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <a href="home.html" class="logo">
+            <i class="fas fa-leaf" style="font-size:2.4rem;"></i>
+            <h1>Laboratoires Vital</h1>
+        </a>
+        <div>
+            <a href="#formations" class="nav-links">Formations</a>
+            <a href="#evaluation" class="nav-links">Évaluation</a>
+            <a href="#contact" class="nav-links">Contact</a>
+        </div>
+        <a href="auth.html" class="btn-login">Se connecter</a>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1>Rencontrez <span style="color:#145a22;">Dr. Layla</span><br>Votre Formatrice IA</h1>
+                <p>Formez-vous en phytothérapie avec un avatar réaliste qui parle et vous guide comme une vraie experte.</p>
+                
+                <div style="display:flex; gap:18px; flex-wrap:wrap;">
+                    <a href="auth.html" class="btn-hero btn-primary">
+                        <i class="fas fa-user-plus"></i> Commencer ma formation
+                    </a>
+                    <button onclick="speakWelcome()" class="btn-hero btn-secondary">
+                        <i class="fas fa-volume-up"></i> Faire parler Dr. Layla
+                    </button>
+                </div>
+            </div>
+
+            <div class="avatar-container">
+                <div class="avatar-scene">
+                    <div class="speak-ring" style="width:140px;height:140px;"></div>
+                    <div class="speak-ring" style="width:210px;height:210px;animation-delay:0.4s"></div>
+                    <div id="avatarDiv"></div>
+                </div>
+                
+                <button onclick="speakWelcome()" class="demo-btn">
+                    <i class="fas fa-play-circle"></i> Faire parler Dr. Layla (Démo)
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        window._avatarReady = false;
+        window._head = null;
+        let isSpeaking = false;
+
+        const welcomeText = "Bonjour ! Je suis Dr. Layla, votre formatrice chez Laboratoires Vital. Inscrivez-vous maintenant pour améliorer vos compétences en phytothérapie et exceller en tant que délégué médical ou commercial.";
+
+        async function initAvatar() {
+            try {
+                window._head = new TalkingHead(document.getElementById('avatarDiv'), {
+                    ttsEndpoint: null,
+                    cameraView: 'upper',
+                    lipsyncLang: 'fr',
+                    lipsyncModules: ['fr']
+                });
+
+                await window._head.showAvatar({
+                    url: '/TalkingHead-main/avatars/avatar.glb',
+                    body: 'F',
+                    avatarMood: 'happy',
+                    lipsyncLang: 'fr'
+                });
+
+                window._avatarReady = true;
+                console.log('%c✅ Dr. Layla chargée avec succès', 'color:#1e7a2e; font-weight:bold');
+
+            } catch (e) {
+                console.error('Erreur TalkingHead:', e);
+            }
+        }
+
+        // Fonction qui marche même sans backend
+        window.speakWelcome = async function() {
+            if (!window._avatarReady || isSpeaking) return;
+            isSpeaking = true;
+
+            document.querySelectorAll('.speak-ring').forEach(r => r.style.opacity = '0.8');
+
+            try {
+                // Priorité au fallback local (Web Speech API) pour la home page
+                if (window._head && typeof window._head.speakText === "function") {
+                    window._head.speakText(welcomeText);
+                } 
+                // Sinon on essaie speakWithAvatar (si le backend est lancé)
+                else if (typeof window.speakWithAvatar === "function") {
+                    await window.speakWithAvatar(welcomeText, 'fr');
+                }
+            } catch (e) {
+                console.error(e);
+                // Dernier recours : synthèse vocale du navigateur
+                if ('speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(welcomeText);
+                    utterance.lang = 'fr-FR';
+                    utterance.rate = 0.95;
+                    speechSynthesis.speak(utterance);
+                }
+            } finally {
+                isSpeaking = false;
+                setTimeout(() => {
+                    document.querySelectorAll('.speak-ring').forEach(r => r.style.opacity = '0');
+                }, 2000);
+            }
+        };
+
+        window.addEventListener('load', () => {
+            initAvatar();
+            setTimeout(() => {
+                if (window._avatarReady) speakWelcome();
+            }, 2200);
+        });
+    </script>
+
+    <script type="module" src="js/avatar.js"></script>
+</body>
+</html>
