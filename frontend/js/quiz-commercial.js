@@ -519,7 +519,7 @@ function updateDonut() {
   if (arc) {
     const circumference = 201;
     arc.style.strokeDashoffset = circumference - (circumference * pct / 100);
-    arc.style.stroke = pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : "#ef4444";
+    arc.style.stroke = pct >= 70 ? "#867416" : pct >= 40 ? "#bea74b" : "#ef4444";
   }
   if ($("donut-pct")) $("donut-pct").textContent = `${pct}%`;
 }
@@ -785,14 +785,13 @@ function showResults() {
 
   const ring = $("results-ring");
   if (ring) {
-    ring.style.borderColor = pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : "#ef4444";
+    ring.style.borderColor = pct >= 70 ? "#867416" : pct >= 40 ? "#bea74b" : "#ef4444";
   }
 
   // Certificat
-  const certBtn = $("get-cert-btn");
-  if (certBtn) {
-    certBtn.style.display = pct >= 60 ? "flex" : "none";
-    certBtn.onclick = openCertificate;
+  const certSection = $("certificate-section");
+  if (certSection) {
+    certSection.style.display = pct >= 0 ? "block" : "none";
   }
 
   speak(title);
@@ -932,63 +931,64 @@ function drawCertificate() {
   const dateStr = now.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
 
   const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, "#0d0d1a");
-  bg.addColorStop(1, "#130f20");
+  bg.addColorStop(0, "#1a1600");
+  bg.addColorStop(1, "#2a2000");
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  ctx.strokeStyle = "rgba(245,158,11,0.7)";
+  ctx.strokeStyle = "rgba(134,116,22,0.8)";
   ctx.lineWidth = 2;
   roundRect(ctx, 12, 12, W - 24, H - 24, 14);
   ctx.stroke();
 
-  ctx.fillStyle = "#f59e0b";
+  ctx.fillStyle = "#bea74b";
   ctx.font = "bold 28px serif";
   ctx.textAlign = "center";
   ctx.fillText("VITAL SA", W / 2, 68);
 
   ctx.font = "500 11px 'Jost', sans-serif";
-  ctx.fillStyle = "rgba(245,158,11,0.7)";
+  ctx.fillStyle = "rgba(190,167,75,0.75)";
   ctx.fillText("FORMATION COMMERCIALE", W / 2, 86);
 
   ctx.font = "italic bold 22px 'DM Serif Display'";
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = "#f8de7e";
   ctx.fillText("Certificat de Compétence Commerciale", W / 2, 136);
 
   ctx.font = "300 12px 'Jost'";
-  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.fillStyle = "rgba(248,222,126,0.6)";
   ctx.fillText("est décerné pour la réussite du quiz de formation vente VITAL SA", W / 2, 162);
 
   ctx.beginPath();
   ctx.arc(W / 2, 230, 50, 0, Math.PI * 2);
-  ctx.fillStyle = "#1a1428";
+  ctx.fillStyle = "#2a2000";
   ctx.fill();
-  ctx.strokeStyle = "#f59e0b";
+  ctx.strokeStyle = "#bea74b";
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = "#f59e0b";
+  ctx.fillStyle = "#f8de7e";
   ctx.font = "bold 28px 'Jost'";
   ctx.fillText(`${pct}%`, W / 2, 245);
 
   ctx.font = "500 10px 'Jost'";
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.fillStyle = "rgba(254,238,184,0.6)";
   ctx.fillText("SCORE", W / 2, 265);
 
   ctx.font = "500 12px 'Jost'";
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = "#feeeb8";
   ctx.fillText(`Niveau: ${level}`, W / 2 - 120, 310);
   ctx.fillText(`Questions: ${state.score}/${total}`, W / 2, 310);
   ctx.fillText(`Produit: ${state.selectedProducts[0] || "Tous"}`, W / 2 + 120, 310);
 
   ctx.font = "italic 13px 'DM Serif Display'";
-  ctx.fillStyle = "#f59e0b";
+  ctx.fillStyle = "#bea74b";
   ctx.fillText(
     pct >= 80 ? "✦ Mention Excellent ✦" : pct >= 70 ? "✦ Mention Bien ✦" : "✦ Mention Passable ✦",
     W / 2, 350
   );
 
   ctx.font = "300 11px 'Jost'";
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.fillStyle = "rgba(254,238,184,0.5)";
   ctx.fillText(`Délivré le ${dateStr} · VitalAgent Formation`, W / 2, 390);
 }
 
@@ -1008,84 +1008,93 @@ function roundRect(ctx, x, y, w, h, r) {
 
 // ── CERTIFICAT COMMERCIAL — Même style que le médical mais en ORANGE ───────
 function downloadCertificate() {
-    const total    = state.history.filter(Boolean).length;
-    const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
-    const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
-    const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
-  
-    const html = `<!DOCTYPE html>
-  <html lang="fr">
-  <head>
-  <meta charset="UTF-8"/>
-  <title>Certificat de Formation Commerciale — VitalAgent</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Lato',sans-serif;background:#f8f4eb;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
-    .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #e2d9c8;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
-    .cert::before{content:'';position:absolute;inset:8px;border:2px solid #d97706;pointer-events:none}
-    .logo{text-align:center;margin-bottom:28px}
-    .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
-    .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
-    .divider{width:80px;height:2px;background:#d97706;margin:16px auto}
-    .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
-    .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
-    .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
-    .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #d97706;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
-    .score-box{display:inline-flex;align-items:center;gap:12px;background:#fefce8;border:1.5px solid #d97706;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
-    .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#92400e}
-    .score-lbl{font-size:12px;color:#b45309;text-align:left;line-height:1.4}
-    .products{background:#fafaf8;border:1px solid #e2d9c8;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
-    .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
-    .sig{text-align:center}
-    .sig-line{width:160px;height:1px;background:#999;margin:0 auto 6px}
-    .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
-    .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
-    .date{font-size:11px;color:#888;text-align:right}
-    .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
-    @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
-  </style>
-  </head>
-  <body>
-  <div class="cert">
-    <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Commerciaux</div></div>
-    <div class="divider"></div>
-    <div class="heading">Certificat de réussite</div>
-    <div class="title">Quiz de Formation<br>Commerciale</div>
-    <div class="body">
-      Ce certificat atteste que le délégué<br>
-      <span class="delegate">Délégué VITAL SA</span><br>
-      a validé avec succès le quiz de formation commerciale VitalAgent.
-    </div>
-    <div style="text-align:center">
-      <div class="score-box">
-        <div class="score-num">${pct}%</div>
-        <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} scénarios</strong></div>
-      </div>
-    </div>
-    <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
-    <div class="footer">
-      <div class="sig"><div class="sig-line"></div><div class="sig-name">Vita</div><div class="sig-role">Coach Vente Pharmaceutique · VitalAgent</div></div>
-      <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
-    </div>
-    <div class="wm">VITAL SA · Formation Commerciale · Certifié VitalAgent</div>
+  const total    = state.history.filter(Boolean).length;
+  const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
+  const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
+  const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
+
+  let delegateName = "Délégué VITAL SA";
+  try {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      const user = JSON.parse(userJson);
+      if (user.fullName) delegateName = user.fullName;
+    }
+  } catch(e) {}
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>Certificat de Formation Commerciale — VitalAgent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Lato',sans-serif;background:#fffff1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
+  .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #f8de7e;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
+  .cert::before{content:'';position:absolute;inset:8px;border:2px solid #867416;pointer-events:none}
+  .logo{text-align:center;margin-bottom:28px}
+  .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
+  .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
+  .divider{width:80px;height:2px;background:#867416;margin:16px auto}
+  .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
+  .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
+  .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
+  .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #867416;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
+  .score-box{display:inline-flex;align-items:center;gap:12px;background:#feeeb8;border:1.5px solid #867416;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
+  .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#5c510f}
+  .score-lbl{font-size:12px;color:#867416;text-align:left;line-height:1.4}
+  .products{background:#fffff1;border:1px solid #f8de7e;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
+  .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
+  .sig{text-align:center}
+  .sig-line{width:160px;height:1px;background:#bea74b;margin:0 auto 6px}
+  .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
+  .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
+  .date{font-size:11px;color:#888;text-align:right}
+  .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
+  @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
+</style>
+</head>
+<body>
+<div class="cert">
+  <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Commerciaux</div></div>
+  <div class="divider"></div>
+  <div class="heading">Certificat de réussite</div>
+  <div class="title">Quiz de Formation<br>Commerciale</div>
+  <div class="body">
+    Ce certificat atteste que le délégué<br>
+    <span class="delegate">${delegateName}</span><br>
+    a validé avec succès le quiz de formation commerciale VitalAgent.
   </div>
-  <div class="no-print">
-    <button onclick="window.print()" style="padding:12px 28px;background:#d97706;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
+  <div style="text-align:center">
+    <div class="score-box">
+      <div class="score-num">${pct}%</div>
+      <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} scénarios</strong></div>
+    </div>
   </div>
-  </body>
-  </html>`;
-  
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; 
-    a.download = "certificat-formation-commerciale-vitalagent.html";
-    document.body.appendChild(a); 
-    a.click();
-    document.body.removeChild(a); 
-    URL.revokeObjectURL(url);
-  }
+  <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
+  <div class="footer">
+    <div class="sig"><div class="sig-line"></div><div class="sig-name">Vita</div><div class="sig-role">Coach Vente Pharmaceutique · VitalAgent</div></div>
+    <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
+  </div>
+  <div class="wm">VITAL SA · Formation Commerciale · Certifié VitalAgent</div>
+</div>
+<div class="no-print">
+  <button onclick="window.print()" style="padding:12px 28px;background:#867416;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
+</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; 
+  a.download = "certificat-formation-commerciale-vitalagent.html";
+  document.body.appendChild(a); 
+  a.click();
+  document.body.removeChild(a); 
+  URL.revokeObjectURL(url);
+}
 
 function copyCertLink() {
   navigator.clipboard.writeText(window.location.href).then(() => {
