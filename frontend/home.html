@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vital - Accueil | Laboratoires Vital</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- TalkingHead -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "/node_modules/three/build/three.module.js",
+        "three/addons/": "/node_modules/three/examples/jsm/"
+      }
+    }
+    </script>
+    <script type="module" src="/TalkingHead-main/modules/talkinghead.mjs"></script>
+
+    <style>
+        :root {
+            --primary: #1e7a2e;
+            --primary-dark: #145a22;
+            --primary-light: #e8f3ea;
+            --gray-light: #f8f9fc;
+            --shadow-sm: 0 4px 12px rgba(0,0,0,0.05);
+            --shadow-md: 0 8px 24px rgba(0,0,0,0.08);
+            --transition: all 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, 'Inter', sans-serif;
+            background: #fbfdfc;
+            color: #1a2e2a;
+        }
+        
+        /* Navigation modernisée */
+        nav {
+            position: fixed; top:0; left:0; right:0;
+            background: rgba(255,255,255,0.96);
+            backdrop-filter: blur(16px);
+            z-index: 1000;
+            padding: 14px 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: var(--shadow-sm);
+            border-bottom: 1px solid rgba(30,122,46,0.12);
+            transition: var(--transition);
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+        }
+        .logo i {
+            font-size: 2.2rem;
+            color: var(--primary);
+            filter: drop-shadow(0 2px 4px rgba(30,122,46,0.2));
+        }
+        .logo h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            letter-spacing: -0.3px;
+        }
+        
+        /* Navigation links container */
+        .nav-links-container {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        
+        /* Style des liens : Formations, Évaluation, Contact */
+        .nav-link {
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.05rem;
+            padding: 8px 4px;
+            color: #2c3e35;
+            position: relative;
+            transition: var(--transition);
+            letter-spacing: -0.2px;
+        }
+        
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 0;
+            height: 2.5px;
+            background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .nav-link:hover {
+            color: var(--primary);
+        }
+        
+        .nav-link:hover::after {
+            width: 100%;
+        }
+        
+        .nav-link.active {
+            color: var(--primary);
+        }
+        
+        .nav-link.active::after {
+            width: 100%;
+            background: var(--primary);
+        }
+        
+        /* Bouton Se connecter - design moderne */
+        .btn-login {
+            background: transparent;
+            border: 2px solid var(--primary);
+            color: var(--primary);
+            padding: 10px 28px;
+            border-radius: 44px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            text-decoration: none;
+            transition: var(--transition);
+            backdrop-filter: blur(4px);
+            letter-spacing: 0.3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        
+        .btn-login i {
+            font-size: 1rem;
+            transition: transform 0.2s;
+        }
+        
+        .btn-login:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 18px rgba(30,122,46,0.25);
+        }
+        
+        .btn-login:hover i {
+            transform: translateX(3px);
+        }
+        
+        /* Hero section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            padding: 130px 5% 100px;
+            background: radial-gradient(circle at 10% 30%, rgba(232,242,234,0.5) 0%, #f9fefb 90%);
+        }
+        .hero-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 70px;
+            align-items: center;
+        }
+        .hero-text h1 { 
+            font-size: 3.8rem; 
+            line-height: 1.15; 
+            color: #174d23; 
+            margin-bottom: 24px; 
+            font-weight: 800;
+            letter-spacing: -1px;
+        }
+        .hero-text p { 
+            font-size: 1.32rem; 
+            color: #3a5449; 
+            margin-bottom: 44px;
+            line-height: 1.5;
+            max-width: 90%;
+        }
+        
+        /* Boutons hero */
+        .btn-group {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .btn-hero {
+            padding: 15px 38px;
+            font-size: 1.08rem;
+            font-weight: 700;
+            border-radius: 56px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            transition: var(--transition);
+            cursor: pointer;
+        }
+        .btn-primary { 
+            background: linear-gradient(105deg, var(--primary), var(--primary-dark)); 
+            color: white; 
+            box-shadow: 0 8px 18px rgba(30,122,46,0.25);
+            border: none;
+        }
+        .btn-primary:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 14px 28px rgba(30,122,46,0.35);
+            background: linear-gradient(105deg, var(--primary-dark), var(--primary));
+        }
+        .btn-secondary { 
+            background: white; 
+            color: var(--primary); 
+            border: 2px solid var(--primary);
+        }
+        .btn-secondary:hover {
+            background: var(--primary-light);
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        /* Avatar container */
+        .avatar-scene {
+            background: white;
+            border-radius: 38px;
+            padding: 20px;
+            box-shadow: 0 32px 68px rgba(30,122,46,0.2);
+            position: relative;
+            transition: all 0.4s;
+        }
+        #avatarDiv { width: 100%; height: 540px; border-radius: 28px; background: linear-gradient(145deg, #f4faf6, #ffffff);}
+        
+        .speak-ring {
+            position: absolute;
+            border: 3px solid rgba(30,122,46,0.5);
+            border-radius: 50%;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            pointer-events: none;
+            animation: speakPulse 2s infinite ease-out;
+            opacity: 0;
+        }
+        @keyframes speakPulse { 
+            0%{ transform: translate(-50%,-50%) scale(0.8); opacity: 0.7; } 
+            100%{ transform: translate(-50%,-50%) scale(2.8); opacity: 0; } 
+        }
+        
+        /* Bouton démo avec barre de progression */
+        .demo-btn {
+            margin-top: 28px;
+            width: 100%;
+            background: linear-gradient(115deg, #1e7a2e, #156b28);
+            color: white;
+            border: none;
+            border-radius: 44px;
+            font-size: 1.08rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .demo-btn-content {
+            position: relative;
+            z-index: 2;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            transition: opacity 0.3s;
+        }
+        
+        .demo-btn-progress {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(115deg, #0f5820, #0a4518);
+            transition: width 0.1s linear;
+            z-index: 1;
+        }
+        
+        .demo-btn.speaking {
+            cursor: wait;
+        }
+        
+        .demo-btn.speaking .demo-btn-content {
+            opacity: 0.9;
+        }
+        
+        .demo-btn:hover:not(.speaking) {
+            transform: scale(1.01);
+            background: linear-gradient(115deg, #156b28, #0f5820);
+            box-shadow: 0 12px 24px rgba(30,122,46,0.3);
+        }
+        
+        /* Sections d'ancrage (pour le scroll actif) */
+        .section-placeholder {
+            scroll-margin-top: 90px;
+            padding: 60px 5%;
+            background: #ffffff;
+            border-radius: 48px 48px 0 0;
+            margin: 20px 0;
+        }
+        .section-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--primary-dark);
+            margin-bottom: 24px;
+            border-left: 6px solid var(--primary);
+            padding-left: 22px;
+        }
+        .cards-grid {
+            display: flex;
+            gap: 32px;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .info-card {
+            background: var(--gray-light);
+            border-radius: 32px;
+            padding: 28px;
+            flex: 1;
+            min-width: 240px;
+            box-shadow: var(--shadow-sm);
+            transition: var(--transition);
+            border: 1px solid rgba(30,122,46,0.1);
+        }
+        .info-card i { font-size: 2.2rem; color: var(--primary); margin-bottom: 16px; }
+        .info-card h3 { margin-bottom: 12px; }
+        .info-card:hover { transform: translateY(-8px); box-shadow: var(--shadow-md); }
+        
+        footer {
+            background: #132e1c;
+            color: #d4ecd9;
+            padding: 40px 5%;
+            text-align: center;
+            margin-top: 60px;
+        }
+        
+        @media (max-width: 980px) {
+            .hero-content { grid-template-columns: 1fr; gap: 40px; }
+            .hero-text h1 { font-size: 2.8rem; }
+            .nav-links-container { gap: 18px; }
+            .btn-login { padding: 6px 20px; }
+        }
+        @media (max-width: 680px) {
+            nav { flex-wrap: wrap; gap: 12px; justify-content: center; }
+            .nav-links-container { order: 3; margin-top: 6px; gap: 20px; }
+            .btn-login { order: 2; }
+        }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <a href="#" class="logo">
+            <i class="fas fa-leaf"></i>
+            <h1>Laboratoires Vital</h1>
+        </a>
+        <div class="nav-links-container">
+            <a href="#formations" class="nav-link" data-section="formations">Formations</a>
+            <a href="#evaluation" class="nav-link" data-section="evaluation">Évaluation</a>
+            <a href="#contact" class="nav-link" data-section="contact">Contact</a>
+        </div>
+        <a href="auth.html" class="btn-login">
+            <i class="fas fa-user-circle"></i> Se connecter
+        </a>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1>Rencontrez <span style="color:#0f6222;">Dr. Layla</span><br>Votre Formatrice IA</h1>
+                <p>Formez-vous en phytothérapie avec un avatar réaliste qui parle et vous guide comme une vraie experte.</p>
+                
+                <div class="btn-group">
+                    <a href="auth.html" class="btn-hero btn-primary">
+                        <i class="fas fa-graduation-cap"></i> Commencer ma formation
+                    </a>
+                    <a href="#formations" class="btn-hero btn-secondary">
+                        <i class="fas fa-chalkboard-user"></i> Découvrir
+                    </a>
+                </div>
+            </div>
+
+            <div class="avatar-container">
+                <div class="avatar-scene">
+                    <div class="speak-ring" style="width:140px;height:140px;"></div>
+                    <div class="speak-ring" style="width:210px;height:210px;animation-delay:0.4s"></div>
+                    <div id="avatarDiv"></div>
+                </div>
+                
+                <button onclick="speakWelcome()" class="demo-btn" id="demoButton">
+                    <div class="demo-btn-progress" id="progressBar"></div>
+                    <div class="demo-btn-content" id="buttonContent">
+                        <i class="fas fa-play-circle"></i> Faire parler Dr. Layla (Démo)
+                    </div>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Sections ancres -->
+    <div id="formations" class="section-placeholder">
+        <div class="section-title"><i class="fas fa-book-open"></i> Formations expertes</div>
+        <div class="cards-grid">
+            <div class="info-card"><i class="fas fa-leaf"></i><h3>Phytothérapie clinique</h3><p>Maîtrisez les plantes médicinales et leurs interactions.</p></div>
+            <div class="info-card"><i class="fas fa-chart-line"></i><h3>Délégué médical</h3><p>Techniques avancées de visite et argumentaire scientifique.</p></div>
+            <div class="info-card"><i class="fas fa-microphone-alt"></i><h3>Soft skills & communication</h3><p>Prise de parole, négociation, e-réputation.</p></div>
+        </div>
+    </div>
+    
+    <div id="evaluation" class="section-placeholder" style="background:#f6fbf8;">
+        <div class="section-title"><i class="fas fa-clipboard-list"></i> Évaluation personnalisée</div>
+        <div class="cards-grid">
+            <div class="info-card"><i class="fas fa-brain"></i><h3>Quiz adaptatif</h3><p>Testez vos connaissances en phytothérapie avec feedback IA.</p></div>
+            <div class="info-card"><i class="fas fa-certificate"></i><h3>Certification finale</h3><p>Obtenez un diplôme reconnu par le secteur pharmaceutique.</p></div>
+            <div class="info-card"><i class="fas fa-chalkboard"></i><h3>Simulation d'entretien</h3><p>Entraînez-vous avec Dr. Layla en situation réelle.</p></div>
+        </div>
+    </div>
+    
+    <div id="contact" class="section-placeholder">
+        <div class="section-title"><i class="fas fa-envelope"></i> Contactez nos conseillers</div>
+        <div class="cards-grid">
+            <div class="info-card"><i class="fas fa-phone-alt"></i><h3>Support prioritaire</h3><p>+33 (0)1 23 45 67 89</p><p>Lun-Ven 9h-18h</p></div>
+            <div class="info-card"><i class="fas fa-envelope-open-text"></i><h3>Email professionnel</h3><p>contact@laboratoiresvital.fr</p><p>Réponse sous 24h</p></div>
+            <div class="info-card"><i class="fas fa-calendar-check"></i><h3>Planifier une démo</h3><p>Rencontrez Dr. Layla en privé.</p><a href="auth.html" style="color:var(--primary);">Réserver →</a></div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>© 2025 Laboratoires Vital — Innovation en formation médicale immersive.</p>
+    </footer>
+
+<script>
+    window._avatarReady = false;
+    window._head = null;
+    window._API  = window.API_BASE || "http://localhost:8000";
+    let isSpeaking = false;
+    let progressInterval = null;
+
+    const welcomeText = "Bonjour ! Je suis Dr. Layla, votre formatrice chez Laboratoires Vital. Inscrivez-vous maintenant pour améliorer vos compétences en phytothérapie et exceller en tant que délégué médical ou commercial.";
+
+    // ── Fonction pour démarrer la barre de progression ─────────────────────
+    function startProgressBar(duration) {
+        const progressBar = document.getElementById('progressBar');
+        
+        if (progressInterval) clearInterval(progressInterval);
+        
+        progressBar.style.width = '0%';
+        const startTime = Date.now();
+        
+        progressInterval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const percent = Math.min((elapsed / duration) * 100, 100);
+            progressBar.style.width = percent + '%';
+            
+            if (percent >= 100) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+        }, 50);
+    }
+    
+    function stopProgressBar() {
+        if (progressInterval) {
+            clearInterval(progressInterval);
+            progressInterval = null;
+        }
+        const progressBar = document.getElementById('progressBar');
+        if (progressBar) {
+            progressBar.style.width = '0%';
+        }
+    }
+    
+    function updateButtonState(speaking) {
+        const demoButton = document.getElementById('demoButton');
+        const buttonContent = document.getElementById('buttonContent');
+        
+        if (speaking) {
+            demoButton.classList.add('speaking');
+            buttonContent.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Dr. Layla parle...';
+        } else {
+            demoButton.classList.remove('speaking');
+            buttonContent.innerHTML = '<i class="fas fa-play-circle"></i> Faire parler Dr. Layla (Démo)';
+            stopProgressBar();
+        }
+    }
+
+    // ── Init avatar ────────────────────────────────────────────────────────
+    async function initAvatar() {
+        try {
+            window._head = new TalkingHead(document.getElementById('avatarDiv'), {
+                ttsEndpoint   : null,
+                cameraView    : 'upper',
+                lipsyncLang   : 'fr',
+                lipsyncModules: ['fr']
+            });
+            await window._head.showAvatar({
+                url        : '/TalkingHead-main/avatars/avatar.glb',
+                body       : 'F',
+                avatarMood : 'happy',
+                lipsyncLang: 'fr'
+            });
+            window._avatarReady = true;
+        } catch (e) {
+            console.error('Erreur TalkingHead:', e);
+            window._avatarReady = true;
+        }
+    }
+
+    // ── Estimation de la durée de parole (basée sur le nombre de caractères) ──
+    function estimateSpeechDuration(text) {
+        // Environ 12 caractères par seconde pour un débit normal en français
+        const charsPerSecond = 12;
+        const duration = (text.length / charsPerSecond) * 1000;
+        return Math.min(Math.max(duration, 3000), 15000); // Entre 3 et 15 secondes
+    }
+
+    // ── Fonction pour faire parler l'avatar (uniquement sur clic) ───────────
+    window.speakWelcome = async function () {
+        // Vérifier si l'avatar est prêt
+        if (!window._avatarReady) {
+            console.log('Avatar pas encore prêt, veuillez réessayer dans quelques secondes');
+            const buttonContent = document.getElementById('buttonContent');
+            const originalText = buttonContent.innerHTML;
+            buttonContent.innerHTML = '<i class="fas fa-hourglass-half"></i> Chargement de l\'avatar...';
+            setTimeout(() => {
+                if (buttonContent.innerHTML === '<i class="fas fa-hourglass-half"></i> Chargement de l\'avatar...') {
+                    buttonContent.innerHTML = originalText;
+                }
+            }, 2000);
+            return;
+        }
+        
+        if (isSpeaking) return;
+        isSpeaking = true;
+        
+        // Estimer la durée de la parole
+        const estimatedDuration = estimateSpeechDuration(welcomeText);
+        
+        // Démarrer la barre de progression
+        startProgressBar(estimatedDuration);
+        updateButtonState(true);
+
+        // Animer les speak-rings
+        document.querySelectorAll('.speak-ring').forEach(r => r.style.opacity = '0.8');
+
+        try {
+            // ① Priorité : speakWithAvatar (TTS backend + lipsync, chargé par avatar.js)
+            if (typeof window.speakWithAvatar === "function") {
+                await window.speakWithAvatar(welcomeText, 'fr');
+
+            // ② Fallback : speakText natif TalkingHead (si dispo)
+            } else if (window._head && typeof window._head.speakText === "function") {
+                window._head.speakText(welcomeText);
+                // Attendre que la parole soit finie
+                await new Promise(resolve => setTimeout(resolve, estimatedDuration));
+
+            // ③ Dernier recours : Web Speech API
+            } else if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(welcomeText);
+                utterance.lang  = 'fr-FR';
+                utterance.rate  = 0.95;
+                
+                // Attendre la fin de la parole
+                await new Promise((resolve) => {
+                    utterance.onend = resolve;
+                    speechSynthesis.speak(utterance);
+                });
+            }
+        } catch (e) {
+            console.error('speakWelcome error:', e);
+        } finally {
+            isSpeaking = false;
+            updateButtonState(false);
+            setTimeout(() => {
+                document.querySelectorAll('.speak-ring').forEach(r => r.style.opacity = '0');
+            }, 500);
+        }
+    };
+
+    // ── Au chargement : initialiser l'avatar sans parler ───────────────────
+    window.addEventListener('load', () => {
+        initAvatar();
+        // Plus d'appel automatique à speakWelcome() - l'avatar ne parle qu'au clic
+    });
+
+    // ── Active nav link on scroll ──────────────────────────────────────────
+    const sections = ['formations', 'evaluation', 'contact'];
+    window.addEventListener('scroll', () => {
+        sections.forEach(id => {
+            const el   = document.getElementById(id);
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            const link = document.querySelector(`.nav-link[href="#${id}"]`);
+            if (link) link.classList.toggle('active', rect.top <= 100 && rect.bottom > 100);
+        });
+    });
+</script>
+
+<!-- avatar.js doit rester APRÈS ce script, comme avant -->
+<script type="module" src="js/avatar.js"></script>
+
+</body>
+</html>

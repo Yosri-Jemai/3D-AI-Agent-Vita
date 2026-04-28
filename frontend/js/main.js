@@ -650,8 +650,8 @@ window.applySuggestion = function(btn) {
       c.disabled = true; c.style.opacity = '0.4'; c.style.cursor = 'default';
     });
     btn.style.opacity = '1';
-    btn.style.background = 'rgba(126,184,247,0.18)';
-    btn.style.borderColor = 'rgba(126,184,247,0.6)';
+    btn.style.background = 'rgb(183 252 132 / 18%)'
+    btn.style.borderColor = 'rgb(75 95 70 / 60%)';
   }
 
   sendQuestion();
