@@ -3,134 +3,229 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin CRM - Vital</title>
+    <title>Vital Enterprise | Admin Analytics</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="admin.css">
 </head>
 <body>
+<div class="page-bg" aria-hidden="true"></div>
 <main class="admin-shell">
-    <section id="authSection" class="auth-card">
-        <h1>Administration CRM</h1>
-        <p class="muted">Acces reserve aux administrateurs.</p>
-
-        <div class="tabs">
-            <button class="tab active" data-target="loginPanel">Connexion Admin</button>
-            <button class="tab" data-target="registerPanel">Creer compte Admin</button>
+    <section id="authSection" class="auth-card glass-card">
+        <div class="auth-brand">
+            <span class="badge">Vital Enterprise Console</span>
+            <h1>Administration CRM & Performance</h1>
+            <p>Connectez-vous avec un compte administrateur pour piloter les KPIs de formation et l'activite commerciale en temps reel.</p>
+            <ul>
+                <li>Suivi global des delegues</li>
+                <li>Analyse des produits les plus discutes</li>
+                <li>Indicateurs de performance exploitables</li>
+            </ul>
         </div>
 
-        <div id="loginPanel" class="panel active">
-            <form id="adminLoginForm">
-                <label>Email</label>
-                <input type="email" id="adminLoginEmail" required>
-                <label>Mot de passe</label>
-                <input type="password" id="adminLoginPassword" required>
-                <button type="submit">Se connecter</button>
-            </form>
-        </div>
+        <div class="auth-panel glass-card">
+            <div class="tabs">
+                <button class="tab active" data-target="loginPanel">Connexion Admin</button>
+                <button class="tab" data-target="registerPanel">Creer un admin</button>
+            </div>
 
-        <div id="registerPanel" class="panel">
-            <form id="adminRegisterForm">
-                <label>Nom complet</label>
-                <input type="text" id="adminFullName" required>
-                <label>Email</label>
-                <input type="email" id="adminEmail" required>
-                <label>Telephone</label>
-                <input type="text" id="adminPhone">
-                <label>Mot de passe</label>
-                <input type="password" id="adminPassword" minlength="6" required>
-                <button type="submit">Creer un admin</button>
-            </form>
-        </div>
+            <div id="loginPanel" class="panel active">
+                <form id="adminLoginForm" novalidate>
+                    <label for="adminLoginEmail">Email professionnel</label>
+                    <input type="email" id="adminLoginEmail" required placeholder="admin@vital.com">
 
-        <div id="authMessage" class="message"></div>
+                    <label for="adminLoginPassword">Mot de passe</label>
+                    <div class="password-wrap">
+                        <input type="password" id="adminLoginPassword" required placeholder="Votre mot de passe">
+                        <button type="button" class="ghost-icon" data-toggle-password="adminLoginPassword">Voir</button>
+                    </div>
+
+                    <button type="submit" class="primary-btn">Se connecter</button>
+                </form>
+            </div>
+
+            <div id="registerPanel" class="panel">
+                <form id="adminRegisterForm" novalidate>
+                    <label for="adminFullName">Nom complet</label>
+                    <input type="text" id="adminFullName" required placeholder="Nom Prenom">
+
+                    <label for="adminEmail">Email professionnel</label>
+                    <input type="email" id="adminEmail" required placeholder="admin@vital.com">
+
+                    <label for="adminPhone">Telephone</label>
+                    <input type="text" id="adminPhone" placeholder="+216 XX XXX XXX">
+
+                    <label for="adminPassword">Mot de passe</label>
+                    <div class="password-wrap">
+                        <input type="password" id="adminPassword" minlength="6" required placeholder="Minimum 6 caracteres">
+                        <button type="button" class="ghost-icon" data-toggle-password="adminPassword">Voir</button>
+                    </div>
+
+                    <button type="submit" class="primary-btn">Creer le compte admin</button>
+                </form>
+            </div>
+
+            <div id="authMessage" class="message"></div>
+        </div>
     </section>
 
     <section id="dashboardSection" class="dashboard hidden">
-        <header class="dashboard-header">
+        <header class="dashboard-header glass-card">
             <div class="title-wrap">
-                <h2>Dashboard Admin</h2>
-                <p class="muted">Suivi global des delegues, formations et progression.</p>
+                <span class="badge">Executive Dashboard</span>
+                <h2>Vital Admin Cockpit</h2>
+                <p class="muted">Vision centralisee des formations medicales, commerciales et de la performance de l'equipe.</p>
             </div>
             <div class="header-actions">
                 <div class="quick-links">
-                    <a class="quick-link" href="/index.html">Interface formation</a>
-                    <a class="quick-link" href="/commercial.html">Interface commercial</a>
+                    <a class="quick-link" href="/index.html">Training Interface</a>
+                    <a class="quick-link" href="/commercial.html">Commercial Interface</a>
                 </div>
                 <span id="adminIdentity" class="identity-badge"></span>
-                <button id="logoutBtn">Deconnexion</button>
+                <button id="refreshBtn" class="secondary-btn">Actualiser</button>
+                <button id="logoutBtn" class="danger-btn">Deconnexion</button>
             </div>
         </header>
 
+        <section class="kpi-strip" id="kpiStrip"></section>
+
         <nav class="dashboard-nav">
-            <button class="view-btn active" data-view="statsView">Statistiques formation</button>
-            <button class="view-btn" data-view="commercialView">Suivi commercial</button>
+            <button class="view-btn active" data-view="statsView">Formation & Adoption</button>
+            <button class="view-btn" data-view="commercialView">Tracking Commercial</button>
         </nav>
 
         <section id="statsView" class="view active">
             <div class="grid-cards" id="statsCards"></div>
             <div class="charts-grid">
-                <article class="chart-card">
-                    <h3>Repartition des sessions</h3>
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Repartition des sessions</h3>
+                        <span class="card-tag">Medical vs Commercial</span>
+                    </div>
                     <canvas id="sessionsChart"></canvas>
                 </article>
-                <article class="chart-card">
-                    <h3>Progression des delegues</h3>
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Evaluation des delegues par score</h3>
+                        <span class="card-tag">Tranches de 10</span>
+                    </div>
+                    <canvas id="scoreDistributionChart"></canvas>
+                </article>
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Top performance delegues</h3>
+                        <span class="card-tag">Classement</span>
+                    </div>
                     <canvas id="performanceChart"></canvas>
                 </article>
             </div>
-            <h3>Dernieres sessions de formation</h3>
-            <div class="table-wrap">
-                <table>
-                    <thead>
+
+            <article class="table-card glass-card">
+                <div class="table-toolbar">
+                    <h3>Dernieres sessions de formation</h3>
+                    <input id="sessionsSearch" type="search" placeholder="Filtrer par delegue, mode, session...">
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
                         <tr>
                             <th>Session</th>
                             <th>Delegue</th>
                             <th>Mode</th>
+                            <th>Duree</th>
                             <th>Debut</th>
                             <th>Fin</th>
                         </tr>
-                    </thead>
-                    <tbody id="latestSessionsBody"></tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody id="latestSessionsBody"></tbody>
+                    </table>
+                </div>
+            </article>
         </section>
 
         <section id="commercialView" class="view">
             <div class="grid-cards" id="commercialCards"></div>
-            <div class="charts-grid single-chart">
-                <article class="chart-card">
-                    <h3>Top produits et suivi commercial</h3>
+            <div class="charts-grid">
+                <article class="chart-card glass-card trending-card">
+                    <div class="card-head">
+                        <h3>Produits Tendances</h3>
+                        <span class="card-tag trending-tag">Populaires</span>
+                    </div>
+                    <div class="trending-legend">
+                        <div class="trend-item">
+                            <span class="trend-dot pollen"></span>
+                            <span class="trend-label">Pollen d'abeilles - Fortifiant général, santé peau & cheveux</span>
+                        </div>
+                        <div class="trend-item">
+                            <span class="trend-dot hemostop"></span>
+                            <span class="trend-label">LV Hemostop - Soulage douleur & réduit inflammation</span>
+                        </div>
+                    </div>
+                    <canvas id="trendingProductsChart"></canvas>
+                </article>
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Top produits discutes</h3>
+                        <span class="card-tag">Volume des mentions</span>
+                    </div>
                     <canvas id="productsChart"></canvas>
                 </article>
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Repartition des niveaux</h3>
+                        <span class="card-tag">Equipe commerciale</span>
+                    </div>
+                    <canvas id="levelsChart"></canvas>
+                </article>
+                <article class="chart-card glass-card wide-card">
+                    <div class="card-head">
+                        <h3>Evolution de l'engagement commercial</h3>
+                        <span class="card-tag">Tendances sur 30 jours</span>
+                    </div>
+                    <canvas id="engagementTrendChart"></canvas>
+                </article>
             </div>
-            <h3>Performance des delegues</h3>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                    <tr>
-                        <th>Delegue</th>
-                        <th>Sessions</th>
-                        <th>Score performance</th>
-                        <th>Niveau</th>
-                    </tr>
-                    </thead>
-                    <tbody id="delegatesPerformanceBody"></tbody>
-                </table>
+
+            <div class="charts-grid two-cols">
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Comparaison Medical vs Commercial</h3>
+                        <span class="card-tag">Performance par mode</span>
+                    </div>
+                    <canvas id="modeComparisonChart"></canvas>
+                </article>
+                <article class="chart-card glass-card">
+                    <div class="card-head">
+                        <h3>Repartition des scores d'engagement</h3>
+                        <span class="card-tag">Distribution</span>
+                    </div>
+                    <canvas id="engagementDistributionChart"></canvas>
+                </article>
             </div>
-            <h3>Top produits discutes</h3>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                    <tr>
-                        <th>Produit</th>
-                        <th>Mentions</th>
-                    </tr>
-                    </thead>
-                    <tbody id="topProductsBody"></tbody>
-                </table>
-            </div>
+
+            <article class="table-card glass-card">
+                <h3>Performance des delegues</h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Delegue</th>
+                            <th>Sessions</th>
+                            <th>Score</th>
+                            <th>Niveau</th>
+                        </tr>
+                        </thead>
+                        <tbody id="delegatesPerformanceBody"></tbody>
+                    </table>
+                </div>
+            </article>
+
+            <article class="table-card glass-card">
+                <h3>Insights commerciaux prioritaires</h3>
+                <div id="commercialInsights" class="insights-grid"></div>
+            </article>
+
         </section>
     </section>
 </main>

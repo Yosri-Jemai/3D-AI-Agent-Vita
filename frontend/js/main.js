@@ -6,6 +6,8 @@ let mediaRecorder = null, audioChunks = [];
 let allProducts = [], selectedProduct = null, selectedProductData = null;
 let trainingMode = null;
 let currentSessionId = null;
+const PRODUCT_MENTIONS_STORAGE_KEY = 'vita_product_mentions';
+const EVALUATIONS_STORAGE_KEY = 'vita_evaluations_count';
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -156,7 +158,28 @@ function setMode(mode) {
     : 'Mode: Commercial delegate — sales & persuasion training');
   if (selectedProduct) renderChips(buildDynamicChips(selectedProduct, selectedProductData));
   document.getElementById('question-input').placeholder = 'Select a product to begin…';
-  streamModeIntro(mode);
+  
+  // Message personnalisé selon le mode choisi
+  const customGreeting = mode === 'medical' 
+    ? "Bonjour délégué(e) médicale, comment puis-je vous aider ?"
+    : "Bonjour délégué(e) commercial(e), comment puis-je vous aider ?";
+  
+  // Afficher le message personnalisé
+  showCustomGreeting(customGreeting);
+}
+
+// Afficher un message de greeting personnalisé
+async function showCustomGreeting(text) {
+  hideEmpty();
+  const msgEl = addAIBubble(null);
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble) {
+    bubble.innerHTML = `<p>${esc(text)}</p>`;
+    bubble.removeAttribute('id');
+  }
+  setStatus('speaking', 'Speaking…');
+  await window.speakWithAvatar(text);
+  setStatus('', 'Ready');
 }
 
 // ── Produits ──────────────────────────────────────────────────
@@ -244,6 +267,28 @@ async function selectProduct(name) {
   renderChips(buildDynamicChips(name, pd));
 }
 
+function incrementEvaluationCounter() {
+  try {
+    const raw = localStorage.getItem(EVALUATIONS_STORAGE_KEY);
+    const current = Number(raw || 0);
+    const next = Number.isFinite(current) ? current + 1 : 1;
+    localStorage.setItem(EVALUATIONS_STORAGE_KEY, String(next));
+  } catch {}
+}
+
+function trackProductMention(name) {
+  if (!name) return;
+  try {
+    const normalizedName = String(name).trim();
+    if (!normalizedName) return;
+    const raw = localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const current = Number(parsed[normalizedName] || 0);
+    parsed[normalizedName] = Number.isFinite(current) ? current + 1 : 1;
+    localStorage.setItem(PRODUCT_MENTIONS_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {}
+}
+
 function askQuick(btn) {
   if (!selectedProduct) { openModal(); return; }
   document.getElementById('question-input').value = btn.textContent;
@@ -316,6 +361,8 @@ async function sendQuestion() {
   let ragQuestion = userText;
   if (selectedProduct && !userText.toLowerCase().includes(selectedProduct.toLowerCase()))
     ragQuestion = `${userText} — product: ${selectedProduct}`;
+  if (selectedProduct) trackProductMention(selectedProduct);
+  incrementEvaluationCounter();
   isLoading=true; setSend(true); input.value=''; input.style.height='auto';
   addUserMsg(userText); addTyping(); setStatus('thinking','Thinking…');
   try {
@@ -455,6 +502,8 @@ async function resendQuestion(userText) {
   let ragQuestion=userText;
   if(selectedProduct&&!userText.toLowerCase().includes(selectedProduct.toLowerCase()))
     ragQuestion=`${userText} — product: ${selectedProduct}`;
+  if (selectedProduct) trackProductMention(selectedProduct);
+  incrementEvaluationCounter();
   isLoading=true; setSend(true); addTyping(); setStatus('thinking','Thinking…');
   try {
     const res=await fetch(`${API}/chat/ask/stream`,{method:'POST',headers:{'Content-Type':'application/json'},
