@@ -240,6 +240,8 @@ Ta réponse :"""
 VITA_COMMERCIAL_ASK_PROMPT_EN = """You are Vita, a pharmaceutical delegate from VITAL SA.
 Continue the medical visit naturally — do NOT re-introduce yourself, do NOT ask for permission.
 
+IMPORTANT: Always use the exact product name mentioned in the conversation. Never use placeholders like "[Product Name]" or generic terms. If the doctor refers to "it" or "the product", repeat the specific product name.
+
 ADAPTIVE BEHAVIOR:
 - If the doctor asks for a product by name → immediately give 2-3 key benefits, evidence, practical usage
 - If the doctor expresses a need → suggest the most relevant product(s), benefits, mechanism, then a short follow-up question
@@ -318,6 +320,7 @@ class RAGEngine:
         self.llm          = None
         self.collection   = None
         self._initialized = False
+        self._last_product_cache = {}
 
     def initialize(self):
         if self._initialized:
@@ -344,7 +347,57 @@ class RAGEngine:
             metadata={"hnsw:space": "cosine"},
         )
 
+        self.product_names = self._load_product_names()
+
         self._initialized = True
+
+    def _load_product_names(self):
+        """Load all product names from MySQL `products` table."""
+        import pymysql
+        import os
+        product_names = set()
+        try:
+            conn = pymysql.connect(
+                host=os.getenv("MYSQL_HOST", "localhost"),
+                port=int(os.getenv("MYSQL_PORT", 3306)),
+                user=os.getenv("MYSQL_USER"),
+                password=os.getenv("MYSQL_PASSWORD"),
+                database=os.getenv("MYSQL_DATABASE"),
+                charset="utf8mb4",
+            )
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM products")
+                rows = cur.fetchall()
+                for row in rows:
+                    product_names.add(row[0])
+            conn.close()
+        except Exception as e:
+            print(f"[WARN] Could not load product names from MySQL: {e}")
+            # fallback to a minimal set if DB fails
+            product_names = {"LV Vitamine A", "LV Vitamin A", "Dermacné", "PHYTOTHERA"}
+        return product_names
+    
+    def extract_product_name(self, text: str) -> str:
+        text_lower = text.lower()
+        for prod in self.product_names:
+            print(f"[CACHE] Loaded {len(self.product_names)} product names: {list(self.product_names)[:5]}...")
+            if prod.lower() in text_lower:
+                return prod
+        return None
+
+            # ADDED for product cache
+    _last_product_cache = {}   # class-level or instance? Use instance variable.
+
+    def inject_last_product(self, question: str, session_id: str) -> str:
+        """Prepend last product if current question has none."""
+        if not session_id or not question:
+            return question
+        if self.extract_product_name(question):
+            return question
+        last = self._last_product_cache.get(session_id)
+        if last:
+            return f"Tell me about {last}. {question}"
+        return question
 
     # ── Recherche sémantique + keyword ────────────────────────────────────────
     def search(self, question: str, n_results: int = 10) -> list[dict]:
@@ -588,9 +641,20 @@ Réponse :"""
         return {"answer": answer.strip(), "sources": sources, "chunks_used": len(hits)}
 
     # ── Ask streaming ─────────────────────────────────────────────────────────
-    def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical"):
+    def stream_ask(self, question: str, n_results: int = 10, mode: str = "medical", session_id: str = None):
         self.initialize()
         
+        # --- Product cache logic ---
+        original_question = question
+        question = self.inject_last_product(question, session_id)
+        if question != original_question:
+            print(f"[CACHE] Injected product into: '{question}'")
+
+        prod = self.extract_product_name(original_question)
+        if prod and session_id:
+            self._last_product_cache[session_id] = prod
+            print(f"[CACHE] Stored product '{prod}' for session {session_id}")
+
         import re
         # Import direct des fonctions DB — pas de HTTP vers soi-même
         from backend.api.routes_questions_difficiles import (

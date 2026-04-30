@@ -320,7 +320,7 @@ window.sendQuestion = async function() {
         const res = await fetch(`${API}/chat/ask/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+            body: JSON.stringify({ question: userText, n_results: 10, mode: MODE, session_id: currentSessionId ? String(currentSessionId) : null })
         });
         
         if (!res.ok) throw new Error();
@@ -411,7 +411,7 @@ window.openReport = async function() {
                     'Authorization': token ? `Bearer ${token}` : ''
                 },
                 body: JSON.stringify({
-                    sessionId: currentSessionId,
+                    sessionId: currentSessionId ? String(currentSessionId) : null,
                     profileId: currentProfileId,
                     conversation: conversationLog
                 })
@@ -724,7 +724,7 @@ async function resendQuestion(userText) {
   try {
     const res = await fetch(`${API}/chat/ask/stream`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE })
+      body: JSON.stringify({ question: userText, n_results: 10, mode: MODE, session_id: currentSessionId })
     });
     if (!res.ok) throw new Error();
     const reader = res.body.getReader(); const decoder = new TextDecoder();
