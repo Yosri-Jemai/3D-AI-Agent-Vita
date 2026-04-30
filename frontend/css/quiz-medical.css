@@ -5,24 +5,35 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --accent:       #4F46E5;
-  --accent-light: #EEF2FF;
-  --accent-dark:  #3730A3;
-  --success:      #059669;
-  --success-light:#D1FAE5;
-  --danger:       #DC2626;
-  --danger-light: #FEE2E2;
-  --warn:         #D97706;
-  --warn-light:   #FEF3C7;
-  --bg:           #F8F7F4;
-  --surface:      #FFFFFF;
-  --border:       rgba(0,0,0,0.10);
-  --text:         #1C1C1A;
-  --text-muted:   #6B6B67;
-  --text-faint:   #9B9B97;
-  --radius:       14px;
-  --shadow:       0 2px 16px rgba(0,0,0,0.06);
-  --header-h:     56px;
+  /* ── Verts principaux ── */
+  --accent:       #1e7a2e;
+  --accent-light: #e8f3e6;
+  --accent-dark:  #145a22;
+
+  /* ── Sémantique ── */
+  --success:       #059669;
+  --success-light: #D1FAE5;
+  --danger:        #DC2626;
+  --danger-light:  #FEE2E2;
+  --warn:          #D97706;
+  --warn-light:    #FEF3C7;
+
+  /* ── Surfaces & fonds ── */
+  --bg:      #F8F7F4;
+  --surface: #FFFFFF;
+
+  /* ── Bordures ── */
+  --border: rgba(0,0,0,0.10);
+
+  /* ── Texte ── */
+  --text:       #1C1C1A;
+  --text-muted: #6B6B67;
+  --text-faint: #9B9B97;
+
+  /* ── Layout ── */
+  --radius:   14px;
+  --shadow:   0 2px 16px rgba(0,0,0,0.06);
+  --header-h: 56px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,7 +44,7 @@
     --text:         #E8E6DF;
     --text-muted:   #A0A09A;
     --text-faint:   #6B6B67;
-    --accent-light: #1E1B4B;
+    --accent-light: #0a2e10;
     --success-light:#064E3B;
     --danger-light: #450A0A;
     --warn-light:   #451A03;
@@ -1114,8 +1125,8 @@ html, body {
 .certificate-section {
   margin: 16px 0 4px;
   padding: 18px 20px;
-  background: linear-gradient(135deg, #fefce8 0%, #fff7ed 100%);
-  border: 1.5px solid #f59e0b;
+  background: linear-gradient(135deg, #e8f3e6 0%, #f0f7ee 100%);
+  border: 1.5px solid #1e7a2e;
   border-radius: 14px;
   text-align: center;
   animation: slideIn .5s ease;
@@ -1128,16 +1139,16 @@ html, body {
 .certificate-title    { font-size: 15px; font-weight: 700; color: #92400e; margin-bottom: 4px; }
 .certificate-subtitle { font-size: 12px; color: #b45309; margin-bottom: 14px; }
 @media (prefers-color-scheme: dark) {
-  .certificate-title  { color: #fbbf24; }
-  .certificate-subtitle { color: #d97706; }
+  .certificate-title  { color: #145a22; }
+  .certificate-subtitle { color: #1e7a2e; }
 }
 .certificate-download-btn {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 10px 22px; background: #f59e0b; color: #fff;
+  padding: 10px 22px; background: #1e7a2e; color: #fff;
   border: none; border-radius: 10px; font-size: 14px; font-weight: 600;
   cursor: pointer; transition: background .15s, transform .1s;
 }
-.certificate-download-btn:hover  { background: #d97706; }
+.certificate-download-btn:hover  { background: #145a22; }
 .certificate-download-btn:active { transform: scale(.97); }
 
 

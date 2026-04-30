@@ -592,6 +592,12 @@ Réponse :"""
         self.initialize()
         
         import re
+        # Import direct des fonctions DB — pas de HTTP vers soi-même
+        from backend.api.routes_questions_difficiles import (
+            find_similar_question, 
+            store_difficult_question
+        )
+
         question = re.sub(r'\s+', ' ', question).strip()
         question = ''.join(char for char in question if char.isprintable() or char == ' ')
         
@@ -601,8 +607,45 @@ Réponse :"""
             return
 
         lang = detect_language(question)
-        
-        # --- Wrap search in try-except ---
+
+        # ── 1. Vérifier si une réponse admin existe pour une question similaire ──
+        # ── 1. Vérifier si une réponse admin existe pour une question similaire ──
+        try:
+            match = find_similar_question(question)
+            if match:
+                reponse_admin = match["reponse_admin"]
+                prompt_admin = f"""Tu es Dr. Layla, experte en formation produits médicaux chez VITAL SA.
+        Un expert interne a rédigé la réponse de référence suivante concernant cette question :
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        RÉPONSE DE RÉFÉRENCE :
+        {reponse_admin}
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        QUESTION POSÉE : {question}
+
+        En utilisant EXCLUSIVEMENT les informations contenues dans la réponse de référence ci-dessus :
+        1. Réponds directement et complètement à la question posée
+        2. Conserve TOUTES les données chiffrées, statistiques, dates et noms mentionnés
+        3. Structure ta réponse de façon pédagogique et fluide (pas de liste à puces sauf si pertinent)
+        4. Termine par 1-2 questions complémentaires naturelles que le délégué pourrait poser
+        5. Réponds dans la même langue que la question
+        6. Ne mentionne JAMAIS que tu utilises une réponse prérédigée ou une source interne
+
+        Style : celui d'une experte qui maîtrise parfaitement le sujet et l'explique 
+        avec précision et enthousiasme pédagogique."""
+                
+                for chunk in self.llm.stream([HumanMessage(content=prompt_admin)]):
+                    token = chunk.content or ""
+                    if token:
+                        yield {"type": "token", "content": token}
+                
+                yield {"type": "sources", "sources": [{"name": "Expertise interne VITAL SA", "relevance": 1.0}]}
+                return
+        except Exception as e:
+            print(f"[RAG] Erreur consultation questions difficiles: {e}")
+
+        # ── 2. Recherche RAG normale ──
         try:
             hits = self.search(question, n_results=n_results)
         except Exception as e:
@@ -612,23 +655,39 @@ Réponse :"""
             return
 
         if not hits:
-            yield {"type": "token", "content": "Je n'ai pas trouvé d'information sur ce sujet. Pouvez-vous me poser une autre question ?"}
+            # ── 3. Aucun résultat → stocker la question difficile ──
+            try:
+                store_difficult_question(question)
+            except Exception as e:
+                print(f"[RAG] Erreur stockage: {e}")
+
+            yield {"type": "token", "content": "Je n'ai pas trouvé d'information sur ce sujet dans notre base. Votre question a été transmise à nos experts et recevra une réponse prochainement."}
             yield {"type": "sources", "sources": []}
             return
 
         context_parts = [f"[Source {i}: {h['product_name']}]\n{h['text']}" for i, h in enumerate(hits, 1)]
         context = "\n\n---\n\n".join(context_parts)
-        prompt  = get_prompt(mode, lang=lang).format(context=context, question=question)
+        prompt = get_prompt(mode, lang=lang).format(context=context, question=question)
 
-        # --- Collect full response and ensure it's not empty ---
         full_response = ""
         for chunk in self.llm.stream([HumanMessage(content=prompt)]):
             token = chunk.content or ""
             full_response += token
             if token:
                 yield {"type": "token", "content": token}
-        
-        # If LLM returned nothing, send a fallback
+
+        # ── 4. Réponse vague → stocker aussi ──
+        vague_indicators = [
+            "je n'ai pas trouvé", "je ne sais pas", "aucune information",
+            "i don't have", "i couldn't find", "no information",
+            "je n'ai pas d'informations", "je suis désolé"
+        ]
+        if any(ind in full_response.lower() for ind in vague_indicators):
+            try:
+                store_difficult_question(question)
+            except Exception as e:
+                print(f"[RAG] Erreur stockage réponse vague: {e}")
+
         if not full_response.strip():
             yield {"type": "token", "content": "Je n'ai pas pu générer une réponse. Pouvez-vous reformuler ?"}
 
@@ -669,7 +728,8 @@ Réponse :"""
             if token:
                 yield {"type": "token", "content": token}
         yield {"type": "done"}
-
+        
+        
 
 # ── Shared engine instance ────────────────────────────────────────────────────
 engine = RAGEngine()

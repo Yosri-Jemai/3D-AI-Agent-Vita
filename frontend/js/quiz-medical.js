@@ -495,7 +495,7 @@ function updateHeader() {
 
 function updateDonut() {
   const total = state.current;
-  const pct   = total > 0 ? Math.round((state.score / total) * 100) : 0;
+  const pct   = total > 60 ? Math.round((state.score / total) * 100) : 0;
   const arc   = $("donut-arc");
   const donutPct = $("donut-pct");
   if (arc) {
@@ -601,10 +601,11 @@ function goToPrev() {
   loadQuestion(prevIdx);
 }
 // ── Résultats ─────────────────────────────────────────────────────────────
+// ── Résultats ─────────────────────────────────────────────────────────────
 function showResults() {
 
   stopSpeaking();
-  moveAvatarToResults();        // ← AJOUT
+  moveAvatarToResults();
 
   $("quiz-screen").style.display     = "none";
   $("results-screen").style.display  = "flex";
@@ -652,12 +653,16 @@ function showResults() {
   }
   speak(title + " " + message);
 
-  if (total > 0) {
-    setTimeout(() => streamFinalFeedback(), 400);
-  }
   const certSection = $("certificate-section");
   if (certSection) {
-    certSection.style.display = pct >= 60 ? "block" : "none";
+    certSection.style.display = pct >= 0 ? "block" : "none";
+  }
+
+  // ====================== CORRECTION IMPORTANTE ======================
+  if (total > 0) {
+    setTimeout(() => streamFinalFeedback(), 300);   // lance le bilan
+  } else {
+    setTimeout(saveQuizResult, 500);
   }
 }
 
@@ -765,10 +770,14 @@ async function streamQuestionFeedback(q, chosenIdx) {
 }
 
 // ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
+// ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
 async function streamFinalFeedback() {
   const section = $("final-feedback-section");
   const textEl  = $("final-feedback-text");
-  if (!section || !textEl) return;
+  if (!section || !textEl) {
+    saveQuizResult();   // sécurité
+    return;
+  }
 
   TypingEngine.reset();
   section.style.display = "block";
@@ -782,8 +791,13 @@ async function streamFinalFeedback() {
   textSpan.style.cssText = "white-space: pre-wrap; margin: 0; line-height: 1.7;";
   textEl.insertBefore(textSpan, finalCursor);
 
-  // Collecte le texte complet pour le lire à voix haute après
   let fullText = "";
+
+  // ← Quand le typing est terminé → on enregistre dans la base
+  TypingEngine.start(textSpan, finalCursor, () => {
+    speakFinalFeedback(fullText);
+    setTimeout(saveQuizResult, 800);     // ← Enregistrement ici
+  });
 
   const originalFetch = () => fetch(`${API_BASE}/quiz/feedback/final/stream`, {
     method:  "POST",
@@ -795,18 +809,18 @@ async function streamFinalFeedback() {
     }),
   });
 
-  // Stream SSE manuellement pour capturer le texte complet
-  TypingEngine.reset();
-  textSpan.textContent = "";
-  TypingEngine.start(textSpan, finalCursor, () => {
-    // Appelé quand toute l'animation est terminée → lire à voix haute
-    speakFinalFeedback(fullText);
-  });
-
   let res;
   try { res = await originalFetch(); }
-  catch (err) { textEl.textContent = "Bilan indisponible."; return; }
-  if (!res.ok) { textEl.textContent = "Bilan indisponible."; return; }
+  catch (err) { 
+    textEl.textContent = "Bilan indisponible."; 
+    setTimeout(saveQuizResult, 500);
+    return; 
+  }
+  if (!res.ok) { 
+    textEl.textContent = "Bilan indisponible."; 
+    setTimeout(saveQuizResult, 500);
+    return; 
+  }
 
   const reader  = res.body.getReader();
   const decoder = new TextDecoder();
@@ -839,73 +853,83 @@ async function streamFinalFeedback() {
 
 // ── Certificat de réussite ────────────────────────────────────────────────
 function downloadCertificate() {
-  const total    = state.history.length;
-  const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
-  const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
-  const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
 
-  const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8"/>
-<title>Certificat de Formation — VitalAgent</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Lato',sans-serif;background:#f4f1eb;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
-  .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #e2d9c8;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
-  .cert::before{content:'';position:absolute;inset:8px;border:2px solid #c9a84c;pointer-events:none}
-  .logo{text-align:center;margin-bottom:28px}
-  .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
-  .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
-  .divider{width:80px;height:2px;background:#c9a84c;margin:16px auto}
-  .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
-  .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
-  .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
-  .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #c9a84c;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
-  .score-box{display:inline-flex;align-items:center;gap:12px;background:#fefce8;border:1.5px solid #c9a84c;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
-  .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#92400e}
-  .score-lbl{font-size:12px;color:#b45309;text-align:left;line-height:1.4}
-  .products{background:#fafaf8;border:1px solid #e2d9c8;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
-  .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
-  .sig{text-align:center}
-  .sig-line{width:160px;height:1px;background:#999;margin:0 auto 6px}
-  .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
-  .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
-  .date{font-size:11px;color:#888;text-align:right}
-  .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
-  @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
-</style>
-</head>
-<body>
-<div class="cert">
-  <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Médicaux</div></div>
-  <div class="divider"></div>
-  <div class="heading">Certificat de réussite</div>
-  <div class="title">Quiz de Formation<br>Médicale</div>
-  <div class="body">
-    Ce certificat atteste que le délégué<br>
-    <span class="delegate">Délégué VITAL SA</span><br>
-    a validé avec succès le quiz de formation médicale VitalAgent.
-  </div>
-  <div style="text-align:center">
-    <div class="score-box">
-      <div class="score-num">${pct}%</div>
-      <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} questions</strong></div>
+    const total    = state.history.length;
+    const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
+    const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
+    const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
+  
+    // Récupération du nom de l'utilisateur connecté
+    let delegateName = "Délégué VITAL SA";
+    try {
+      const userJson = localStorage.getItem('user');
+      if (userJson) {
+        const user = JSON.parse(userJson);
+        if (user.fullName) delegateName = user.fullName;
+      }
+    } catch(e) {}
+    const html = `<!DOCTYPE html>
+    <html lang="fr">
+    <head>
+    <meta charset="UTF-8"/>
+    <title>Certificat de Formation — VitalAgent</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Lato',sans-serif;background:#f0f7ee;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
+      .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #c8e6c9;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
+      .cert::before{content:'';position:absolute;inset:8px;border:2px solid #1e7a2e;pointer-events:none}
+      .logo{text-align:center;margin-bottom:28px}
+      .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
+      .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
+      .divider{width:80px;height:2px;background:#1e7a2e;margin:16px auto}
+      .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
+      .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
+      .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
+      .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #1e7a2e;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
+      .score-box{display:inline-flex;align-items:center;gap:12px;background:#e8f3e6;border:1.5px solid #1e7a2e;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
+      .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#145a22}
+      .score-lbl{font-size:12px;color:#1e7a2e;text-align:left;line-height:1.4}
+      .products{background:#f5faf4;border:1px solid #c8e6c9;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
+      .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
+      .sig{text-align:center}
+      .sig-line{width:160px;height:1px;background:#999;margin:0 auto 6px}
+      .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
+      .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
+      .date{font-size:11px;color:#888;text-align:right}
+      .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
+      @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
+    </style>
+    </head>
+    <body>
+    <div class="cert">
+      <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Médicaux</div></div>
+      <div class="divider"></div>
+      <div class="heading">Certificat de réussite</div>
+      <div class="title">Quiz de Formation<br>Médicale</div>
+      <div class="body">
+        Ce certificat atteste que le délégué<br>
+        <span class="delegate">${delegateName}</span><br>
+        a validé avec succès le quiz de formation médicale VitalAgent.
+      </div>
+      <div style="text-align:center">
+        <div class="score-box">
+          <div class="score-num">${pct}%</div>
+          <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} questions</strong></div>
+        </div>
+      </div>
+      <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
+      <div class="footer">
+        <div class="sig"><div class="sig-line"></div><div class="sig-name">Dr. Layla</div><div class="sig-role">Experte Formation Médicale · VitalAgent</div></div>
+        <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
+      </div>
+      <div class="wm">VITAL SA · Formation Médicale · Certifié VitalAgent</div>
     </div>
-  </div>
-  <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
-  <div class="footer">
-    <div class="sig"><div class="sig-line"></div><div class="sig-name">Dr. Layla</div><div class="sig-role">Experte Formation Médicale · VitalAgent</div></div>
-    <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
-  </div>
-  <div class="wm">VITAL SA · Formation Médicale · Certifié VitalAgent</div>
-</div>
-<div class="no-print">
-  <button onclick="window.print()" style="padding:12px 28px;background:#c9a84c;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
-</div>
-</body>
-</html>`;
+    <div class="no-print">
+      <button onclick="window.print()" style="padding:12px 28px;background:#1e7a2e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
+    </div>
+    </body>
+    </html>`;
 
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url  = URL.createObjectURL(blob);
@@ -913,4 +937,60 @@ function downloadCertificate() {
   a.href = url; a.download = "certificat-formation-vitale.html";
   document.body.appendChild(a); a.click();
   document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+
+/************ il tasjil fil base imta3 resultat quiz*************/
+// ── Enregistrer le résultat du quiz médical ───────────────────────────────
+// ── Enregistrer le résultat du quiz médical ───────────────────────────────
+async function saveQuizResult() {
+ 
+  const answered   = state.history.filter(h => h !== undefined && h !== null);
+  const total      = answered.length;
+  if (total === 0) { console.warn("[QuizSave] Historique vide, rien à enregistrer."); return; }
+ 
+  const score      = answered.filter(h => h.ok).length;
+  const percentage = Math.round((score / total) * 100);
+ 
+  // Texte du bilan Dr. Layla — on prend innerText pour ignorer le HTML du spinner
+  const feedbackEl  = document.getElementById("final-feedback-text");
+  let   feedbackTxt = null;
+  if (feedbackEl) {
+    const raw = (feedbackEl.innerText || feedbackEl.textContent || "").trim();
+    if (raw && !raw.includes("rédige votre bilan")) feedbackTxt = raw;
+  }
+ 
+  const payload = {
+    quiz_type:         "medical",
+    score:             score,
+    total_questions:   total,
+    percentage:        percentage,
+    feedback:          feedbackTxt,
+    difficulty:        state.difficulty || "moyen",
+    products_selected: state.selectedProducts.length > 0
+                         ? JSON.stringify(state.selectedProducts)
+                         : null,
+    id_user:           null,   // null → FK nullable, pas de risque de 409
+  };
+ 
+  console.log("[QuizSave] payload →", payload);
+ 
+  try {
+    const res = await fetch(`${API_BASE}/quizsave/save-result`, {   // ← URL mise à jour
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(payload),
+    });
+ 
+    if (res.ok) {
+      const data = await res.json();
+      console.log("✅ Résultat enregistré — id DB :", data.id);
+    } else {
+      let detail = `HTTP ${res.status}`;
+      try { const b = await res.json(); detail += " — " + (b.detail || JSON.stringify(b)); } catch(_) {}
+      console.error("❌ saveQuizResult erreur serveur :", detail);
+    }
+  } catch (err) {
+    console.error("❌ saveQuizResult erreur réseau :", err);
+  }
 }
