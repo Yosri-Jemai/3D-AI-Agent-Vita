@@ -40,6 +40,19 @@ function getLipsyncLang(lang) {
   return map[lang] || 'fr';
 }
 
+// ── Fonction pour arrêter l'avatar de parler ─────────────────────
+window.stopAvatar = function () {
+  if (!window._avatarReady || !window._head) return;
+  
+  try {
+    window._head.stopSpeaking();
+    console.log('🛑 Avatar speech stopped');
+    window.setStatus('', 'Ready');
+  } catch (e) {
+    console.error('❌ Error stopping avatar:', e);
+  }
+};
+
 // ── Fonction principale de parole avec lip-sync ───────────────────
 window.speakWithAvatar = async function (text, forcedLang = null) {
   if (!window._avatarReady || !window._head || !text?.trim()) return;
