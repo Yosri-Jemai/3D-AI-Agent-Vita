@@ -13,6 +13,7 @@ Chat endpoints:
 import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from typing import Optional
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -22,6 +23,7 @@ class QuestionRequest(BaseModel):
     question:  str
     n_results: int = 10
     mode:      str = "medical"   # "medical" or "commercial"
+    session_id: Optional[str] = None
 
 
 class SuggestionsRequest(BaseModel):
@@ -86,7 +88,7 @@ async def ask_stream(req: QuestionRequest):
 
     def event_generator():
         try:
-            for chunk in engine.stream_ask(req.question, n_results=req.n_results, mode=req.mode):
+            for chunk in engine.stream_ask(req.question, n_results=req.n_results, mode=req.mode, session_id=req.session_id):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
