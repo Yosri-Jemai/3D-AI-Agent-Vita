@@ -325,6 +325,7 @@ async function openAdminDashboard() {
     authSection.classList.add("hidden");
     dashboardSection.classList.remove("hidden");
     await loadDashboardAndCommercial();
+    await loadQuestionsDifficiles();
 }
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -337,12 +338,18 @@ document.querySelectorAll(".tab").forEach((tab) => {
     });
 });
 
+// Le gestionnaire de view-btn existant appellera loadQuestionsDifficiles
+// quand l'admin clique sur l'onglet "Questions Difficiles"
 document.querySelectorAll(".view-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
         document.querySelectorAll(".view-btn").forEach((el) => el.classList.remove("active"));
         document.querySelectorAll(".view").forEach((el) => el.classList.remove("active"));
         btn.classList.add("active");
         document.getElementById(btn.dataset.view).classList.add("active");
+        // Recharger si c'est l'onglet questions
+        if (btn.dataset.view === "questionsView") {
+            loadQuestionsDifficiles();
+        }
     });
 });
 
@@ -400,3 +407,115 @@ document.getElementById("logoutBtn").addEventListener("click", logoutAdmin);
         }
     }
 })();
+
+
+const FASTAPI_URL = "http://localhost:8000";
+
+// Charger les questions difficiles
+async function loadQuestionsDifficiles() {
+    try {
+        const res = await fetch(`${FASTAPI_URL}/questions-difficiles/all`);
+        const data = await res.json();
+        renderQuestions(data.questions || []);
+    } catch (e) {
+        console.error("Erreur chargement questions:", e);
+    }
+}
+
+function renderQuestions(questions) {
+    const body = document.getElementById("questionsBody");
+    if (!questions.length) {
+        body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:#888">
+            Aucune question difficile pour le moment.
+        </td></tr>`;
+        return;
+    }
+
+    body.innerHTML = questions.map(q => `
+        <tr id="question-row-${q.id}">
+            <td>${q.id}</td>
+            <td style="max-width:350px;word-break:break-word">${escapeHtml(q.question)}</td>
+            <td>${new Date(q.date_creation).toLocaleDateString("fr-FR")}</td>
+            <td>
+                ${q.reponse_admin 
+                    ? `<span style="color:#16a34a;font-weight:600">✓ Répondu</span>` 
+                    : `<span style="color:#dc2626;font-weight:600">⏳ En attente</span>`}
+            </td>
+            <td style="min-width:220px">
+                ${!q.reponse_admin ? `
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                        <textarea 
+                            id="reponse-input-${q.id}"
+                            placeholder="Tapez votre réponse ici..."
+                            style="width:100%;padding:8px;border:1px solid #cbd5e1;
+                                   border-radius:8px;font-size:13px;resize:vertical;
+                                   min-height:70px;font-family:inherit"
+                        ></textarea>
+                        <button 
+                            onclick="soumettreReponse(${q.id})"
+                            style="padding:7px 14px;background:#2563eb;color:#fff;
+                                   border:none;border-radius:8px;cursor:pointer;
+                                   font-size:12px;font-weight:600;transition:background .2s"
+                            onmouseover="this.style.background='#1d4ed8'"
+                            onmouseout="this.style.background='#2563eb'">
+                            ✓ Valider la réponse
+                        </button>
+                    </div>
+                ` : `
+                    <div style="font-size:12px;color:#374151;background:#f0fdf4;
+                                padding:8px;border-radius:6px;border:1px solid #bbf7d0">
+                        ${escapeHtml(q.reponse_admin)}
+                    </div>
+                `}
+            </td>
+        </tr>
+    `).join("");
+}
+
+// Supprimez l'ancienne ouvrirReponse et remplacez soumettreReponse :
+async function soumettreReponse(id) {
+    const textarea = document.getElementById(`reponse-input-${id}`);
+    if (!textarea) return;
+    
+    const reponse = textarea.value.trim();
+    if (!reponse) {
+        textarea.style.border = "1px solid #ef4444";
+        textarea.placeholder = "⚠️ La réponse ne peut pas être vide";
+        return;
+    }
+
+    try {
+        const res = await fetch(`${FASTAPI_URL}/questions-difficiles/${id}/repondre`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reponse })
+        });
+        if (res.ok) {
+            // Mettre à jour visuellement sans recharger toute la liste
+            const row = document.getElementById(`question-row-${id}`);
+            if (row) {
+                const statusCell = row.children[3];
+                const actionCell = row.children[4];
+                statusCell.innerHTML = `<span style="color:#16a34a;font-weight:600">✓ Répondu</span>`;
+                actionCell.innerHTML = `
+                    <div style="font-size:12px;color:#374151;background:#f0fdf4;
+                                padding:8px;border-radius:6px;border:1px solid #bbf7d0">
+                        ${escapeHtml(reponse)}
+                    </div>`;
+            }
+        } else {
+            alert("❌ Erreur lors de l'enregistrement.");
+        }
+    } catch (e) {
+        alert("❌ Erreur réseau : " + e.message);
+    }
+}
+
+// Fonction utilitaire pour éviter les XSS
+function escapeHtml(str) {
+    return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
