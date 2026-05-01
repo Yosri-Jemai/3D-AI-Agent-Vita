@@ -3198,21 +3198,31 @@ Réponse :"""
         lang = detect_language(question)
 
         # ── 1. Vérifier si une réponse admin existe pour une question similaire ──
+        # ── 1. Vérifier si une réponse admin existe pour une question similaire ──
         try:
             match = find_similar_question(question)
             if match:
                 reponse_admin = match["reponse_admin"]
-                prompt_admin = f"""Tu es un expert pharmaceutique de VITAL SA.
-    Un administrateur expert a fourni la réponse suivante à une question similaire :
+                prompt_admin = f"""Tu es Dr. Layla, experte en formation produits médicaux chez VITAL SA.
+        Un expert interne a rédigé la réponse de référence suivante concernant cette question :
 
-    RÉPONSE ADMIN : {reponse_admin}
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        RÉPONSE DE RÉFÉRENCE :
+        {reponse_admin}
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    En te basant sur cette réponse comme source principale, réponds de manière 
-    professionnelle et complète à la question suivante :
-    QUESTION : {question}
+        QUESTION POSÉE : {question}
 
-    Réponds dans la même langue que la question. Sois précis et professionnel.
-    Ne mentionne pas que tu utilises une réponse admin."""
+        En utilisant EXCLUSIVEMENT les informations contenues dans la réponse de référence ci-dessus :
+        1. Réponds directement et complètement à la question posée
+        2. Conserve TOUTES les données chiffrées, statistiques, dates et noms mentionnés
+        3. Structure ta réponse de façon pédagogique et fluide (pas de liste à puces sauf si pertinent)
+        4. Termine par 1-2 questions complémentaires naturelles que le délégué pourrait poser
+        5. Réponds dans la même langue que la question
+        6. Ne mentionne JAMAIS que tu utilises une réponse prérédigée ou une source interne
+
+        Style : celui d'une experte qui maîtrise parfaitement le sujet et l'explique 
+        avec précision et enthousiasme pédagogique."""
                 
                 for chunk in self.llm.stream([HumanMessage(content=prompt_admin)]):
                     token = chunk.content or ""
@@ -19075,7 +19085,7 @@ except Exception as e:
     "RequestMappingsPanelWidth1": "75",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "Spring Boot.VitaApplication.executor": "Run",
-    "git-widget-placeholder": "rayen",
+    "git-widget-placeholder": "prod5",
     "kotlin-language-version-configured": "true",
     "last_opened_file_path": "C:/Users/ASUS/Esprit-PI-4DS6-2526-VITA/spring-backend",
     "node.js.detected.package.eslint": "true",
@@ -19129,7 +19139,8 @@ except Exception as e:
       <workItem from="1777026511235" duration="6000" />
       <workItem from="1777370982469" duration="2073000" />
       <workItem from="1777567492979" duration="2000" />
-      <workItem from="1777568285588" duration="4439000" />
+      <workItem from="1777568285588" duration="5975000" />
+      <workItem from="1777593617270" duration="594000" />
     </task>
     <servers />
   </component>
@@ -20059,6 +20070,42 @@ public class Profile {
             this.isActive = false;
         }
     }
+}
+=== ./spring-backend/src/main/java/com/unity6/vita/entity/QuestionDifficile.java ===
+// spring-backend/src/main/java/com/unity6/vita/entity/QuestionDifficile.java
+
+package com.unity6.vita.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "tbl_questions_difficiles")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class QuestionDifficile {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Integer id;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String question;
+
+    @Column(name = "reponse_admin", columnDefinition = "TEXT")
+    private String reponseAdmin;
+
+    @Column(name = "date_creation", updatable = false)
+    @CreationTimestamp
+    private LocalDateTime dateCreation;
+
+    @Column(name = "date_reponse")
+    private LocalDateTime dateReponse;
 }
 === ./spring-backend/src/main/java/com/unity6/vita/entity/Reponse.java ===
 package com.unity6.vita.entity;
