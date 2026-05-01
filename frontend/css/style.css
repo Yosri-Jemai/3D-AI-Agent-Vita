@@ -262,6 +262,31 @@
    @keyframes wave{0%,100%{transform:scaleY(0.5)}50%{transform:scaleY(1)}}
    .recording-active .wave-bar{opacity:1}
    
+   /* Stop button */
+   .stop-btn{
+     width:100%;
+     padding:11px;
+     border-radius:10px;
+     background:linear-gradient(135deg,#ef4444,#dc2626);
+     border:none;
+     color:white;
+     font-family:var(--sans);
+     font-size:12px;
+     font-weight:500;
+     cursor:pointer;
+     transition:all 0.2s;
+     display:flex;
+     align-items:center;
+     justify-content:center;
+     gap:8px;
+     margin-top:8px;
+   }
+   .stop-btn:hover:not(:disabled){
+     background:linear-gradient(135deg,#dc2626,#b91c1c);
+     transform:translateY(-1px)
+   }
+   .stop-btn:disabled{opacity:0.5;cursor:not-allowed}
+   
    /* Stats mini */
    .stats-mini{
      background:var(--surface2);

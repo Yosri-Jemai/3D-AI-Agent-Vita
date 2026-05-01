@@ -12,6 +12,138 @@ let currentProfileId = null;
 const MODE = 'commercial';
 let visitStarted = false;
 
+const PRODUCT_MENTIONS_STORAGE_KEY = 'vita_product_mentions';
+
+// ── Product Tracking for Dashboard ───────────────────────────
+let productListCache = []; // Cache de la liste des produits depuis l'API
+
+// Récupérer la liste des produits depuis l'API
+async function loadProductListForTracking() {
+    try {
+        const res = await fetch(`${API}/products`);
+        const data = await res.json();
+        productListCache = data.products || [];
+        console.log('[Product Tracking] Loaded products from API:', productListCache);
+    } catch (e) {
+        console.warn('[Product Tracking] Failed to load products from API, using fallback list');
+        // Fallback: liste de base si l'API n'est pas disponible
+        productListCache = [
+            "Pollen d'abeilles",
+            "LV Hemostop",
+            "Dermalo",
+            "Efidel",
+            "Gynel",
+            "Bébégold",
+            "Vitamine C",
+            "Vitamine D",
+            "Bactol",
+            "Hydra",
+            "Herbalgix",
+            "Sebocontrol",
+            "Phytovit",
+            "Vitamix"
+        ];
+    }
+}
+
+// Fonction pour tracker les produits mentionnés
+function trackProductMention(productName) {
+  if (!productName) return;
+  
+  try {
+    const raw = localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY);
+    const mentions = raw ? JSON.parse(raw) : {};
+    
+    const normalized = productName.trim().toLowerCase();
+    mentions[normalized] = (mentions[normalized] || 0) + 1;
+    
+    localStorage.setItem(PRODUCT_MENTIONS_STORAGE_KEY, JSON.stringify(mentions));
+    console.log('[Product Tracking] Product tracked:', productName, 'Total mentions:', mentions[normalized]);
+  } catch (e) {
+    console.error('[Product Tracking] Error:', e);
+  }
+}
+
+// Fonction pour extraire les produits du texte
+function extractProductsFromText(text) {
+    if (!text) return [];
+    
+    const textLower = text.toLowerCase();
+    const products = [];
+    
+    // Utiliser la liste dynamique des produits
+    const productList = productListCache.length > 0 ? productListCache : [
+        "Pollen d'abeilles",
+        "LV Hemostop",
+        "Dermalo",
+        "Efidel",
+        "Gynel",
+        "Bébégold"
+    ];
+    
+    // Vérifier chaque produit de la liste
+    productList.forEach(productName => {
+        if (!productName) return;
+        const productLower = productName.toLowerCase();
+        // Créer un pattern qui détecte le nom exact ou partiel du produit
+        const pattern = new RegExp(productLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        if (pattern.test(textLower)) {
+            products.push(productName);
+        }
+    });
+    
+    // Détection supplémentaire pour les variantes
+    if (/pollen/i.test(textLower) && !products.includes("Pollen d'abeilles")) {
+        products.push("Pollen d'abeilles");
+    }
+    if (/hemostop/i.test(textLower) && !products.some(p => p.toLowerCase().includes('hemostop'))) {
+        products.push("LV Hemostop");
+    }
+    if (/dermalo/i.test(textLower) && !products.some(p => p.toLowerCase().includes('dermalo'))) {
+        products.push("Dermalo");
+    }
+    if (/gynel/i.test(textLower) && !products.some(p => p.toLowerCase().includes('gynel'))) {
+        products.push("Gynel");
+    }
+    if (/efidel/i.test(textLower) && !products.some(p => p.toLowerCase().includes('efidel'))) {
+        products.push("Efidel");
+    }
+    if (/b[eé]b[eé]gold|bebe gold/i.test(textLower) && !products.some(p => p.toLowerCase().includes('bebegold'))) {
+        products.push("Bébégold");
+    }
+    
+    return [...new Set(products)]; // Supprimer les doublons
+}
+
+// Fonction pour tracker tous les produits mentionnés dans le texte
+function trackProductMentions(text) {
+    console.log('[Product Tracking] Processing text:', text);
+    const products = extractProductsFromText(text);
+    console.log('[Product Tracking] Extracted products:', products);
+    
+    if (products.length === 0) {
+        console.log('[Product Tracking] No products found');
+        return;
+    }
+    
+    try {
+        const stored = localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY);
+        const mentions = stored ? JSON.parse(stored) : {};
+        console.log('[Product Tracking] Current mentions before update:', mentions);
+        
+        products.forEach(product => {
+            mentions[product] = (mentions[product] || 0) + 1;
+            console.log('[Product Tracking] Incremented product:', product, 'New count:', mentions[product]);
+        });
+        
+        localStorage.setItem(PRODUCT_MENTIONS_STORAGE_KEY, JSON.stringify(mentions));
+        console.log('[Product Tracking] Updated mentions:', mentions);
+        console.log('[Product Tracking] localStorage saved:', localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY));
+    } catch (e) {
+        console.error('[Product Tracking] Error:', e);
+    }
+}
+
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
   setStatus('loading', 'Loading avatar…');
@@ -28,6 +160,9 @@ async function init() {
   } catch {
     document.getElementById('chunk-count').textContent = 'offline';
   }
+
+  // Charger la liste des produits pour le tracking
+  await loadProductListForTracking();
 
   await window.initAvatar();
 }
@@ -46,6 +181,9 @@ const originalStartVisit = window.startVisit;
 // Create new startVisit function
 window.startVisit = async function() {
     if (visitStarted) return;
+    
+    // Marquer comme démarré immédiatement pour éviter les doubles appels
+    visitStarted = true;
     
     // Get profile ID from authenticated user
     try {
@@ -123,7 +261,8 @@ async function loadGreeting() {
   } catch (err) {
     console.error('Error loading greeting:', err);
     removeTyping();
-    const fallback = "Bonjour Docteur, je suis Vita de VITAL SA. Je suis votre déléguée pharmaceutique. Je suis prête à discuter de nos produits avec vous. Quel produit souhaitez-vous aborder aujourd'hui ?";
+    // Message personnalisé selon le mode commercial
+    const fallback = "Bonjour délégué(e) commercial(e), comment puis-je vous aider ?";
     addAIBubble(null);
     const textSpan = document.getElementById('streaming-text');
     if (textSpan) textSpan.textContent = fallback;
@@ -427,6 +566,9 @@ async function sendAudio() {
         sources: sources,
         timestamp: new Date().toISOString()
       });
+      
+      // Tracker les produits mentionnés dans la réponse de l'avatar
+      trackProductMentions(fullText);
     }
 
     if (msgEl) {

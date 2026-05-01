@@ -156,10 +156,33 @@ function setMode(mode) {
     : 'Mode: Commercial delegate — sales & persuasion training');
   if (selectedProduct) renderChips(buildDynamicChips(selectedProduct, selectedProductData));
   document.getElementById('question-input').placeholder = 'Select a product to begin…';
-  streamModeIntro(mode);
+  
+  // Message personnalisé selon le mode choisi
+  const customGreeting = mode === 'medical' 
+    ? "Bonjour délégué(e) médicale, comment puis-je vous aider ?"
+    : "Bonjour délégué(e) commercial(e), comment puis-je vous aider ?";
+  
+  // Afficher le message personnalisé
+  showCustomGreeting(customGreeting);
+}
+
+// Afficher un message de greeting personnalisé
+async function showCustomGreeting(text) {
+  hideEmpty();
+  const msgEl = addAIBubble(null);
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble) {
+    bubble.innerHTML = `<p>${esc(text)}</p>`;
+    bubble.removeAttribute('id');
+  }
+  setStatus('speaking', 'Speaking…');
+  await window.speakWithAvatar(text);
+  setStatus('', 'Ready');
 }
 
 // ── Produits ──────────────────────────────────────────────────
+const PRODUCT_MENTIONS_STORAGE_KEY = "vita_product_mentions";
+
 async function loadProducts() {
   try {
     const res = await fetch(`${API}/products`, {signal:AbortSignal.timeout(5000)});
@@ -170,6 +193,24 @@ async function loadProducts() {
       "DermaGyn","Uniderme peau sensible","Mincivit Detox"].sort();
   }
   renderProductList(allProducts);
+}
+
+// Fonction pour tracker les produits mentionnés
+function trackProductMention(productName) {
+  if (!productName) return;
+  
+  try {
+    const raw = localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY);
+    const mentions = raw ? JSON.parse(raw) : {};
+    
+    const normalized = productName.trim().toLowerCase();
+    mentions[normalized] = (mentions[normalized] || 0) + 1;
+    
+    localStorage.setItem(PRODUCT_MENTIONS_STORAGE_KEY, JSON.stringify(mentions));
+    console.log('[Product Tracking] Product tracked:', productName, 'Total mentions:', mentions[normalized]);
+  } catch (e) {
+    console.error('[Product Tracking] Error:', e);
+  }
 }
 
 async function fetchProductData(name) {
@@ -236,12 +277,14 @@ async function selectProduct(name) {
   const badge = document.getElementById('product-badge');
   badge.className = 'active-product-badge';
   badge.innerHTML = `<span>◈</span><span class="badge-name">${esc(name)}</span><span style="color:var(--text-dim);font-size:10px;flex-shrink:0">change</span>`;
-  document.getElementById('context-bar').classList.remove('hidden');
   document.getElementById('ctx-product-name').textContent = name;
   document.getElementById('question-input').placeholder = `Ask about ${name}…`;
   hideEmpty(); addSystemMsg(`Now asking about: ${name}`);
   const pd = await fetchProductData(name); selectedProductData = pd;
   renderChips(buildDynamicChips(name, pd));
+  
+  // Tracker le produit sélectionné
+  trackProductMention(name);
 }
 
 function askQuick(btn) {
