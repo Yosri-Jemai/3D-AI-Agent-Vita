@@ -93,6 +93,8 @@
         <nav class="dashboard-nav">
             <button class="view-btn active" data-view="statsView">Formation & Adoption</button>
             <button class="view-btn" data-view="commercialView">Tracking Commercial</button>
+            <!-- ★ BOUTON QUESTIONS DIFFICILES ★ -->
+            <button class="view-btn" data-view="questionsView">📋 Questions Difficiles</button>
         </nav>
 
         <section id="statsView" class="view active">
@@ -129,14 +131,14 @@
                 <div class="table-wrap">
                     <table>
                         <thead>
-                        <tr>
-                            <th>Session</th>
-                            <th>Delegue</th>
-                            <th>Mode</th>
-                            <th>Duree</th>
-                            <th>Debut</th>
-                            <th>Fin</th>
-                        </tr>
+                            <tr>
+                                <th>Session</th>
+                                <th>Delegue</th>
+                                <th>Mode</th>
+                                <th>Duree</th>
+                                <th>Debut</th>
+                                <th>Fin</th>
+                            </tr>
                         </thead>
                         <tbody id="latestSessionsBody"></tbody>
                     </table>
@@ -209,12 +211,12 @@
                 <div class="table-wrap">
                     <table>
                         <thead>
-                        <tr>
-                            <th>Delegue</th>
-                            <th>Sessions</th>
-                            <th>Score</th>
-                            <th>Niveau</th>
-                        </tr>
+                            <tr>
+                                <th>Delegue</th>
+                                <th>Sessions</th>
+                                <th>Score</th>
+                                <th>Niveau</th>
+                            </tr>
                         </thead>
                         <tbody id="delegatesPerformanceBody"></tbody>
                     </table>
@@ -225,7 +227,39 @@
                 <h3>Insights commerciaux prioritaires</h3>
                 <div id="commercialInsights" class="insights-grid"></div>
             </article>
+        </section>
 
+        <!-- ★★★ SECTION QUESTIONS DIFFICILES ★★★ -->
+        <section id="questionsView" class="view">
+            <div class="table-card glass-card" style="margin-bottom: 20px;">
+                <div class="card-head">
+                    <h3>📌 Questions sans réponse de l'agent</h3>
+                    <span class="card-tag">En attente de modération</span>
+                </div>
+                <p class="muted" style="margin-bottom: 16px;">Ces questions n'ont pas pu être traitées par l'agent automatiquement. Répondez-y pour enrichir la base de connaissances.</p>
+            </div>
+            
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">ID</th>
+                            <th style="width: 60%;">Question</th>
+                            <th style="width: 100px;">Date</th>
+                            <th style="width: 100px;">Statut</th>
+                            <th style="width: 250px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="questionsBody">
+                        <tr>
+                            <td colspan="5" style="text-align: center; padding: 40px;">
+                                <div class="spinner" style="margin: 0 auto;"></div>
+                                <p style="margin-top: 12px; color: #666;">Chargement des questions...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </section>
     </section>
 </main>

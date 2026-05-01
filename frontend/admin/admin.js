@@ -1,4 +1,5 @@
 const API_BASE_URL = "http://localhost:8080/api/v1";
+const FASTAPI_URL = "http://localhost:8000";
 const PRODUCTS_API_URL = "http://localhost:8000/products";
 const PRODUCT_MENTIONS_STORAGE_KEY = "vita_product_mentions";
 const EVALUATIONS_STORAGE_KEY = "vita_evaluations_count";
@@ -145,44 +146,26 @@ function renderKpiStrip(dashboard, commercial) {
     const kpiStrip = document.getElementById("kpiStrip");
     if (!kpiStrip) return;
     
-    // Calculer le taux de progression alternative si l'API ne fournit pas la valeur
     let completion = Number(dashboard.completionRate || 0);
     
-    // Si completionRate est 0, utiliser une logique alternative basée sur les sessions disponibles
     if (completion === 0) {
         const totalSessions = (dashboard.totalMedicalSessions || 0) + (dashboard.totalCommercialSessions || 0);
         if (totalSessions > 0) {
-            // Estimer le taux de progression basé sur les sessions totales
-            completion = Math.min(Math.round(totalSessions * 10), 100); // Logique simple : 10% par session, max 100%
+            completion = Math.min(Math.round(totalSessions * 10), 100);
         }
     }
     
-    // Debug logs pour le taux de progression
-    console.log('[Dashboard Debug] dashboard.completionRate:', dashboard.completionRate);
-    console.log('[Dashboard Debug] calculated completion:', completion);
-    console.log('[Dashboard Debug] total medical sessions:', dashboard.totalMedicalSessions);
-    console.log('[Dashboard Debug] total commercial sessions:', dashboard.totalCommercialSessions);
     const engagement = Number(commercial.averageEngagementScore || 0);
     const activeCommercial = Number(commercial.delegatesActiveInCommercialMode || 0);
     const totalDelegates = Number(dashboard.totalDelegates || 0);
     
-    // Debug logs pour diagnostiquer les problèmes
-    console.log('[Dashboard Debug] activeCommercial:', activeCommercial);
-    console.log('[Dashboard Debug] totalDelegates:', totalDelegates);
-    
-    // Corriger le calcul de l'adoption pour gérer les données incohérentes
     let adoption = 0;
     if (totalDelegates > 0) {
-        // Si activeCommercial > totalDelegates, utiliser totalDelegates comme base
         const effectiveActive = Math.min(activeCommercial, totalDelegates);
         adoption = Math.round((effectiveActive / totalDelegates) * 100);
-        console.log('[Dashboard Debug] effectiveActive (corrected):', effectiveActive);
     } else if (activeCommercial > 0) {
-        // Si totalDelegates = 0 mais activeCommercial > 0, supposer qu'il y a au least activeCommercial délégués
-        adoption = 100; // Tous les délégués actifs sont en mode commercial
-        console.log('[Dashboard Debug] using fallback: totalDelegates was 0 but activeCommercial > 0');
+        adoption = 100;
     }
-    console.log('[Dashboard Debug] calculated adoption:', adoption);
 
     const entries = [
         ["Taux de progression", `${completion}%`],
@@ -258,7 +241,6 @@ function normalizeTopProducts(commercial = {}, latestSessions = []) {
 
     if (normalized.length) return normalized;
 
-    // Fallback robuste: recherche recursive de paires produit/mentions
     const deepPairs = [];
     function visit(node) {
         if (!node) return;
@@ -596,11 +578,6 @@ function drawTrendingProductsChart(commercial = {}) {
             datasets: [{
                 label: "Popularité",
                 data: [pollenMentions, hemostopMentions, otherTrending],
-                backgroundColor: [
-                    "linear-gradient(135deg, #fbbf24, #f59e0b)",
-                    "linear-gradient(135deg, #3b82f6, #2563eb)",
-                    "#9ca3af"
-                ],
                 backgroundColor: ["#fbbf24", "#3b82f6", "#9ca3af"],
                 borderRadius: 10,
                 borderSkipped: false,
@@ -643,21 +620,16 @@ function drawEngagementTrendChart(commercial = {}, rows = []) {
     if (engagementTrendChart) engagementTrendChart.destroy();
 
     const days = ["J-6", "J-5", "J-4", "J-3", "J-2", "J-1", "Aujourd'hui"];
-    const baseEngagement = Number(commercial.averageEngagementScore || 0);
     
-    // Calculer les scores réels des délégués pour la tendance
     let data;
     if (rows && rows.length > 0) {
-        // Utiliser les scores réels des délégués
         const avgScore = rows.reduce((sum, r) => sum + (r.score || 0), 0) / rows.length;
         data = days.map((_, index) => {
-            // Variation réaliste basée sur l'amélioration progressive
             const progress = index / 6;
             const variation = (Math.random() - 0.5) * 10;
             return Math.max(0, Math.min(100, Math.round(avgScore * (0.7 + progress * 0.3) + variation)));
         });
     } else {
-        // Si pas de données, utiliser une ligne plate à 0
         data = days.map(() => 0);
     }
 
@@ -768,7 +740,6 @@ function drawEngagementDistributionChart(commercial = {}, rows = []) {
 
     const ranges = ["0-20", "21-40", "41-60", "61-80", "81-100"];
     
-    // Calculer la distribution réelle basée sur les scores des délégués
     const distribution = ranges.map(() => 0);
     
     if (rows && rows.length > 0) {
@@ -781,7 +752,6 @@ function drawEngagementDistributionChart(commercial = {}, rows = []) {
             else if (score <= 100) distribution[4]++;
         });
     } else {
-        // Si pas de données, afficher 0 partout
         distribution.fill(0);
     }
 
@@ -822,7 +792,7 @@ function drawEngagementDistributionChart(commercial = {}, rows = []) {
             scales: {
                 y: {
                     beginAtZero: true,
-                    max: Math.max(...distribution, 3) + 1, // Ajuster selon le nombre réel
+                    max: Math.max(...distribution, 3) + 1,
                     ticks: { stepSize: 1, precision: 0 },
                     grid: { color: "rgba(0,0,0,0.05)" },
                     title: { display: true, text: "Délégués" }
@@ -874,6 +844,171 @@ function renderCommercialInsights(rows = [], topProducts = [], commercial = {}) 
         </article>
     `).join("");
 }
+
+// ====================== FONCTIONS QUESTIONS DIFFICILES ======================
+
+async function loadQuestionsDifficiles() {
+    const tbody = document.getElementById("questionsBody");
+    if (!tbody) return;
+
+    try {
+        const res = await fetch(`${FASTAPI_URL}/questions-difficiles/all`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderQuestions(data.questions || []);
+    } catch (e) {
+        console.error("Erreur chargement questions:", e);
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:#b91c1c">
+            ❌ Erreur de chargement : ${e.message}
+        </td></tr>`;
+    }
+}
+
+function renderQuestions(questions) {
+    const body = document.getElementById("questionsBody");
+    if (!body) return;
+
+    if (!questions.length) {
+        body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:#888">
+            ✨ Aucune question difficile. L'agent a répondu à toutes les demandes.
+        </td></tr>`;
+        return;
+    }
+
+    body.innerHTML = questions.map(q => {
+        const hasReponse = q.reponse_admin && q.reponse_admin.trim() !== "";
+        return `
+        <tr id="question-row-${q.id}">
+            <td>${q.id}</td>
+            <td style="max-width:450px;word-break:break-word">${escapeHtml(q.question)}</td>
+            <td>${formatDateShort(q.date_creation)}</td>
+            <td>
+                ${hasReponse 
+                    ? `<span style="color:#16a34a;font-weight:600">✓ Répondu</span>` 
+                    : `<span style="color:#dc2626;font-weight:600">⏳ En attente</span>`}
+            </td>
+            <td style="min-width:260px">
+                ${!hasReponse ? `
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                        <textarea 
+                            id="reponse-input-${q.id}"
+                            placeholder="Tapez votre réponse ici..."
+                            style="width:100%;padding:8px;border:1px solid #cbd5e1;
+                                   border-radius:8px;font-size:13px;resize:vertical;
+                                   min-height:70px;font-family:inherit"
+                        ></textarea>
+                        <button 
+                            onclick="soumettreReponse(${q.id})"
+                            style="padding:7px 14px;background:#16a34a;color:#fff;
+                                   border:none;border-radius:8px;cursor:pointer;
+                                   font-size:12px;font-weight:600;transition:background .2s"
+                            onmouseover="this.style.background='#15803d'"
+                            onmouseout="this.style.background='#16a34a'">
+                            ✓ Valider la réponse
+                        </button>
+                    </div>
+                ` : `
+                    <div style="font-size:12px;color:#374151;background:#f0fdf4;
+                                padding:8px;border-radius:6px;border:1px solid #bbf7d0">
+                        ${escapeHtml(q.reponse_admin)}
+                    </div>
+                `}
+            </td>
+        </tr>
+    `}).join("");
+}
+
+async function soumettreReponse(id) {
+    const textarea = document.getElementById(`reponse-input-${id}`);
+    if (!textarea) return;
+    
+    const reponse = textarea.value.trim();
+    if (!reponse) {
+        textarea.style.border = "1px solid #ef4444";
+        textarea.placeholder = "⚠️ La réponse ne peut pas être vide";
+        return;
+    }
+
+    try {
+        const res = await fetch(`${FASTAPI_URL}/questions-difficiles/${id}/repondre`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reponse })
+        });
+        
+        if (res.ok) {
+            const row = document.getElementById(`question-row-${id}`);
+            if (row) {
+                const statusCell = row.children[3];
+                const actionCell = row.children[4];
+                statusCell.innerHTML = `<span style="color:#16a34a;font-weight:600">✓ Répondu</span>`;
+                actionCell.innerHTML = `
+                    <div style="font-size:12px;color:#374151;background:#f0fdf4;
+                                padding:8px;border-radius:6px;border:1px solid #bbf7d0">
+                        ${escapeHtml(reponse)}
+                    </div>`;
+                
+                // Afficher un toast de succès
+                showToastMessage("✅ Réponse enregistrée avec succès !");
+            }
+        } else {
+            const errorData = await res.json().catch(() => ({}));
+            showToastMessage(`❌ Erreur: ${errorData.detail || "Erreur inconnue"}`);
+        }
+    } catch (e) {
+        console.error("Erreur réseau:", e);
+        showToastMessage(`❌ Erreur réseau: ${e.message}`);
+    }
+}
+
+function formatDateShort(dateStr) {
+    if (!dateStr) return "-";
+    try {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString("fr-FR", { 
+            day: "2-digit", 
+            month: "short", 
+            hour: "2-digit", 
+            minute: "2-digit" 
+        });
+    } catch {
+        return dateStr;
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function showToastMessage(message) {
+    // Créer un toast temporaire
+    const toast = document.createElement("div");
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #1e7a2e;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        animation: fadeInUp 0.3s ease;
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// ====================================================================
 
 async function loadDashboardAndCommercial() {
     const [dashboard, commercial, profilesMap] = await Promise.all([
@@ -980,6 +1115,11 @@ document.querySelectorAll(".view-btn").forEach((btn) => {
         document.querySelectorAll(".view").forEach((el) => el.classList.remove("active"));
         btn.classList.add("active");
         document.getElementById(btn.dataset.view).classList.add("active");
+        
+        // Recharger les questions difficiles si c'est l'onglet correspondant
+        if (btn.dataset.view === "questionsView") {
+            loadQuestionsDifficiles();
+        }
     });
 });
 
@@ -1026,13 +1166,11 @@ document.getElementById("adminLoginForm").addEventListener("submit", async (even
 
 document.getElementById("logoutBtn").addEventListener("click", logoutAdmin);
 
-// Écouter les mises à jour de tracking des produits
 window.addEventListener('productMentionsUpdated', async function(event) {
     console.log('[Dashboard] Product mentions updated, refreshing...');
     if (document.getElementById('dashboardSection').classList.contains('hidden')) return;
-    
     try {
-        await loadDashboard();
+        await loadDashboardAndCommercial();
     } catch (error) {
         console.error('[Dashboard] Error refreshing after product update:', error);
     }
@@ -1043,6 +1181,11 @@ if (refreshBtn) {
         setLoadingButton(refreshBtn, true);
         try {
             await loadDashboardAndCommercial();
+            // Recharger aussi les questions difficiles si l'onglet est actif
+            const activeView = document.querySelector(".view-btn.active");
+            if (activeView && activeView.dataset.view === "questionsView") {
+                await loadQuestionsDifficiles();
+            }
         } catch (error) {
             setMessage(error.message, "error");
         } finally {
