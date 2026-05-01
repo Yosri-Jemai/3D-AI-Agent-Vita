@@ -20,110 +20,106 @@ let allProducts = [];
 const $ = id => document.getElementById(id);
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TYPING ENGINE — moteur d'animation de texte unifié
+// TYPING ENGINE — factory d'instances isolées
+// Chaque stream crée sa propre instance : zéro queue partagée, zéro interférence
 // ══════════════════════════════════════════════════════════════════════════════
-const TypingEngine = {
-  queue:   "",
-  timer:   null,
-  element: null,
-  cursor:  null,
-  onDone:  null,
-  _sealed: false,   // true quand finish() a été appelé
 
-  // Démarre l'animation sur un élément DOM.
-  // cursor  : span.typing-cursor (optionnel)
-  // onDone  : callback appelé quand tout est vidé + finish() reçu
-  start(element, cursor, onDone) {
-    this.element = element;
-    this.cursor  = cursor  || null;
-    this.onDone  = onDone  || null;
-    this._sealed = false;
-    if (this.cursor) this.cursor.style.display = "inline-block";
-    if (!this.timer) this._tick();
-  },
+function createTypingInstance() {
+  const inst = {
+    queue:   "",
+    timer:   null,
+    element: null,
+    cursor:  null,
+    onDone:  null,
+    _sealed: false,
 
-  // Ajoute du texte à la file d'attente (appelé à chaque token SSE)
-  push(text) {
-    this.queue += text;
-  },
+    start(element, cursor, onDone) {
+      this.element = element;
+      this.cursor  = cursor  || null;
+      this.onDone  = onDone  || null;
+      this._sealed = false;
+      if (this.cursor) this.cursor.style.display = "inline-block";
+      if (!this.timer) this._tick();
+    },
 
-  // Signale que le stream est terminé — vide proprement le reste
-  finish() {
-    this._sealed = true;
-  },
+    push(text) {
+      this.queue += text;
+    },
 
-  // Réinitialisation complète (changement de question, etc.)
-  reset() {
-    clearTimeout(this.timer);
-    this.timer   = null;
-    this.queue   = "";
-    this.element = null;
-    this._sealed = false;
-    if (this.cursor) this.cursor.style.display = "none";
-    this.cursor  = null;
-    this.onDone  = null;
-  },
+    finish() {
+      this._sealed = true;
+    },
 
-  _tick() {
-    this.timer = null;
-    if (!this.element) return;
+    reset() {
+      clearTimeout(this.timer);
+      this.timer   = null;
+      this.queue   = "";
+      this.element = null;
+      this._sealed = false;
+      if (this.cursor) this.cursor.style.display = "none";
+      this.cursor  = null;
+      this.onDone  = null;
+    },
 
-    // File vide
-    if (this.queue.length === 0) {
-      if (this._sealed) {
-        // Stream terminé et tout vidé → fin
-        if (this.cursor) this.cursor.style.display = "none";
-        if (this.onDone) this.onDone();
-        this.reset();
+    _tick() {
+      this.timer = null;
+      if (!this.element) return;
+
+      if (this.queue.length === 0) {
+        if (this._sealed) {
+          if (this.cursor) this.cursor.style.display = "none";
+          if (this.onDone) this.onDone();
+          this.reset();
+          return;
+        }
+        this.timer = setTimeout(() => this._tick(), 40);
         return;
       }
-      // On attend le prochain token
-      this.timer = setTimeout(() => this._tick(), 40);
-      return;
-    }
 
-    // Burst naturel : 1 char, parfois 2
-    const burst = Math.min(this.queue.length, Math.random() < 0.25 ? 2 : 1);
-    this.element.textContent += this.queue.slice(0, burst);
-    this.queue = this.queue.slice(burst);
+      const burst = Math.min(this.queue.length, Math.random() < 0.25 ? 2 : 1);
+      this.element.textContent += this.queue.slice(0, burst);
+      this.queue = this.queue.slice(burst);
 
-    // Délai variable selon ponctuation → effet humain
-    const last = this.element.textContent.slice(-1);
-    let delay = 18 + Math.random() * 16;            // 18–34 ms base
-    if (last === "," || last === ";") delay = 95;
-    else if ("·.!?".includes(last))  delay = 180;
-    else if (last === "\n")           delay = 120;
-    else if (last === " ")            delay = 28;
+      const last = this.element.textContent.slice(-1);
+      let delay = 18 + Math.random() * 16;
+      if (last === "," || last === ";") delay = 95;
+      else if ("·.!?".includes(last))  delay = 180;
+      else if (last === "\n")           delay = 120;
+      else if (last === " ")            delay = 28;
 
-    this.timer = setTimeout(() => this._tick(), delay);
-  },
-};
+      this.timer = setTimeout(() => this._tick(), delay);
+    },
+  };
+  return inst;
+}
+
+// Instances actives — null = inactif
+let _feedbackTyping = null;
+let _finalTyping    = null;
 
 
 // ── TTS / Avatar ──────────────────────────────────────────────────────────
 function speak(text) {
-  // Bulle de dialogue
   const el = $("bubble-text");
   if (el) {
     el.style.opacity = "0";
     setTimeout(() => { el.textContent = text; el.style.opacity = "1"; }, 150);
   }
-  // TTS + lipsync via avatar.js
   if (typeof window.speakWithAvatar === "function" && text?.trim()) {
     window.speakWithAvatar(text, "fr");
   }
 }
-// Lit à voix haute le bilan final une fois l'animation terminée
+
 function speakFinalFeedback(text) {
   if (typeof window.speakWithAvatar === "function" && text?.trim()) {
     window.speakWithAvatar(text, "fr");
   }
 }
+
 function stopSpeaking() {
   if (window._head && typeof window._head.stopSpeaking === "function") {
     window._head.stopSpeaking();
   }
-  // Fallback : couper l'AudioContext
   if (window._head?.audioCtx) {
     try { window._head.audioCtx.suspend(); window._head.audioCtx.resume(); } catch(e) {}
   }
@@ -281,9 +277,8 @@ document.querySelectorAll(".qc-pill").forEach(btn => {
 $("start-btn").addEventListener("click", startQuiz);
 
 async function startQuiz() {
+  stopSpeaking();
 
-  stopSpeaking(); 
-  
   Object.assign(state, {
     current: 0, score: 0, answered: false, history: [],
     questions: [], streamDone: false, generating: true,
@@ -393,18 +388,18 @@ function handleSSEEvent(event) {
 
 function updateLoadBar(loaded, total) {
   const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-  if ($("load-fill"))  $("load-fill").style.width        = `${pct}%`;
-  if ($("load-label")) $("load-label").textContent       = `Questions prêtes : ${loaded} / ${total}`;
+  if ($("load-fill"))  $("load-fill").style.width  = `${pct}%`;
+  if ($("load-label")) $("load-label").textContent = `Questions prêtes : ${loaded} / ${total}`;
 }
 
 // ── Affichage d'une question ──────────────────────────────────────────────
 function loadQuestion(idx) {
   if (idx >= state.questions.length) return;
 
-  stopSpeaking();          // ← AJOUT : arrête la parole en cours
+  stopSpeaking();
 
-
-  TypingEngine.reset();
+  // Stoppe le feedback de question en cours si on change de question
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
 
   const q = state.questions[idx];
   state.current  = idx;
@@ -456,7 +451,6 @@ function loadQuestion(idx) {
       if (i === q.correct_index) btn.classList.add("correct");
     });
 
-    // Retrouver l'index de la réponse choisie
     const chosenIdx = q.choices.indexOf(saved.chosen);
     if (chosenIdx !== -1 && chosenIdx !== q.correct_index) {
       buttons[chosenIdx].classList.add("wrong");
@@ -495,7 +489,7 @@ function updateHeader() {
 
 function updateDonut() {
   const total = state.current;
-  const pct   = total > 60 ? Math.round((state.score / total) * 100) : 0;
+  const pct   = total > 0 ? Math.round((state.score / total) * 100) : 0;
   const arc   = $("donut-arc");
   const donutPct = $("donut-pct");
   if (arc) {
@@ -522,7 +516,6 @@ function handleAnswer(chosenIdx, q) {
     if (i === chosenIdx && !isOk)  btn.classList.add("wrong");
   });
 
-  // Mise à jour ou ajout dans l'historique à l'index courant
   state.history[state.current] = {
     question:    q.question,
     product:     q.product || "—",
@@ -560,9 +553,7 @@ $("next-btn").addEventListener("click", goToNext);
 $("prev-btn") && $("prev-btn").addEventListener("click", goToPrev);
 
 function goToNext() {
-
-  stopSpeaking(); 
-
+  stopSpeaking();
   const nextIdx = state.current + 1;
   if (nextIdx < state.questions.length) { loadQuestion(nextIdx); return; }
   if (state.streamDone)                 { showResults(); return; }
@@ -584,25 +575,24 @@ function goToNext() {
 }
 
 function goToPrev() {
-
   stopSpeaking();
-
   const prevIdx = state.current - 1;
   if (prevIdx < 0) return;
 
-  // Si la question courante était répondue, déduire du score avant de partir
   const currentSaved = state.history[state.current];
   if (currentSaved && currentSaved.ok) {
     state.score = Math.max(0, state.score - 1);
   }
-  // Effacer la réponse courante pour permettre de re-répondre
   delete state.history[state.current];
-
   loadQuestion(prevIdx);
 }
-// ── Résultats ─────────────────────────────────────────────────────────────
+
 // ── Résultats ─────────────────────────────────────────────────────────────
 function showResults() {
+  // ── CORRECTION CLÉ : stoppe immédiatement le feedback de question ──────
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
+  // ── Stoppe aussi le bilan si relance rapide ────────────────────────────
+  if (_finalTyping) { _finalTyping.reset(); _finalTyping = null; }
 
   stopSpeaking();
   moveAvatarToResults();
@@ -655,12 +645,11 @@ function showResults() {
 
   const certSection = $("certificate-section");
   if (certSection) {
-    certSection.style.display = pct >= 0 ? "block" : "none";
+    certSection.style.display = pct >= 60 ? "block" : "none";
   }
 
-  // ====================== CORRECTION IMPORTANTE ======================
   if (total > 0) {
-    setTimeout(() => streamFinalFeedback(), 300);   // lance le bilan
+    setTimeout(() => streamFinalFeedback(), 300);
   } else {
     setTimeout(saveQuizResult, 500);
   }
@@ -681,7 +670,7 @@ function returnToSetup(msg) {
 }
 
 $("restart-btn").addEventListener("click", () => {
-  stopSpeaking();  
+  stopSpeaking();
   $("results-screen").style.display = "none";
   $("setup-screen").style.display   = "flex";
   moveAvatarToSetup();
@@ -693,24 +682,44 @@ function escHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// ── Feedback typing sur mauvaise réponse ─────────────────────────────────
+async function streamQuestionFeedback(q, chosenIdx) {
+  const box    = $("feedback-typing-box");
+  const textEl = $("feedback-typing-text");
+  const cursor = $("typing-cursor");
+  if (!box || !textEl) return;
 
-async function _streamIntoTypingEngine(element, cursor, fetchFn, onError) {
-  // Réinitialise le moteur et démarre sur cet élément
-  TypingEngine.reset();
-  element.textContent = "";
-  TypingEngine.start(element, cursor);
+  // Stoppe et remplace toute instance feedback précédente
+  if (_feedbackTyping) { _feedbackTyping.reset(); }
+  _feedbackTyping = createTypingInstance();
+
+  box.style.display  = "block";
+  textEl.textContent = "";
+  _feedbackTyping.start(textEl, cursor);
+
+  // Capture locale : si l'instance est remplacée pendant le fetch, on abandonne
+  const inst = _feedbackTyping;
 
   let res;
   try {
-    res = await fetchFn();
+    res = await fetch(`${API_BASE}/quiz/feedback/stream`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question:       q.question,
+        correct_answer: q.choices[q.correct_index],
+        chosen_answer:  q.choices[chosenIdx],
+        product:        q.product || "",
+        explanation:    q.explanation || "",
+      }),
+    });
   } catch (err) {
-    console.warn("[Quiz] fetch error:", err);
-    if (onError) onError();
+    if (inst === _feedbackTyping) { box.style.display = "none"; _feedbackTyping = null; }
     return;
   }
 
   if (!res.ok) {
-    if (onError) onError();
+    if (inst === _feedbackTyping) { box.style.display = "none"; _feedbackTyping = null; }
     return;
   }
 
@@ -722,64 +731,35 @@ async function _streamIntoTypingEngine(element, cursor, fetchFn, onError) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      // Instance obsolète (question changée ou résultats affichés) → on coupe
+      if (inst !== _feedbackTyping) { reader.cancel(); return; }
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      const lines = buffer.split("\n"); buffer = lines.pop() || "";
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
         try {
           const ev = JSON.parse(line.slice(6));
-          if (ev.type === "token") TypingEngine.push(ev.content);
-          if (ev.type === "done")  TypingEngine.finish();
+          if (ev.type === "token") inst.push(ev.content);
+          if (ev.type === "done")  inst.finish();
         } catch (_) {}
       }
     }
-    // Si le stream se ferme sans event "done" explicite
-    TypingEngine.finish();
-  } catch (err) {
-    console.warn("[Quiz] stream read error:", err);
-    TypingEngine.finish();
+    inst.finish();
+  } catch {
+    inst.finish();
   }
 }
 
-// ── Feedback typing sur mauvaise réponse ─────────────────────────────────
-async function streamQuestionFeedback(q, chosenIdx) {
-  const box    = $("feedback-typing-box");
-  const textEl = $("feedback-typing-text");
-  const cursor = $("typing-cursor");
-  if (!box || !textEl) return;
-
-  box.style.display = "block";
-
-  await _streamIntoTypingEngine(
-    textEl,
-    cursor,
-    () => fetch(`${API_BASE}/quiz/feedback/stream`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question:       q.question,
-        correct_answer: q.choices[q.correct_index],
-        chosen_answer:  q.choices[chosenIdx],
-        product:        q.product || "",
-        explanation:    q.explanation || "",
-      }),
-    }),
-    () => { box.style.display = "none"; }
-  );
-}
-
-// ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
 // ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
 async function streamFinalFeedback() {
   const section = $("final-feedback-section");
   const textEl  = $("final-feedback-text");
-  if (!section || !textEl) {
-    saveQuizResult();   // sécurité
-    return;
-  }
+  if (!section || !textEl) { saveQuizResult(); return; }
 
-  TypingEngine.reset();
+  // Stoppe toute instance finale précédente
+  if (_finalTyping) { _finalTyping.reset(); }
+  _finalTyping = createTypingInstance();
+
   section.style.display = "block";
   textEl.innerHTML = "";
 
@@ -793,33 +773,37 @@ async function streamFinalFeedback() {
 
   let fullText = "";
 
-  // ← Quand le typing est terminé → on enregistre dans la base
-  TypingEngine.start(textSpan, finalCursor, () => {
+  // Capture locale
+  const inst = _finalTyping;
+
+  inst.start(textSpan, finalCursor, () => {
     speakFinalFeedback(fullText);
-    setTimeout(saveQuizResult, 800);     // ← Enregistrement ici
+    setTimeout(saveQuizResult, 800);
   });
 
-  const originalFetch = () => fetch(`${API_BASE}/quiz/feedback/final/stream`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      score:   state.score,
-      total:   state.history.length,
-      history: state.history,
-    }),
-  });
+  const cleanHistory = state.history.filter(h => h !== undefined && h !== null);
 
   let res;
-  try { res = await originalFetch(); }
-  catch (err) { 
-    textEl.textContent = "Bilan indisponible."; 
+  try {
+    res = await fetch(`${API_BASE}/quiz/feedback/final/stream`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        score:   cleanHistory.filter(h => h.ok).length,
+        total:   cleanHistory.length,
+        history: cleanHistory,
+      }),
+    });
+  } catch (err) {
+    textEl.textContent = "Bilan indisponible.";
     setTimeout(saveQuizResult, 500);
-    return; 
+    return;
   }
-  if (!res.ok) { 
-    textEl.textContent = "Bilan indisponible."; 
+
+  if (!res.ok) {
+    textEl.textContent = "Bilan indisponible.";
     setTimeout(saveQuizResult, 500);
-    return; 
+    return;
   }
 
   const reader  = res.body.getReader();
@@ -830,106 +814,106 @@ async function streamFinalFeedback() {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      // Instance obsolète (ex: restart rapide) → on abandonne
+      if (inst !== _finalTyping) { reader.cancel(); return; }
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      const lines = buffer.split("\n"); buffer = lines.pop() || "";
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
         try {
           const ev = JSON.parse(line.slice(6));
           if (ev.type === "token") {
             fullText += ev.content;
-            TypingEngine.push(ev.content);
+            inst.push(ev.content);
           }
-          if (ev.type === "done") TypingEngine.finish();
+          if (ev.type === "done") inst.finish();
         } catch (_) {}
       }
     }
-    TypingEngine.finish();
-  } catch (err) {
-    TypingEngine.finish();
+    inst.finish();
+  } catch {
+    inst.finish();
   }
 }
 
 // ── Certificat de réussite ────────────────────────────────────────────────
 function downloadCertificate() {
+  const total    = state.history.length;
+  const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
+  const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
+  const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
 
-    const total    = state.history.length;
-    const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
-    const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
-    const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
-  
-    // Récupération du nom de l'utilisateur connecté
-    let delegateName = "Délégué VITAL SA";
-    try {
-      const userJson = localStorage.getItem('user');
-      if (userJson) {
-        const user = JSON.parse(userJson);
-        if (user.fullName) delegateName = user.fullName;
-      }
-    } catch(e) {}
-    const html = `<!DOCTYPE html>
-    <html lang="fr">
-    <head>
-    <meta charset="UTF-8"/>
-    <title>Certificat de Formation — VitalAgent</title>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
-      *{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:'Lato',sans-serif;background:#f0f7ee;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
-      .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #c8e6c9;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
-      .cert::before{content:'';position:absolute;inset:8px;border:2px solid #1e7a2e;pointer-events:none}
-      .logo{text-align:center;margin-bottom:28px}
-      .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
-      .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
-      .divider{width:80px;height:2px;background:#1e7a2e;margin:16px auto}
-      .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
-      .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
-      .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
-      .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #1e7a2e;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
-      .score-box{display:inline-flex;align-items:center;gap:12px;background:#e8f3e6;border:1.5px solid #1e7a2e;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
-      .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#145a22}
-      .score-lbl{font-size:12px;color:#1e7a2e;text-align:left;line-height:1.4}
-      .products{background:#f5faf4;border:1px solid #c8e6c9;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
-      .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
-      .sig{text-align:center}
-      .sig-line{width:160px;height:1px;background:#999;margin:0 auto 6px}
-      .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
-      .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
-      .date{font-size:11px;color:#888;text-align:right}
-      .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
-      @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
-    </style>
-    </head>
-    <body>
-    <div class="cert">
-      <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Médicaux</div></div>
-      <div class="divider"></div>
-      <div class="heading">Certificat de réussite</div>
-      <div class="title">Quiz de Formation<br>Médicale</div>
-      <div class="body">
-        Ce certificat atteste que le délégué<br>
-        <span class="delegate">${delegateName}</span><br>
-        a validé avec succès le quiz de formation médicale VitalAgent.
-      </div>
-      <div style="text-align:center">
-        <div class="score-box">
-          <div class="score-num">${pct}%</div>
-          <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} questions</strong></div>
-        </div>
-      </div>
-      <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
-      <div class="footer">
-        <div class="sig"><div class="sig-line"></div><div class="sig-name">Dr. Layla</div><div class="sig-role">Experte Formation Médicale · VitalAgent</div></div>
-        <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
-      </div>
-      <div class="wm">VITAL SA · Formation Médicale · Certifié VitalAgent</div>
+  let delegateName = "Délégué VITAL SA";
+  try {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      const user = JSON.parse(userJson);
+      if (user.fullName) delegateName = user.fullName;
+    }
+  } catch(e) {}
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>Certificat de Formation — VitalAgent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Lato',sans-serif;background:#f0f7ee;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
+  .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #c8e6c9;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
+  .cert::before{content:'';position:absolute;inset:8px;border:2px solid #1e7a2e;pointer-events:none}
+  .logo{text-align:center;margin-bottom:28px}
+  .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
+  .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
+  .divider{width:80px;height:2px;background:#1e7a2e;margin:16px auto}
+  .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
+  .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
+  .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
+  .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #1e7a2e;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
+  .score-box{display:inline-flex;align-items:center;gap:12px;background:#e8f3e6;border:1.5px solid #1e7a2e;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
+  .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#145a22}
+  .score-lbl{font-size:12px;color:#1e7a2e;text-align:left;line-height:1.4}
+  .products{background:#f5faf4;border:1px solid #c8e6c9;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
+  .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
+  .sig{text-align:center}
+  .sig-line{width:160px;height:1px;background:#999;margin:0 auto 6px}
+  .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
+  .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
+  .date{font-size:11px;color:#888;text-align:right}
+  .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
+  @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
+</style>
+</head>
+<body>
+<div class="cert">
+  <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Médicaux</div></div>
+  <div class="divider"></div>
+  <div class="heading">Certificat de réussite</div>
+  <div class="title">Quiz de Formation<br>Médicale</div>
+  <div class="body">
+    Ce certificat atteste que le délégué<br>
+    <span class="delegate">${delegateName}</span><br>
+    a validé avec succès le quiz de formation médicale VitalAgent.
+  </div>
+  <div style="text-align:center">
+    <div class="score-box">
+      <div class="score-num">${pct}%</div>
+      <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} questions</strong></div>
     </div>
-    <div class="no-print">
-      <button onclick="window.print()" style="padding:12px 28px;background:#1e7a2e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
-    </div>
-    </body>
-    </html>`;
+  </div>
+  <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
+  <div class="footer">
+    <div class="sig"><div class="sig-line"></div><div class="sig-name">Dr. Layla</div><div class="sig-role">Experte Formation Médicale · VitalAgent</div></div>
+    <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
+  </div>
+  <div class="wm">VITAL SA · Formation Médicale · Certifié VitalAgent</div>
+</div>
+<div class="no-print">
+  <button onclick="window.print()" style="padding:12px 28px;background:#1e7a2e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
+</div>
+</body>
+</html>`;
 
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url  = URL.createObjectURL(blob);
@@ -939,27 +923,22 @@ function downloadCertificate() {
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-
-/************ il tasjil fil base imta3 resultat quiz*************/
-// ── Enregistrer le résultat du quiz médical ───────────────────────────────
 // ── Enregistrer le résultat du quiz médical ───────────────────────────────
 async function saveQuizResult() {
- 
   const answered   = state.history.filter(h => h !== undefined && h !== null);
   const total      = answered.length;
   if (total === 0) { console.warn("[QuizSave] Historique vide, rien à enregistrer."); return; }
- 
+
   const score      = answered.filter(h => h.ok).length;
   const percentage = Math.round((score / total) * 100);
- 
-  // Texte du bilan Dr. Layla — on prend innerText pour ignorer le HTML du spinner
+
   const feedbackEl  = document.getElementById("final-feedback-text");
   let   feedbackTxt = null;
   if (feedbackEl) {
     const raw = (feedbackEl.innerText || feedbackEl.textContent || "").trim();
     if (raw && !raw.includes("rédige votre bilan")) feedbackTxt = raw;
   }
- 
+
   const payload = {
     quiz_type:         "medical",
     score:             score,
@@ -970,18 +949,18 @@ async function saveQuizResult() {
     products_selected: state.selectedProducts.length > 0
                          ? JSON.stringify(state.selectedProducts)
                          : null,
-    id_user:           null,   // null → FK nullable, pas de risque de 409
+    id_user:           null,
   };
- 
+
   console.log("[QuizSave] payload →", payload);
- 
+
   try {
-    const res = await fetch(`${API_BASE}/quizsave/save-result`, {   // ← URL mise à jour
+    const res = await fetch(`${API_BASE}/quizsave/save-result`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(payload),
     });
- 
+
     if (res.ok) {
       const data = await res.json();
       console.log("✅ Résultat enregistré — id DB :", data.id);

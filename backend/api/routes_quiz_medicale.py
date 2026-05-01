@@ -1,7 +1,7 @@
 """
 backend/api/routes_quiz_medicale.py
 ====================================
-Quiz endpoints — VERSION REFONTE COMPLÈTE
+Quiz endpoints — VERSION FINALE
 
 """
 
@@ -269,7 +269,7 @@ def _fetch_selected_products(engine, product_names: List[str]) -> dict:
             if not pname:
                 continue
             if pname.lower() not in wanted:
-                continue                          # ← strict: skip anything else
+                continue
             if meta.get("source_table", "") in ("doc", "annimation_fiches"):
                 continue
 
@@ -279,7 +279,6 @@ def _fetch_selected_products(engine, product_names: List[str]) -> dict:
     except Exception as e:
         print(f"[Quiz] ChromaDB error in _fetch_selected_products: {e}")
 
-    # Remove products with no data found
     for pname in list(result.keys()):
         text = result[pname].strip()
         if not text:
@@ -379,8 +378,9 @@ def _is_valid_question(q: Optional[dict], expected_product: str) -> bool:
         return False
     return True
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# NOUVEAUX ENDPOINTS — AJOUT UNIQUEMENT, rien au-dessus n'a été touché
+# FEEDBACK ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
 class FeedbackRequest(BaseModel):
@@ -405,24 +405,18 @@ Le délégué vient de répondre incorrectement à une question. Rédige EXACTEM
 
 
 _FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
-Génère un bilan global de la performance du délégué.
+Tu rédiges un bilan de performance court et professionnel.
 
-STRUCTURE OBLIGATOIRE — commence TOUJOURS par le score :
+RÈGLES ABSOLUES (à respecter scrupuleusement) :
+- La réponse doit COMMENCER EXACTEMENT par : "Score X/Y (Z%)." — RIEN avant ce mot
+- Ensuite maximum 2 ou 3 phrases fluides en prose, jamais de liste ni de tiret
+- Ton encourageant et professionnel
+- Si score < 100%, mentionne les produits ou notions précises à retravailler
+- JAMAIS de liste, puce, tiret ou "Docteur,"
+- JAMAIS commencer par autre chose que "Score"
+- Toujours terminer par une phrase complète — JAMAIS de phrase coupée
+"""
 
-CAS 1 — Score parfait (100%) :
-"Score [X]/[X] (100%). Parfait ! Vous maîtrisez parfaitement [liste tous les produits]. Continuez sur cette lancée, c'est exactement le niveau attendu d'un délégué VITAL SA !"
-
-CAS 2 — Score inférieur à 100% (même 99%) :
-"Score [X]/[Y] ([Z]%). Des lacunes persistent sur [notion précise : posologie / mécanisme / indication / conservation / contre-indication] de [produit raté]. Reprenez les fiches de [liste produits ratés]. [1 phrase d'encouragement court.]"
-
-RÈGLES ABSOLUES :
-- La PREMIÈRE PHRASE commence TOUJOURS par "Score [X]/[Y] ([Z]%)."
-- Si score < 100% → citer obligatoirement les lacunes précises, même si le score est 90% ou 95%
-- Si score = 100% → féliciter sans mentionner de lacunes
-- EXACTEMENT 2 à 3 phrases, jamais plus
-- ZÉRO titre, ZÉRO liste, ZÉRO puce, ZÉRO numéro
-- JAMAIS "Docteur," au début
-- Prose fluide uniquement, en français"""
 
 @router.post("/feedback/stream")
 async def stream_question_feedback(req: FeedbackRequest):
@@ -449,8 +443,11 @@ async def stream_question_feedback(req: FeedbackRequest):
         except Exception as e:
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @router.post("/feedback/final/stream")
@@ -459,33 +456,26 @@ async def stream_final_feedback(req: FinalFeedbackRequest):
     from langchain_core.messages import SystemMessage, HumanMessage
     engine.initialize()
 
-    pct = round((req.score / req.total) * 100) if req.total > 0 else 0
+    score = req.score
+    total = req.total
+    pct   = round((score / total) * 100) if total > 0 else 0
 
-    good_products = list({h.get("product", "?") for h in req.history if h.get("ok")})
-
-    # Une ligne par produit raté — notion précise manquante uniquement
+    # Historique structuré en JSON — uniquement les erreurs, sans tirets
     bad_summary = []
-    seen = set()
     for h in req.history:
         if not h.get("ok"):
-            p = h.get("product", "?")
-            if p not in seen:
-                seen.add(p)
-                bad_summary.append(f"- {p} : la bonne réponse était « {h.get('correct', '')} »")
+            bad_summary.append({
+                "product":        h.get("product", "?"),
+                "correct_answer": h.get("correct", "")
+            })
 
-    if bad_summary:
-        prompt = (
-            f"Score : {req.score}/{req.total} ({pct}%)\n"
-            f"Produits maîtrisés : {', '.join(good_products) if good_products else 'aucun'}\n"
-            f"Produits ratés :\n" + "\n".join(bad_summary) +
-            "\n\nGénère le bilan final en suivant exactement le squelette."
-        )
-    else:
-        prompt = (
-            f"Score : {req.score}/{req.total} ({pct}%)\n"
-            f"Tous les produits maîtrisés : {', '.join(good_products)}\n\n"
-            f"Génère le bilan final en suivant exactement le squelette."
-        )
+    prompt = (
+        f"Score obtenu : {score}/{total} ({pct}%)\n"
+        f"Historique des erreurs :\n"
+        f"{json.dumps(bad_summary, ensure_ascii=False, indent=2)}\n\n"
+        f"Commence OBLIGATOIREMENT par : \"Score {score}/{total} ({pct}%).\"\n"
+        f"Génère maintenant le bilan final de Dr. Layla."
+    )
 
     async def gen():
         try:
@@ -497,7 +487,11 @@ async def stream_final_feedback(req: FinalFeedbackRequest):
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content}, ensure_ascii=False)}\n\n"
             yield f'data: {json.dumps({"type": "done"})}\n\n'
         except Exception as e:
+            print(f"[Final Feedback] Erreur: {e}")
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
