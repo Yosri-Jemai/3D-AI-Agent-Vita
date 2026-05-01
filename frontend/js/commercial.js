@@ -12,7 +12,7 @@ let currentProfileId = null;
 const MODE = 'commercial';
 let visitStarted = false;
 
-const PRODUCT_MENTIONS_STORAGE_KEY = 'vita_product_mentions';
+const PRODUCT_MENTIONS_KEY = 'vita_product_mentions';
 
 // ── Product Tracking for Dashboard ───────────────────────────
 let productListCache = []; // Cache de la liste des produits depuis l'API
@@ -51,13 +51,13 @@ function trackProductMention(productName) {
   if (!productName) return;
   
   try {
-    const raw = localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY);
+    const raw = localStorage.getItem(PRODUCT_MENTIONS_KEY);
     const mentions = raw ? JSON.parse(raw) : {};
     
     const normalized = productName.trim().toLowerCase();
     mentions[normalized] = (mentions[normalized] || 0) + 1;
     
-    localStorage.setItem(PRODUCT_MENTIONS_STORAGE_KEY, JSON.stringify(mentions));
+    localStorage.setItem(PRODUCT_MENTIONS_KEY, JSON.stringify(mentions));
     console.log('[Product Tracking] Product tracked:', productName, 'Total mentions:', mentions[normalized]);
   } catch (e) {
     console.error('[Product Tracking] Error:', e);
@@ -66,6 +66,7 @@ function trackProductMention(productName) {
 
 // Fonction pour extraire les produits du texte
 function extractProductsFromText(text) {
+    console.log('[Product Extraction] Input text:', text);
     if (!text) return [];
     
     const textLower = text.toLowerCase();
@@ -80,6 +81,7 @@ function extractProductsFromText(text) {
         "Gynel",
         "Bébégold"
     ];
+    console.log('[Product Extraction] Product list:', productList);
     
     // Vérifier chaque produit de la liste
     productList.forEach(productName => {
@@ -88,31 +90,40 @@ function extractProductsFromText(text) {
         // Créer un pattern qui détecte le nom exact ou partiel du produit
         const pattern = new RegExp(productLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         if (pattern.test(textLower)) {
+            console.log('[Product Extraction] Found product in list:', productName);
             products.push(productName);
         }
     });
     
     // Détection supplémentaire pour les variantes
     if (/pollen/i.test(textLower) && !products.includes("Pollen d'abeilles")) {
+        console.log('[Product Extraction] Found pollen variant');
         products.push("Pollen d'abeilles");
     }
     if (/hemostop/i.test(textLower) && !products.some(p => p.toLowerCase().includes('hemostop'))) {
+        console.log('[Product Extraction] Found hemostop variant');
         products.push("LV Hemostop");
     }
     if (/dermalo/i.test(textLower) && !products.some(p => p.toLowerCase().includes('dermalo'))) {
+        console.log('[Product Extraction] Found dermalo variant');
         products.push("Dermalo");
     }
     if (/gynel/i.test(textLower) && !products.some(p => p.toLowerCase().includes('gynel'))) {
+        console.log('[Product Extraction] Found gynel variant');
         products.push("Gynel");
     }
     if (/efidel/i.test(textLower) && !products.some(p => p.toLowerCase().includes('efidel'))) {
+        console.log('[Product Extraction] Found efidel variant');
         products.push("Efidel");
     }
     if (/b[eé]b[eé]gold|bebe gold/i.test(textLower) && !products.some(p => p.toLowerCase().includes('bebegold'))) {
+        console.log('[Product Extraction] Found bebegold variant');
         products.push("Bébégold");
     }
     
-    return [...new Set(products)]; // Supprimer les doublons
+    const uniqueProducts = [...new Set(products)]; // Supprimer les doublons
+    console.log('[Product Extraction] Final products:', uniqueProducts);
+    return uniqueProducts;
 }
 
 // Fonction pour tracker tous les produits mentionnés dans le texte
@@ -127,7 +138,7 @@ function trackProductMentions(text) {
     }
     
     try {
-        const stored = localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY);
+        const stored = localStorage.getItem(PRODUCT_MENTIONS_KEY);
         const mentions = stored ? JSON.parse(stored) : {};
         console.log('[Product Tracking] Current mentions before update:', mentions);
         
@@ -136,9 +147,13 @@ function trackProductMentions(text) {
             console.log('[Product Tracking] Incremented product:', product, 'New count:', mentions[product]);
         });
         
-        localStorage.setItem(PRODUCT_MENTIONS_STORAGE_KEY, JSON.stringify(mentions));
+        localStorage.setItem(PRODUCT_MENTIONS_KEY, JSON.stringify(mentions));
         console.log('[Product Tracking] Updated mentions:', mentions);
-        console.log('[Product Tracking] localStorage saved:', localStorage.getItem(PRODUCT_MENTIONS_STORAGE_KEY));
+        console.log('[Product Tracking] localStorage saved:', localStorage.getItem(PRODUCT_MENTIONS_KEY));
+        
+        // Afficher le total des mentions
+        const totalMentions = Object.values(mentions).reduce((sum, count) => sum + count, 0);
+        console.log('[Product Tracking] Total mentions:', totalMentions);
     } catch (e) {
         console.error('[Product Tracking] Error:', e);
     }
@@ -567,8 +582,10 @@ async function sendAudio() {
         timestamp: new Date().toISOString()
       });
       
+      console.log('[DEBUG] About to track products in fullText:', fullText);
       // Tracker les produits mentionnés dans la réponse de l'avatar
       trackProductMentions(fullText);
+      console.log('[DEBUG] Product tracking completed');
     }
 
     if (msgEl) {
@@ -859,6 +876,57 @@ window.applySuggestion = function(btn) {
     btn.style.borderColor = 'rgb(75 95 70 / 60%)';
   }
   window.sendQuestion();
+};
+
+// Fonction pour vérifier manuellement l'état du localStorage
+window.checkProductMentions = function() {
+    try {
+        const stored = localStorage.getItem(PRODUCT_MENTIONS_KEY);
+        const mentions = stored ? JSON.parse(stored) : {};
+        console.log('[CHECK] Current product mentions:', mentions);
+        console.log('[CHECK] Total mentions:', Object.values(mentions).reduce((sum, count) => sum + count, 0));
+        return mentions;
+    } catch (e) {
+        console.error('[CHECK] Error:', e);
+        return {};
+    }
+};
+
+// Fonction pour effacer les mentions de produits
+window.clearProductMentions = function() {
+    localStorage.removeItem(PRODUCT_MENTIONS_KEY);
+    console.log('[CHECK] Product mentions cleared');
+};
+
+// Fonction de test pour vérifier le tracking manuellement
+window.testProductTracking = function() {
+    console.log('[TEST] Testing product tracking...');
+    
+    // Tester avec un texte contenant "Dermalo"
+    const testText = "Je vous recommande le produit Dermalo qui est excellent pour la peau.";
+    console.log('[TEST] Test text:', testText);
+    
+    // Appeler la fonction de tracking
+    trackProductMentions(testText);
+    
+    // Vérifier le résultat
+    const result = window.checkProductMentions();
+    console.log('[TEST] Final result:', result);
+    
+    return result;
+};
+
+// Fonction pour forcer l'actualisation du dashboard
+window.refreshDashboardProducts = function() {
+    console.log('[REFRESH] Forcing dashboard refresh...');
+    
+    // Envoyer un événement personnalisé pour actualiser le dashboard
+    window.dispatchEvent(new CustomEvent('productMentionsUpdated', {
+        detail: {
+            mentions: window.checkProductMentions(),
+            timestamp: new Date().toISOString()
+        }
+    }));
 };
 
 init();
