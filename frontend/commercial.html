@@ -78,29 +78,6 @@
 .send-btn:hover:not(:disabled) {
   background: #1e7a2e;
 }
-.stop-btn {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
-  color: white;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.2s;
-  margin-left: 8px;
-}
-.stop-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #dc2626, #b91c1c);
-  transform: translateY(-1px);
-}
-.stop-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 .product-badge, .product-context-bar, .quick-chips, .mode-badge {
   display: none !important;
 }
@@ -166,10 +143,6 @@
       <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V20h3v2H8v-2h3v-2.08A7 7 0 0 1 5 11z"/></svg>
         <span id="mic-label">Hold to speak</span>
-      </button>
-      <button class="stop-btn" id="stop-btn" onclick="stopAvatar()" title="Stop speaking">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-        <span>Stop</span>
       </button>
       <div class="waveform" id="waveform">
         <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>

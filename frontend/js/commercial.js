@@ -47,9 +47,6 @@ const originalStartVisit = window.startVisit;
 window.startVisit = async function() {
     if (visitStarted) return;
     
-    // Marquer comme démarré immédiatement pour éviter les doubles appels
-    visitStarted = true;
-    
     // Get profile ID from authenticated user
     try {
         const userRaw = localStorage.getItem('user');
@@ -82,17 +79,16 @@ window.startVisit = async function() {
     // Call original startVisit if it exists
     if (originalStartVisit) {
         await originalStartVisit();
+    } else {
+        // Fallback to original logic
+        visitStarted = true;
+        if (window._head?.audioCtx?.state !== 'running') {
+            await window._head.audioCtx.resume();
+        }
+        const micBtn = document.getElementById('mic-btn');
+        if (micBtn) micBtn.disabled = false;
+        await loadGreeting();
     }
-    
-    // Activer l'audio et le micro
-    if (window._head?.audioCtx?.state !== 'running') {
-        await window._head.audioCtx.resume();
-    }
-    const micBtn = document.getElementById('mic-btn');
-    if (micBtn) micBtn.disabled = false;
-    
-    // Charger le greeting SEULEMENT si ce n'est pas déjà fait
-    await loadGreeting();
 };
 
 // ── Greeting ──────────────────────────────────────────────────
@@ -217,9 +213,6 @@ window.sendQuestion = async function() {
             sources: sources,
             timestamp: new Date().toISOString()
         });
-        
-        // Track products mentioned by avatar
-        trackProductMentions(fullText);
         
         if (!msgEl) msgEl = addAIBubble(null);
         finalizeBubble(fullText, sources, userText);
@@ -434,8 +427,6 @@ async function sendAudio() {
         sources: sources,
         timestamp: new Date().toISOString()
       });
-      // Track products mentioned by avatar
-      trackProductMentions(fullText);
     }
 
     if (msgEl) {
@@ -608,123 +599,6 @@ async function resendQuestion(userText) {
 // ── Log + Report ──────────────────────────────────────────────
 const conversationLog = [];
 window.conversationLog = conversationLog;
-
-// ── Product Tracking for Dashboard ───────────────────────────
-const PRODUCT_MENTIONS_KEY = 'vita_product_mentions';
-let productListCache = []; // Cache de la liste des produits depuis l'API
-
-// Récupérer la liste des produits depuis l'API
-async function loadProductListForTracking() {
-    try {
-        const res = await fetch(`${API}/products`);
-        const data = await res.json();
-        productListCache = data.products || [];
-        console.log('[Product Tracking] Loaded products:', productListCache);
-    } catch (e) {
-        console.warn('[Product Tracking] Failed to load products from API, using fallback list');
-        // Fallback: liste de base si l'API n'est pas disponible
-        productListCache = [
-            "Pollen d'abeilles",
-            "LV Hemostop",
-            "Dermalo",
-            "Efidel",
-            "Gynel",
-            "Bébégold",
-            "Vitamine C",
-            "Vitamine D",
-            "Bactol",
-            "Hydra",
-            "Herbalgix",
-            "Sebocontrol",
-            "Phytovit",
-            "Vitamix"
-        ];
-    }
-}
-
-// Charger la liste au démarrage
-loadProductListForTracking();
-
-function extractProductsFromText(text) {
-    if (!text) return [];
-    const products = [];
-    const textLower = text.toLowerCase();
-    
-    // Utiliser la liste dynamique des produits
-    const productList = productListCache.length > 0 ? productListCache : [
-        "Pollen d'abeilles",
-        "LV Hemostop",
-        "Dermalo",
-        "Efidel",
-        "Gynel",
-        "Bébégold"
-    ];
-    
-    // Vérifier chaque produit de la liste
-    productList.forEach(productName => {
-        if (!productName) return;
-        const productLower = productName.toLowerCase();
-        // Créer un pattern qui détecte le nom exact ou partiel du produit
-        const pattern = new RegExp(productLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-        if (pattern.test(textLower)) {
-            products.push(productName);
-        }
-    });
-    
-    // Détection supplémentaire pour les variantes
-    if (/pollen/i.test(textLower) && !products.includes("Pollen d'abeilles")) {
-        products.push("Pollen d'abeilles");
-    }
-    if (/hemostop/i.test(textLower) && !products.some(p => p.toLowerCase().includes('hemostop'))) {
-        products.push("LV Hemostop");
-    }
-    if (/dermalo/i.test(textLower) && !products.some(p => p.toLowerCase().includes('dermalo'))) {
-        products.push("Dermalo");
-    }
-    if (/gynel/i.test(textLower) && !products.some(p => p.toLowerCase().includes('gynel'))) {
-        products.push("Gynel");
-    }
-    if (/efidel/i.test(textLower) && !products.some(p => p.toLowerCase().includes('efidel'))) {
-        products.push("Efidel");
-    }
-    if (/b[eé]b[eé]gold|bebe gold/i.test(textLower) && !products.some(p => p.toLowerCase().includes('bebegold'))) {
-        products.push("Bébégold");
-    }
-    
-    return [...new Set(products)]; // Supprimer les doublons
-}
-
-function trackProductMentions(text) {
-    const products = extractProductsFromText(text);
-    if (products.length === 0) return;
-    
-    try {
-        const stored = localStorage.getItem(PRODUCT_MENTIONS_KEY);
-        const mentions = stored ? JSON.parse(stored) : {};
-        
-        products.forEach(product => {
-            mentions[product] = (mentions[product] || 0) + 1;
-        });
-        
-        localStorage.setItem(PRODUCT_MENTIONS_KEY, JSON.stringify(mentions));
-        console.log('[Product Tracking] Updated:', mentions);
-    } catch (e) {
-        console.error('[Product Tracking] Error:', e);
-    }
-}
-
-window.getProductMentions = function() {
-    try {
-        const stored = localStorage.getItem(PRODUCT_MENTIONS_KEY);
-        return stored ? JSON.parse(stored) : {};
-    } catch {
-        return {};
-    }
-};
-
-window.clearProductMentions = function() {
-    localStorage.removeItem(PRODUCT_MENTIONS_KEY);
-};
 function logUser(text, isVoice) {
   conversationLog.push({ role: 'user', text, isVoice: !!isVoice, time: new Date() });
   document.getElementById('report-btn').disabled = false;
