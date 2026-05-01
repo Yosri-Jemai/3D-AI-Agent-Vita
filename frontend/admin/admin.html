@@ -91,8 +91,9 @@
         <section class="kpi-strip" id="kpiStrip"></section>
 
         <nav class="dashboard-nav">
-            <button class="view-btn active" data-view="statsView">Formation & Adoption</button>
-            <button class="view-btn" data-view="commercialView">Tracking Commercial</button>
+            <button class="view-btn active" data-view="statsView">Statistiques formation</button>
+            <button class="view-btn" data-view="commercialView">Suivi commercial</button>
+            <button class="view-btn" data-view="questionsView">Questions Difficiles</button>
         </nav>
 
         <section id="statsView" class="view active">
@@ -226,6 +227,25 @@
                 <div id="commercialInsights" class="insights-grid"></div>
             </article>
 
+        </section>
+        
+        <section id="questionsView" class="view">
+            <h3>Questions sans réponse</h3>
+            <p class="muted">Répondez aux questions que l'agent n'a pas pu traiter.</p>
+            <div class="table-wrap" style="margin-top:16px">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Question</th>
+                            <th>Date</th>
+                            <th>Statut</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="questionsBody"></tbody>
+                </table>
+            </div>
         </section>
     </section>
 </main>

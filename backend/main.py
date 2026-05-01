@@ -26,6 +26,9 @@ from backend.api.routes_tts import router as tts_router
 from backend.api.routes_quiz_medicale import router as quiz_medicale_router
 from backend.api.routes_quiz_commercial import router as quiz_commercial_router
 
+from backend.api.routes_quiz_save import router as quiz_save_router
+from backend.api.routes_questions_difficiles import router as questions_difficiles_router
+
 
 app = FastAPI(
     title="VitalAgent API",
@@ -54,6 +57,11 @@ app.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 app.include_router(quiz_medicale_router, prefix="/quiz", tags=["Quiz"])
 
 app.include_router(quiz_commercial_router, prefix="/quiz-commercial", tags=["Quiz Commercial"])
+
+app.include_router(quiz_save_router, prefix="/quizsave", tags=["Quiz Save"])
+app.include_router(questions_difficiles_router, prefix="/questions-difficiles", tags=["Questions Difficiles"])
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "VitalAgent"}
