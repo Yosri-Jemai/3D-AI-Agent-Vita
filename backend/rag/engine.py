@@ -678,9 +678,11 @@ Réponse :"""
 
         # ── 4. Réponse vague → stocker aussi ──
         vague_indicators = [
-            "je n'ai pas trouvé", "je ne sais pas", "aucune information",
-            "i don't have", "i couldn't find", "no information",
-            "je n'ai pas d'informations", "je suis désolé"
+        "je n'ai pas trouvé", "je ne sais pas", "aucune information",
+        "i don't have", "i couldn't find", "no information",
+        "je n'ai pas d'informations", "je suis désolé",
+        "pas d'information", "désolé", "je ne peux pas répondre",
+        "pouvez-vous reformuler", "je ne connais pas"
         ]
         if any(ind in full_response.lower() for ind in vague_indicators):
             try:
