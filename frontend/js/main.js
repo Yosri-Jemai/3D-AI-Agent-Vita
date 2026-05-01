@@ -50,7 +50,7 @@ async function startTrainingSession(mode) {
     });
     if (res.ok) {
       const data = await res.json();
-      currentSessionId = data.id || null;
+      currentSessionId = data.id ? String(data.id) : null;
     }
   } catch (e) {
     console.warn('Session tracking start failed:', e);
@@ -364,7 +364,7 @@ async function sendQuestion() {
   try {
     const res = await fetch(`${API}/chat/ask/stream`,{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical'})
+      body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical', session_id: currentSessionId})
     });
     if (!res.ok) throw new Error();
     const reader=res.body.getReader(), dec=new TextDecoder();
@@ -501,7 +501,7 @@ async function resendQuestion(userText) {
   isLoading=true; setSend(true); addTyping(); setStatus('thinking','Thinking…');
   try {
     const res=await fetch(`${API}/chat/ask/stream`,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical'})});
+      body:JSON.stringify({question:ragQuestion,n_results:10,mode:trainingMode||'medical', session_id: currentSessionId})});
     if(!res.ok) throw new Error();
     const reader=res.body.getReader(),dec=new TextDecoder();
     let buf='',msgEl=null,full='',sources=[];
