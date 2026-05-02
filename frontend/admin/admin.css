@@ -9,9 +9,9 @@
     --border: rgba(148, 163, 184, 0.28);
     --text: #0f172a;
     --muted: #475569;
-    --accent: #2563eb;
-    --accent-2: #1d4ed8;
-    --ok: #16a34a;
+    --accent: #8b5cf6;
+    --accent-2: #7c3aed;
+    --ok: #22c55e;
     --danger: #dc2626;
 }
 
@@ -58,7 +58,7 @@ body {
 
 .auth-brand {
     border-radius: 18px;
-    background: linear-gradient(155deg, rgba(37, 99, 235, 0.94), rgba(29, 78, 216, 0.88));
+    background: linear-gradient(155deg, rgba(139, 92, 246, 0.94), rgba(124, 58, 237, 0.88));
     color: #f8fbff;
     padding: 28px;
 }
@@ -206,7 +206,7 @@ input:focus {
 }
 
 .primary-btn {
-    background: linear-gradient(130deg, var(--ok), #15803d);
+    background: linear-gradient(130deg, var(--ok), #22c55e);
 }
 
 .secondary-btn {
