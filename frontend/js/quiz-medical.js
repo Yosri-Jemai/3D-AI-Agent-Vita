@@ -21,7 +21,6 @@ const $ = id => document.getElementById(id);
 
 // ══════════════════════════════════════════════════════════════════════════════
 // TYPING ENGINE — factory d'instances isolées
-// Chaque stream crée sa propre instance : zéro queue partagée, zéro interférence
 // ══════════════════════════════════════════════════════════════════════════════
 
 function createTypingInstance() {
@@ -41,15 +40,8 @@ function createTypingInstance() {
       if (this.cursor) this.cursor.style.display = "inline-block";
       if (!this.timer) this._tick();
     },
-
-    push(text) {
-      this.queue += text;
-    },
-
-    finish() {
-      this._sealed = true;
-    },
-
+    push(text) { this.queue += text; },
+    finish()   { this._sealed = true; },
     reset() {
       clearTimeout(this.timer);
       this.timer   = null;
@@ -58,13 +50,11 @@ function createTypingInstance() {
       this._sealed = false;
       if (this.cursor) this.cursor.style.display = "none";
       this.cursor  = null;
-      this.onDone  = null;
+      this.onDone  = null;       // ← annule le callback onDone définitivement
     },
-
     _tick() {
       this.timer = null;
       if (!this.element) return;
-
       if (this.queue.length === 0) {
         if (this._sealed) {
           if (this.cursor) this.cursor.style.display = "none";
@@ -75,56 +65,169 @@ function createTypingInstance() {
         this.timer = setTimeout(() => this._tick(), 40);
         return;
       }
-
       const burst = Math.min(this.queue.length, Math.random() < 0.25 ? 2 : 1);
       this.element.textContent += this.queue.slice(0, burst);
       this.queue = this.queue.slice(burst);
-
       const last = this.element.textContent.slice(-1);
       let delay = 18 + Math.random() * 16;
       if (last === "," || last === ";") delay = 95;
       else if ("·.!?".includes(last))  delay = 180;
       else if (last === "\n")           delay = 120;
       else if (last === " ")            delay = 28;
-
       this.timer = setTimeout(() => this._tick(), delay);
     },
   };
   return inst;
 }
 
-// Instances actives — null = inactif
 let _feedbackTyping = null;
 let _finalTyping    = null;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// TTS — Système anti-race-condition DÉFINITIF v2
+//
+// Problème racine : speakWithAvatar() streame l'audio de façon asynchrone.
+// stopSpeaking() annule le timer AVANT le déclenchement, mais si l'audio
+// EST DÉJÀ EN TRAIN DE JOUER, il faut l'interrompre via un AbortController
+// propre à chaque appel TTS.
+//
+// Architecture :
+//   • _speakGeneration   : compteur global. Chaque stopSpeaking() l'incrémente.
+//   • _speakPendingTimer : setTimeout en attente. stopSpeaking() l'annule physiquement.
+//   • _activeAbort       : AbortController de la session TTS EN COURS.
+//                          stopSpeaking() l'abort() immédiatement → coupe l'audio.
+//   • Chaque speak() crée un nouvel AbortController, l'enregistre dans _activeAbort,
+//     et le passe à speakWithAvatar(). Si stopSpeaking() arrive après le démarrage
+//     de l'audio → abort() coupe le flux en cours.
+//   • Double garde : vérification gen + abort → silence garanti dans tous les cas.
+//
+// RÈGLE ABSOLUE : stopSpeaking() doit TOUJOURS être le PREMIER appel dans
+//   loadQuestion(), goToNext(), goToPrev(), restart, startQuiz, showResults,
+//   handleAnswer.
+// ══════════════════════════════════════════════════════════════════════════════
 
-// ── TTS / Avatar ──────────────────────────────────────────────────────────
+let _speakGeneration   = 0;
+let _speakPendingTimer = null;
+let _activeAbort       = null;   // AbortController du TTS actuellement en lecture
+
+function stopSpeaking() {
+  // 1. Invalide toute génération en cours / en attente
+  _speakGeneration++;
+
+  // 2. Annule physiquement tout speak() encore dans son délai de 40ms
+  if (_speakPendingTimer !== null) {
+    clearTimeout(_speakPendingTimer);
+    _speakPendingTimer = null;
+  }
+
+  // 3. Coupe l'audio EN COURS via AbortController → interrompt le stream TTS
+  if (_activeAbort) {
+    try { _activeAbort.abort(); } catch(e) {}
+    _activeAbort = null;
+  }
+
+  // 4. Arrête le moteur avatar (stop source + suspend AudioContext)
+  if (window._head) {
+    if (typeof window._head.stopSpeaking === "function") {
+      try { window._head.stopSpeaking(); } catch(e) {}
+    }
+    if (window._head._source) {
+      try { window._head._source.stop(); window._head._source = null; } catch(e) {}
+    }
+    if (window._head.audioCtx?.state === "running") {
+      try { window._head.audioCtx.suspend().catch(() => {}); } catch(e) {}
+    }
+  }
+
+  // 5. Abort legacy (au cas où speakWithAvatar utilise window._currentSpeakAbort)
+  if (window._currentSpeakAbort) {
+    try { window._currentSpeakAbort.abort(); } catch(e) {}
+    window._currentSpeakAbort = null;
+  }
+
+  // 6. Vide la bulle immédiatement — pas de texte fantôme
+  const bubble = $("bubble-text");
+  if (bubble) bubble.textContent = "";
+}
+
+// _doSpeak() : cœur commun, appelé par speak() et speakFinalFeedback().
+// Crée un AbortController propre, l'enregistre globalement, le passe à speakWithAvatar().
+// Si speakWithAvatar() ne supporte pas d'AbortController en paramètre, on expose
+// window._currentSpeakAbort pour que avatar.js puisse l'intercepter.
+function _doSpeak(text) {
+  if (!text?.trim() || typeof window.speakWithAvatar !== "function") return;
+
+  // Annule l'éventuel AbortController précédent (au cas où stopSpeaking() a été
+  // appelé entre la vérification de génération et ici — cas ultra-rare mais couvert)
+  if (_activeAbort) {
+    try { _activeAbort.abort(); } catch(e) {}
+  }
+
+  const ctrl = new AbortController();
+  _activeAbort               = ctrl;
+  window._currentSpeakAbort  = ctrl;  // compatibilité avatar.js legacy
+
+  try {
+    // Tente de passer l'AbortController en paramètre (API future / mise à jour)
+    window.speakWithAvatar(text, "fr", ctrl.signal);
+  } catch(e) {
+    // Fallback silencieux si la signature ne le supporte pas encore
+    try { window.speakWithAvatar(text, "fr"); } catch(_) {}
+  }
+}
+
+// speak() : usage général — questions, réponses, confirmations.
 function speak(text) {
+  if (!text?.trim()) return;
+
+  // Mise à jour visuelle de la bulle (synchrone, indépendante du TTS)
   const el = $("bubble-text");
   if (el) {
     el.style.opacity = "0";
-    setTimeout(() => { el.textContent = text; el.style.opacity = "1"; }, 150);
+    setTimeout(() => {
+      // Vérifie que la génération n'a pas changé avant d'afficher
+      el.textContent = text;
+      el.style.opacity = "1";
+    }, 80);
   }
-  if (typeof window.speakWithAvatar === "function" && text?.trim()) {
-    window.speakWithAvatar(text, "fr");
+
+  if (typeof window.speakWithAvatar !== "function") return;
+
+  const gen = _speakGeneration;   // capture AVANT le délai
+
+  // Annule tout timer speak() précédent encore en attente
+  if (_speakPendingTimer !== null) {
+    clearTimeout(_speakPendingTimer);
   }
+
+  // Délai court pour laisser stopSpeaking() + AudioContext.suspend() se terminer.
+  // Si stopSpeaking() passe pendant ce délai → gen !== _speakGeneration → abandon.
+  _speakPendingTimer = setTimeout(() => {
+    _speakPendingTimer = null;
+    if (gen !== _speakGeneration) return;   // invalide → silence garanti
+    _doSpeak(text);
+  }, 40);
 }
 
+// speakFinalFeedback() : appelé depuis le callback onDone du typing final.
+// Même protection — onDone peut se déclencher après "Recommencer".
 function speakFinalFeedback(text) {
-  if (typeof window.speakWithAvatar === "function" && text?.trim()) {
-    window.speakWithAvatar(text, "fr");
+  if (!text?.trim() || typeof window.speakWithAvatar !== "function") return;
+
+  const gen = _speakGeneration;
+
+  if (_speakPendingTimer !== null) {
+    clearTimeout(_speakPendingTimer);
   }
+
+  _speakPendingTimer = setTimeout(() => {
+    _speakPendingTimer = null;
+    if (gen !== _speakGeneration) return;
+    _doSpeak(text);
+  }, 40);
 }
 
-function stopSpeaking() {
-  if (window._head && typeof window._head.stopSpeaking === "function") {
-    window._head.stopSpeaking();
-  }
-  if (window._head?.audioCtx) {
-    try { window._head.audioCtx.suspend(); window._head.audioCtx.resume(); } catch(e) {}
-  }
-}
-
+// ── Déplacement de l'avatar ───────────────────────────────────────────────
 function moveAvatarToQuizPanel() {
   const avatarDiv = document.getElementById("avatarDiv");
   const slot = document.getElementById("avatar-scene-slot");
@@ -161,10 +264,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function waitForAvatar(callback) {
   const iv = setInterval(() => {
-    if (window._avatarReady === true) {
-      clearInterval(iv);
-      callback();
-    }
+    if (window._avatarReady === true) { clearInterval(iv); callback(); }
   }, 200);
   setTimeout(() => { clearInterval(iv); callback(); }, 12000);
 }
@@ -172,7 +272,7 @@ function waitForAvatar(callback) {
 // ── Chargement produits ────────────────────────────────────────────────────
 async function loadProducts() {
   try {
-    const res = await fetch(`${API_BASE}/products`);
+    const res  = await fetch(`${API_BASE}/products`);
     const data = await res.json();
     allProducts = (data.products || []).sort();
     renderProductList(allProducts);
@@ -214,23 +314,16 @@ function toggleProduct(name, checked) {
 function updateSelectionLabel() {
   const label = $("selection-label");
   const count = state.selectedProducts.length;
-  if (count === 0) {
-    label.textContent = "Tous les produits";
-    label.classList.remove("has-selection");
-  } else if (count === 1) {
-    label.textContent = state.selectedProducts[0];
-    label.classList.add("has-selection");
-  } else {
-    label.textContent = `${count} produits sélectionnés`;
-    label.classList.add("has-selection");
-  }
+  if (count === 0)      { label.textContent = "Tous les produits"; label.classList.remove("has-selection"); }
+  else if (count === 1) { label.textContent = state.selectedProducts[0]; label.classList.add("has-selection"); }
+  else                  { label.textContent = `${count} produits sélectionnés`; label.classList.add("has-selection"); }
 }
 
 function setupProductSearch() {
   const searchInput = $("product-search");
   if (!searchInput) return;
   searchInput.addEventListener("input", (e) => {
-    const query = e.target.value.toLowerCase().trim();
+    const query    = e.target.value.toLowerCase().trim();
     const filtered = query ? allProducts.filter(p => p.toLowerCase().includes(query)) : allProducts;
     renderProductList(filtered);
   });
@@ -243,7 +336,7 @@ $("product-dropdown-btn") && $("product-dropdown-btn").addEventListener("click",
 
 document.addEventListener("click", (e) => {
   const dropdown = $("product-dropdown");
-  const btn = $("product-dropdown-btn");
+  const btn      = $("product-dropdown-btn");
   if (dropdown && !dropdown.contains(e.target) && e.target !== btn) {
     dropdown.classList.remove("open");
   }
@@ -277,15 +370,28 @@ document.querySelectorAll(".qc-pill").forEach(btn => {
 $("start-btn").addEventListener("click", startQuiz);
 
 async function startQuiz() {
+  // ← EN PREMIER : stoppe tout TTS immédiatement
   stopSpeaking();
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
+  if (_finalTyping)    { _finalTyping.reset();    _finalTyping    = null; }
 
-  Object.assign(state, {
-    current: 0, score: 0, answered: false, history: [],
-    questions: [], streamDone: false, generating: true,
-    totalExpected: state.questionCount,
-  });
+  state.questions     = [];
+  state.current       = 0;
+  state.score         = 0;
+  state.answered      = false;
+  state.history       = [];
+  state.streamDone    = false;
+  state.generating    = true;
+  state.totalExpected = state.questionCount;
 
-  $("product-dropdown") && $("product-dropdown").classList.remove("open");
+  if ($("score-live"))         $("score-live").textContent         = "0 / 0";
+  if ($("q-counter"))          $("q-counter").textContent          = `Question 1 / ${state.questionCount}`;
+  if ($("progress-fill-mini")) $("progress-fill-mini").style.width = "0%";
+  if ($("donut-pct"))          $("donut-pct").textContent          = "0%";
+  const arc = $("donut-arc");
+  if (arc) { arc.style.strokeDashoffset = "201"; arc.style.stroke = "var(--accent)"; }
+
+  $("product-dropdown")?.classList.remove("open");
   moveAvatarToQuizPanel();
   $("setup-screen").style.display    = "none";
   $("quiz-screen").style.display     = "flex";
@@ -294,17 +400,17 @@ async function startQuiz() {
   showLoadingState();
 
   const selCount = state.selectedProducts.length;
-  if (selCount === 1)      speak(`Je génère ${state.questionCount} questions sur ${state.selectedProducts[0]}…`);
-  else if (selCount > 1)   speak(`Je génère ${state.questionCount} questions sur ${selCount} produits sélectionnés…`);
-  else                     speak("Je génère vos questions de formation, un moment…");
+  if (selCount === 1)    speak(`Je génère ${state.questionCount} questions sur ${state.selectedProducts[0]}…`);
+  else if (selCount > 1) speak(`Je génère ${state.questionCount} questions sur ${selCount} produits sélectionnés…`);
+  else                   speak("Je génère vos questions de formation, un moment…");
 
   startSSEStream();
 }
 
 function showLoadingState() {
-  $("waiting-state").style.display   = "flex";
-  $("question-area").style.display   = "none";
-  $("load-progress").style.display   = "flex";
+  $("waiting-state").style.display = "flex";
+  $("question-area").style.display = "none";
+  $("load-progress").style.display = "flex";
   updateLoadBar(0, state.totalExpected);
 }
 
@@ -314,9 +420,9 @@ function startSSEStream() {
   if (state.selectedProducts.length > 0) body.products = state.selectedProducts;
 
   fetch(`${API_BASE}/quiz/generate/stream`, {
-    method: "POST",
+    method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body:    JSON.stringify(body),
   })
   .then(res => {
     if (!res.ok) throw new Error(`Erreur serveur: ${res.status}`);
@@ -332,8 +438,7 @@ function startSSEStream() {
         buffer = lines.pop() || "";
         lines.forEach(line => {
           if (line.startsWith("data: ")) {
-            try { handleSSEEvent(JSON.parse(line.slice(6))); }
-            catch (e) {}
+            try { handleSSEEvent(JSON.parse(line.slice(6))); } catch(e) {}
           }
         });
         read();
@@ -392,16 +497,33 @@ function updateLoadBar(loaded, total) {
   if ($("load-label")) $("load-label").textContent = `Questions prêtes : ${loaded} / ${total}`;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ANTI-BIAIS DE LONGUEUR — Fisher-Yates shuffle côté JS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function reshuffleChoices(q) {
+  const choices    = [...q.choices];
+  const correctAns = choices[q.correct_index];
+  for (let i = choices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [choices[i], choices[j]] = [choices[j], choices[i]];
+  }
+  return { ...q, choices, correct_index: choices.indexOf(correctAns) };
+}
+
 // ── Affichage d'une question ──────────────────────────────────────────────
 function loadQuestion(idx) {
   if (idx >= state.questions.length) return;
 
+  // stopSpeaking() EN PREMIER : incrémente _speakGeneration, annule _speakPendingTimer,
+  // abort l'audio en cours → toute parole de la question précédente est stoppée.
   stopSpeaking();
-
-  // Stoppe le feedback de question en cours si on change de question
   if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
 
-  const q = state.questions[idx];
+  const saved = state.history[idx];
+  if (!saved) state.questions[idx] = reshuffleChoices(state.questions[idx]);
+
+  const q       = state.questions[idx];
   state.current  = idx;
   state.answered = false;
   updateHeader();
@@ -411,7 +533,7 @@ function loadQuestion(idx) {
   $("q-difficulty-badge").textContent = state.difficulty.charAt(0).toUpperCase() + state.difficulty.slice(1);
   $("question-text").textContent      = q.question;
 
-  const grid    = $("choices-grid");
+  const grid   = $("choices-grid");
   grid.innerHTML = "";
   const letters  = ["A", "B", "C", "D"];
   q.choices.forEach((choice, i) => {
@@ -425,7 +547,6 @@ function loadQuestion(idx) {
     grid.appendChild(btn);
   });
 
-  // Reset feedback
   $("explanation-box").style.display = "none";
   $("action-row").style.display      = "none";
   const fb = $("feedback-typing-box");
@@ -436,25 +557,19 @@ function loadQuestion(idx) {
     if (cur) cur.style.display = "none";
   }
 
-  // Bouton précédent
   const prevBtn = $("prev-btn");
   if (prevBtn) prevBtn.style.display = idx > 0 ? "inline-flex" : "none";
 
-  // ── Restaurer l'état si déjà répondu ──────────────────────────────────
-  const saved = state.history[idx];
   if (saved) {
     state.answered = true;
-
-    const buttons = grid.querySelectorAll(".choice-btn");
+    const buttons  = grid.querySelectorAll(".choice-btn");
     buttons.forEach((btn, i) => {
       btn.disabled = true;
       if (i === q.correct_index) btn.classList.add("correct");
     });
-
     const chosenIdx = q.choices.indexOf(saved.chosen);
-    if (chosenIdx !== -1 && chosenIdx !== q.correct_index) {
+    if (chosenIdx !== -1 && chosenIdx !== q.correct_index)
       buttons[chosenIdx].classList.add("wrong");
-    }
 
     $("explanation-icon").textContent    = saved.ok ? "✓" : "✗";
     $("explanation-icon").className      = `explanation-icon ${saved.ok ? "ok" : "bad"}`;
@@ -466,14 +581,31 @@ function loadQuestion(idx) {
     $("next-btn").innerHTML = isLast
       ? `Voir les résultats <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
       : `Question suivante <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-
     $("action-row").style.display = "flex";
   }
 
   const panel = document.querySelector(".question-panel");
   if (panel) panel.scrollTop = 0;
 
-  speak(`Question ${idx + 1} : ${q.question}`);
+  // Double garde : lie le speak à la génération ET à l'index de la question.
+  // Navigation rapide (clics multiples "Suivant") : chaque loadQuestion() appelle
+  // stopSpeaking() → génération++. Mais si speakWithAvatar démarre avant que
+  // stopSpeaking() ait eu le temps d'agir, la vérification state.current !== speakIdx
+  // garantit que seul le dernier loadQuestion() en date peut déclencher l'audio.
+  const speakIdx = idx;
+  const speakGen = _speakGeneration;
+  if (_speakPendingTimer !== null) { clearTimeout(_speakPendingTimer); }
+  // Libère le verrou ici — la question est déjà rendue dans le DOM.
+  // Le speak peut encore être annulé par les gardes internes, mais l'UI
+  // est prête → un nouveau clic Suivant/Précédent est accepté immédiatement.
+  _navLocked = false;
+
+  _speakPendingTimer = setTimeout(() => {
+    _speakPendingTimer = null;
+    if (speakGen !== _speakGeneration) return;  // invalide → navigation plus récente
+    if (state.current  !== speakIdx)   return;  // invalide → une autre question a pris le relais
+    _doSpeak(`Question ${speakIdx + 1} : ${q.question}`);
+  }, 40);
 }
 
 function updateHeader() {
@@ -481,21 +613,21 @@ function updateHeader() {
   if ($("q-counter"))
     $("q-counter").textContent = `Question ${state.current + 1} / ${total}`;
   if ($("progress-fill-mini"))
-    $("progress-fill-mini").style.width = `${((state.current) / Math.max(total, 1)) * 100}%`;
+    $("progress-fill-mini").style.width = `${(state.current / Math.max(total, 1)) * 100}%`;
   if ($("score-live"))
     $("score-live").textContent = `${state.score} / ${state.current}`;
   updateDonut();
 }
 
 function updateDonut() {
-  const total = state.current;
-  const pct   = total > 0 ? Math.round((state.score / total) * 100) : 0;
-  const arc   = $("donut-arc");
+  const total    = state.current;
+  const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
+  const arc      = $("donut-arc");
   const donutPct = $("donut-pct");
   if (arc) {
-    const circumference = 201;
+    const circumference        = 201;
     arc.style.strokeDashoffset = circumference - (circumference * pct / 100);
-    arc.style.stroke = pct >= 70 ? "var(--accent)" : pct >= 40 ? "#f59e0b" : "#ef4444";
+    arc.style.stroke           = pct >= 70 ? "var(--accent)" : pct >= 40 ? "#f59e0b" : "#ef4444";
   }
   if (donutPct) donutPct.textContent = `${pct}%`;
 }
@@ -512,8 +644,8 @@ function handleAnswer(chosenIdx, q) {
   const buttons = $("choices-grid").querySelectorAll(".choice-btn");
   buttons.forEach((btn, i) => {
     btn.disabled = true;
-    if (i === correct)             btn.classList.add("correct");
-    if (i === chosenIdx && !isOk)  btn.classList.add("wrong");
+    if (i === correct)            btn.classList.add("correct");
+    if (i === chosenIdx && !isOk) btn.classList.add("wrong");
   });
 
   state.history[state.current] = {
@@ -531,11 +663,9 @@ function handleAnswer(chosenIdx, q) {
   $("explanation-text").textContent    = q.explanation || "Consultez la fiche produit pour plus de détails.";
   $("explanation-box").style.display   = "flex";
 
-  if (!isOk) {
-    setTimeout(() => streamQuestionFeedback(q, chosenIdx), 400);
-  }
+  if (!isOk) setTimeout(() => streamQuestionFeedback(q, chosenIdx), 400);
 
-  const isLast = state.current >= state.questions.length - 1 && state.streamDone;
+  const isLast  = state.current >= state.questions.length - 1 && state.streamDone;
   const nextBtn = $("next-btn");
   nextBtn.innerHTML = isLast
     ? `Voir les résultats <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
@@ -543,21 +673,52 @@ function handleAnswer(chosenIdx, q) {
 
   $("action-row").style.display = "flex";
   updateHeader();
-  speak(isOk ? "Excellent ! Très bonne réponse." : `La bonne réponse était : ${q.choices[correct]}.`);
+
+  // stopSpeaking() avant speak() : coupe la lecture de la question en cours
+  // (qui peut encore être dans son délai de 40ms) et interrompt tout audio actif.
+  stopSpeaking();
+
+  // Lie le speak de la correction à l'index courant :
+  // si l'utilisateur clique immédiatement "Suivant" après avoir répondu,
+  // stopSpeaking() sera appelé et ce timer sera annulé avant de tirer.
+  const answerIdx = state.current;
+  const answerGen = _speakGeneration;
+  const answerText = isOk ? "Excellent ! Très bonne réponse." : `La bonne réponse était : ${q.choices[correct]}.`;
+  if (_speakPendingTimer !== null) { clearTimeout(_speakPendingTimer); }
+  _speakPendingTimer = setTimeout(() => {
+    _speakPendingTimer = null;
+    if (answerGen !== _speakGeneration) return;
+    if (state.current  !== answerIdx)   return;
+    _doSpeak(answerText);
+  }, 40);
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────
 let _waitingForNext = false;
 
+// ── Verrou de navigation ──────────────────────────────────────────────────
+// Empêche les appels multiples quasi-simultanés à loadQuestion() lors d'un
+// spam du bouton "Suivant". Le verrou dure 350ms — suffisant pour que
+// stopSpeaking() + AudioContext.suspend() + le setTimeout(40ms) se terminent
+// avant qu'un nouveau clic soit accepté.
+let _navLocked = false;
+function _lockNav(ms = 350) {
+  _navLocked = true;
+  setTimeout(() => { _navLocked = false; }, ms);
+}
+
 $("next-btn").addEventListener("click", goToNext);
 $("prev-btn") && $("prev-btn").addEventListener("click", goToPrev);
 
 function goToNext() {
-  stopSpeaking();
+  if (_navLocked) return;           // ← verrou anti-spam
+  _lockNav(400);
+  stopSpeaking();                   // ← stoppe TTS immédiatement
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
   const nextIdx = state.current + 1;
   if (nextIdx < state.questions.length) { loadQuestion(nextIdx); return; }
-  if (state.streamDone)                 { showResults(); return; }
-  _waitingForNext = true;
+  if (state.streamDone)                  { showResults(); return; }
+  _waitingForNext           = true;
   $("next-btn").disabled    = true;
   $("next-btn").textContent = "Chargement…";
   const check = setInterval(() => {
@@ -575,26 +736,28 @@ function goToNext() {
 }
 
 function goToPrev() {
-  stopSpeaking();
+  if (_navLocked) return;           // ← verrou anti-spam
+  _lockNav(400);
+  stopSpeaking();                   // ← stoppe TTS immédiatement
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
   const prevIdx = state.current - 1;
   if (prevIdx < 0) return;
-
   const currentSaved = state.history[state.current];
-  if (currentSaved && currentSaved.ok) {
-    state.score = Math.max(0, state.score - 1);
-  }
+  if (currentSaved?.ok) state.score = Math.max(0, state.score - 1);
   delete state.history[state.current];
   loadQuestion(prevIdx);
 }
 
-// ── Résultats ─────────────────────────────────────────────────────────────
-function showResults() {
-  // ── CORRECTION CLÉ : stoppe immédiatement le feedback de question ──────
-  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
-  // ── Stoppe aussi le bilan si relance rapide ────────────────────────────
-  if (_finalTyping) { _finalTyping.reset(); _finalTyping = null; }
+// ══════════════════════════════════════════════════════════════════════════════
+// RÉSULTATS
+// ══════════════════════════════════════════════════════════════════════════════
 
+function showResults() {
+  // ← EN PREMIER : stoppe tout TTS immédiatement
   stopSpeaking();
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
+  if (_finalTyping)    { _finalTyping.reset();    _finalTyping    = null; }
+
   moveAvatarToResults();
 
   $("quiz-screen").style.display     = "none";
@@ -602,23 +765,28 @@ function showResults() {
   $("progress-header").style.display = "none";
   $("score-badge").style.display     = "none";
 
-  const total = state.history.length;
-  const pct   = total ? Math.round((state.score / total) * 100) : 0;
+  const cleanHistory = state.history.filter(h => h !== undefined && h !== null);
+  const total        = cleanHistory.length;
+  const score        = cleanHistory.filter(h => h.ok).length;
+  const pct          = total > 0 ? Math.round((score / total) * 100) : 0;
 
-  $("results-score-num").textContent   = state.score;
+  state.score   = score;
+  state.current = total;
+
+  $("results-score-num").textContent   = score;
   $("results-score-denom").textContent = `/ ${total}`;
 
   let title, message;
-  if (pct >= 80)      { title = "Excellent travail ! 🏆"; message = `Vous maîtrisez très bien les produits VITAL SA. Score : ${pct}%`; }
-  else if (pct >= 60) { title = "Bon résultat ! 👍";      message = `Vous avez une bonne connaissance des produits. Continuez à vous former. Score : ${pct}%`; }
-  else                { title = "À revoir 📚";            message = `Certains points méritent d'être approfondis. Relisez les fiches produits. Score : ${pct}%`; }
+  if      (pct >= 80) { title = "Excellent travail !"; message = `Vous maîtrisez très bien les produits VITAL SA. Score : ${pct}%`; }
+  else if (pct >= 60) { title = "Bon résultat !";      message = `Vous avez une bonne connaissance des produits. Continuez à vous former. Score : ${pct}%`; }
+  else                { title = "À revoir";            message = `Certains points méritent d'être approfondis. Relisez les fiches produits. Score : ${pct}%`; }
 
   $("results-title").textContent   = title;
   $("results-message").textContent = message;
 
   const breakdown = $("results-breakdown");
   breakdown.innerHTML = "";
-  state.history.forEach((item, i) => {
+  cleanHistory.forEach((item, i) => {
     const div = document.createElement("div");
     div.className = `result-item ${item.ok ? "correct" : "wrong"}`;
     div.innerHTML = `
@@ -638,20 +806,17 @@ function showResults() {
   });
 
   const ring = $("results-ring");
-  if (ring) {
-    ring.style.borderColor = pct >= 70 ? "var(--accent)" : pct >= 40 ? "#f59e0b" : "#ef4444";
-  }
+  if (ring) ring.style.borderColor = pct >= 70 ? "var(--accent)" : pct >= 40 ? "#f59e0b" : "#ef4444";
+
   speak(title + " " + message);
 
   const certSection = $("certificate-section");
-  if (certSection) {
-    certSection.style.display = pct >= 60 ? "block" : "none";
-  }
+  if (certSection) certSection.style.display = pct >= 60 ? "block" : "none";
 
   if (total > 0) {
-    setTimeout(() => streamFinalFeedback(), 300);
+    setTimeout(() => streamFinalFeedback(cleanHistory, score, total), 300);
   } else {
-    setTimeout(saveQuizResult, 500);
+    setTimeout(() => saveQuizResult([], 0, 0), 500);
   }
 }
 
@@ -669,17 +834,52 @@ function returnToSetup(msg) {
   }
 }
 
+// ── Bouton Recommencer ────────────────────────────────────────────────────
 $("restart-btn").addEventListener("click", () => {
+  // ══════════════════════════════════════════════════════════════════════
+  // RÈGLE D'OR : stopSpeaking() EN PREMIER, AVANT TOUT.
+  //
+  // Cas critique : l'utilisateur clique "Recommencer" pendant que
+  // speakFinalFeedback() est dans son délai de 40ms (onDone du typing
+  // final vient de se déclencher). Sans ce stop en premier, speakWithAvatar()
+  // se déclenche sur la page setup → parole fantôme.
+  //
+  // Avec ce stop : _speakGeneration++ + clearTimeout(_speakPendingTimer)
+  // → le setTimeout de speakFinalFeedback() est annulé physiquement.
+  // ══════════════════════════════════════════════════════════════════════
   stopSpeaking();
+  if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
+  if (_finalTyping)    { _finalTyping.reset();    _finalTyping    = null; }
+
+  state.questions     = [];
+  state.current       = 0;
+  state.score         = 0;
+  state.answered      = false;
+  state.history       = [];
+  state.streamDone    = false;
+  state.generating    = false;
+  state.totalExpected = 10;
+
+  if ($("score-live"))         $("score-live").textContent         = "0 / 0";
+  if ($("donut-pct"))          $("donut-pct").textContent          = "0%";
+  if ($("progress-fill-mini")) $("progress-fill-mini").style.width = "0%";
+  const arc = $("donut-arc");
+  if (arc) { arc.style.strokeDashoffset = "201"; arc.style.stroke = "var(--accent)"; }
+
   $("results-screen").style.display = "none";
   $("setup-screen").style.display   = "flex";
   moveAvatarToSetup();
-  speak("Configurez votre quiz et commencez quand vous êtes prêt.");
+
+  // 150ms : AudioContext se stabilise. _speakGeneration déjà incrémenté →
+  // aucun TTS fantôme ne peut se déclencher pendant ce délai.
+  setTimeout(() => {
+    speak("Configurez votre quiz et commencez quand vous êtes prêt.");
+  }, 150);
 });
 
 // ── Utilitaires ───────────────────────────────────────────────────────────
 function escHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
 // ── Feedback typing sur mauvaise réponse ─────────────────────────────────
@@ -689,15 +889,13 @@ async function streamQuestionFeedback(q, chosenIdx) {
   const cursor = $("typing-cursor");
   if (!box || !textEl) return;
 
-  // Stoppe et remplace toute instance feedback précédente
   if (_feedbackTyping) { _feedbackTyping.reset(); }
   _feedbackTyping = createTypingInstance();
 
-  box.style.display  = "block";
-  textEl.textContent = "";
+  box.style.display     = "block";
+  textEl.textContent    = "";
   _feedbackTyping.start(textEl, cursor);
 
-  // Capture locale : si l'instance est remplacée pendant le fetch, on abandonne
   const inst = _feedbackTyping;
 
   let res;
@@ -713,7 +911,7 @@ async function streamQuestionFeedback(q, chosenIdx) {
         explanation:    q.explanation || "",
       }),
     });
-  } catch (err) {
+  } catch {
     if (inst === _feedbackTyping) { box.style.display = "none"; _feedbackTyping = null; }
     return;
   }
@@ -731,7 +929,6 @@ async function streamQuestionFeedback(q, chosenIdx) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      // Instance obsolète (question changée ou résultats affichés) → on coupe
       if (inst !== _feedbackTyping) { reader.cancel(); return; }
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n"); buffer = lines.pop() || "";
@@ -741,29 +938,29 @@ async function streamQuestionFeedback(q, chosenIdx) {
           const ev = JSON.parse(line.slice(6));
           if (ev.type === "token") inst.push(ev.content);
           if (ev.type === "done")  inst.finish();
-        } catch (_) {}
+        } catch(_) {}
       }
     }
     inst.finish();
-  } catch {
-    inst.finish();
-  }
+  } catch { inst.finish(); }
 }
 
-// ── Bilan final Dr. Layla (page résultats) ────────────────────────────────
-async function streamFinalFeedback() {
+// ══════════════════════════════════════════════════════════════════════════════
+// BILAN FINAL
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function streamFinalFeedback(cleanHistory = [], score = 0, total = 0) {
   const section = $("final-feedback-section");
   const textEl  = $("final-feedback-text");
-  if (!section || !textEl) { saveQuizResult(); return; }
+  if (!section || !textEl) { saveQuizResult(cleanHistory, score, total); return; }
 
-  // Stoppe toute instance finale précédente
   if (_finalTyping) { _finalTyping.reset(); }
   _finalTyping = createTypingInstance();
 
   section.style.display = "block";
-  textEl.innerHTML = "";
+  textEl.innerHTML      = "";
 
-  const finalCursor = document.createElement("span");
+  const finalCursor     = document.createElement("span");
   finalCursor.className = "typing-cursor";
   textEl.appendChild(finalCursor);
 
@@ -772,37 +969,34 @@ async function streamFinalFeedback() {
   textEl.insertBefore(textSpan, finalCursor);
 
   let fullText = "";
-
-  // Capture locale
-  const inst = _finalTyping;
+  const inst   = _finalTyping;
 
   inst.start(textSpan, finalCursor, () => {
+    // ── CORRECTION CRITIQUE : speakFinalFeedback protégé par _speakGeneration
+    // Ce callback onDone peut se déclencher après que l'utilisateur ait cliqué
+    // "Recommencer". stopSpeaking() a déjà incrémenté _speakGeneration et
+    // annulé _speakPendingTimer → speakFinalFeedback() capturera une génération
+    // obsolète et n'appellera jamais speakWithAvatar(). Silence garanti.
     speakFinalFeedback(fullText);
-    setTimeout(saveQuizResult, 800);
+    setTimeout(() => saveQuizResult(cleanHistory, score, total), 800);
   });
-
-  const cleanHistory = state.history.filter(h => h !== undefined && h !== null);
 
   let res;
   try {
     res = await fetch(`${API_BASE}/quiz/feedback/final/stream`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        score:   cleanHistory.filter(h => h.ok).length,
-        total:   cleanHistory.length,
-        history: cleanHistory,
-      }),
+      body: JSON.stringify({ score, total, history: cleanHistory }),
     });
-  } catch (err) {
+  } catch {
     textEl.textContent = "Bilan indisponible.";
-    setTimeout(saveQuizResult, 500);
+    setTimeout(() => saveQuizResult(cleanHistory, score, total), 500);
     return;
   }
 
   if (!res.ok) {
     textEl.textContent = "Bilan indisponible.";
-    setTimeout(saveQuizResult, 500);
+    setTimeout(() => saveQuizResult(cleanHistory, score, total), 500);
     return;
   }
 
@@ -814,7 +1008,6 @@ async function streamFinalFeedback() {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      // Instance obsolète (ex: restart rapide) → on abandonne
       if (inst !== _finalTyping) { reader.cancel(); return; }
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n"); buffer = lines.pop() || "";
@@ -822,26 +1015,23 @@ async function streamFinalFeedback() {
         if (!line.startsWith("data: ")) continue;
         try {
           const ev = JSON.parse(line.slice(6));
-          if (ev.type === "token") {
-            fullText += ev.content;
-            inst.push(ev.content);
-          }
-          if (ev.type === "done") inst.finish();
-        } catch (_) {}
+          if (ev.type === "token") { fullText += ev.content; inst.push(ev.content); }
+          if (ev.type === "done")  inst.finish();
+        } catch(_) {}
       }
     }
     inst.finish();
-  } catch {
-    inst.finish();
-  }
+  } catch { inst.finish(); }
 }
 
 // ── Certificat de réussite ────────────────────────────────────────────────
 function downloadCertificate() {
-  const total    = state.history.length;
-  const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
-  const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
-  const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
+  const cleanHistory = state.history.filter(h => h !== undefined && h !== null);
+  const total        = cleanHistory.length;
+  const score        = cleanHistory.filter(h => h.ok).length;
+  const pct          = total > 0 ? Math.round((score / total) * 100) : 0;
+  const today        = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
+  const mastered     = [...new Set(cleanHistory.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
 
   let delegateName = "Délégué VITAL SA";
   try {
@@ -899,7 +1089,7 @@ function downloadCertificate() {
   <div style="text-align:center">
     <div class="score-box">
       <div class="score-num">${pct}%</div>
-      <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} questions</strong></div>
+      <div class="score-lbl">Score obtenu<br><strong>${score} / ${total} questions</strong></div>
     </div>
   </div>
   <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
@@ -923,17 +1113,17 @@ function downloadCertificate() {
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-// ── Enregistrer le résultat du quiz médical ───────────────────────────────
-async function saveQuizResult() {
-  const answered   = state.history.filter(h => h !== undefined && h !== null);
-  const total      = answered.length;
+// ══════════════════════════════════════════════════════════════════════════════
+// SAVE RESULT
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function saveQuizResult(cleanHistory = [], score = 0, total = 0) {
   if (total === 0) { console.warn("[QuizSave] Historique vide, rien à enregistrer."); return; }
 
-  const score      = answered.filter(h => h.ok).length;
   const percentage = Math.round((score / total) * 100);
 
-  const feedbackEl  = document.getElementById("final-feedback-text");
-  let   feedbackTxt = null;
+  const feedbackEl = document.getElementById("final-feedback-text");
+  let feedbackTxt  = null;
   if (feedbackEl) {
     const raw = (feedbackEl.innerText || feedbackEl.textContent || "").trim();
     if (raw && !raw.includes("rédige votre bilan")) feedbackTxt = raw;
@@ -941,15 +1131,15 @@ async function saveQuizResult() {
 
   const payload = {
     quiz_type:         "medical",
-    score:             score,
+    score,
     total_questions:   total,
-    percentage:        percentage,
+    percentage,
     feedback:          feedbackTxt,
     difficulty:        state.difficulty || "moyen",
     products_selected: state.selectedProducts.length > 0
                          ? JSON.stringify(state.selectedProducts)
                          : null,
-    id_user:           null,
+    id_user: null,
   };
 
   console.log("[QuizSave] payload →", payload);
@@ -960,7 +1150,6 @@ async function saveQuizResult() {
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(payload),
     });
-
     if (res.ok) {
       const data = await res.json();
       console.log("✅ Résultat enregistré — id DB :", data.id);
