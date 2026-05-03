@@ -331,7 +331,7 @@ function _injectCSS() {
   position: fixed;
   z-index: 9999;
   width: 320px;
-  min-width: 240px;
+  min-width: 490px;
   min-height: 200px;
   background: rgba(10,12,18,0.92);
   border: 1px solid rgba(255,255,255,0.12);
