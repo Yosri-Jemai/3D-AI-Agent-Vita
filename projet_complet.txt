@@ -1,16 +1,4 @@
-﻿=== ./.env ===
-# ─── MySQL ───────────────────────────────────────────────────
-MYSQL_HOST=localhost
-MYSQL_PORT=3306
-MYSQL_USER=root
-<<<<<<< HEAD
-MYSQL_PASSWORD=
-MYSQL_DATABASE=vital CRM
-=======
-MYSQL_PASSWORD=root
-MYSQL_DATABASE=vital_crm
->>>>>>> b859c949b8e572fc7b4f2903f4626d0f68915e68
-
+﻿
 # ─── Token Factory ─────────────────────────────────
 TOKEN_FACTORY_API_KEY=sk-a9a024cd942045e89fbb327c1933c749
 TOKEN_FACTORY_BASE_URL=https://tokenfactory.esprit.tn
