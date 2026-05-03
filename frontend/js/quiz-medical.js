@@ -1,3 +1,13 @@
+import { BehavioralAnalyzer } from "./behavioral-analysis.js";
+import { 
+  initBehavioralPanel, 
+  updateLiveFrame, 
+  startTimer, 
+  stopTimer, 
+  destroyPanel 
+} from "./behavioral-ui.js";
+
+
 const API_BASE = window.API_BASE || "http://localhost:8000";
 
 // ── État global ────────────────────────────────────────────────────────────
@@ -14,6 +24,11 @@ let state = {
   totalExpected: 10,
   generating: false,
 };
+
+
+let _ba = null;
+let _baEnabled = false;
+let _baConsent = true;
 
 let allProducts = [];
 
@@ -393,6 +408,23 @@ async function startQuiz() {
 
   $("product-dropdown")?.classList.remove("open");
   moveAvatarToQuizPanel();
+
+  // === ANALYSE COMPORTEMENTALE ===
+if (document.getElementById("ba-consent-toggle")) {
+  _baConsent = document.getElementById("ba-consent-toggle").checked;
+}
+
+if (_baConsent) {
+  if (!_ba) _ba = new BehavioralAnalyzer();
+  _baEnabled = await _ba.init();
+  
+  if (_baEnabled) {
+    _ba.onFrame((frame) => updateLiveFrame(frame));
+    initBehavioralPanel(_ba.videoElement, _ba.overlayCanvas);
+
+  }
+}
+
   $("setup-screen").style.display    = "none";
   $("quiz-screen").style.display     = "flex";
   $("progress-header").style.display = "flex";
@@ -518,6 +550,13 @@ function loadQuestion(idx) {
   // stopSpeaking() EN PREMIER : incrémente _speakGeneration, annule _speakPendingTimer,
   // abort l'audio en cours → toute parole de la question précédente est stoppée.
   stopSpeaking();
+
+  stopTimer();
+if (_baEnabled && _ba) {
+  _ba.startQuestion(idx);
+  startTimer();
+}
+
   if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
 
   const saved = state.history[idx];
@@ -639,6 +678,12 @@ function handleAnswer(chosenIdx, q) {
 
   const correct = q.correct_index;
   const isOk    = chosenIdx === correct;
+
+  stopTimer();
+const baRecord = (_baEnabled && _ba) 
+  ? _ba.captureAnswer(chosenIdx, isOk, q.question, q.product || "") 
+  : null;
+
   if (isOk) state.score++;
 
   const buttons = $("choices-grid").querySelectorAll(".choice-btn");
@@ -655,6 +700,7 @@ function handleAnswer(chosenIdx, q) {
     correct:     q.choices[correct],
     ok:          isOk,
     explanation: q.explanation || "",
+    behavioral: baRecord,
   };
 
   $("explanation-icon").textContent    = isOk ? "✓" : "✗";
@@ -739,6 +785,7 @@ function goToPrev() {
   if (_navLocked) return;           // ← verrou anti-spam
   _lockNav(400);
   stopSpeaking();                   // ← stoppe TTS immédiatement
+  stopTimer();
   if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
   const prevIdx = state.current - 1;
   if (prevIdx < 0) return;
@@ -810,6 +857,14 @@ function showResults() {
 
   speak(title + " " + message);
 
+  if (_baEnabled && _ba) {
+    const report = _ba.getFullReport();
+    setTimeout(() => {
+      // Tu peux créer une fonction renderBehavioralReport si tu veux
+      console.log("📊 Rapport comportemental :", report);
+    }, 300);
+  }
+
   const certSection = $("certificate-section");
   if (certSection) certSection.style.display = pct >= 60 ? "block" : "none";
 
@@ -875,6 +930,14 @@ $("restart-btn").addEventListener("click", () => {
   setTimeout(() => {
     speak("Configurez votre quiz et commencez quand vous êtes prêt.");
   }, 150);
+
+
+  if (_ba) {
+    _ba.destroy();
+    _ba = null;
+  }
+  destroyPanel();
+
 });
 
 // ── Utilitaires ───────────────────────────────────────────────────────────

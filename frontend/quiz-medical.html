@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/quiz-medical.css"/>
+<link rel="stylesheet" href="css/behavioral.css">
 </head>
 <script>
   // Lance l'avatar dès que le module avatar.js est prêt
@@ -136,6 +137,21 @@
           <button class="qc-pill active" data-count="10">10</button>
           <button class="qc-pill" data-count="15">15</button>
         </div>
+      </div>
+    </div>
+
+        <!-- Analyse comportementale - Consentement -->
+    <div class="option-group">
+      <label class="option-label">Analyse comportementale</label>
+      <div class="ba-consent-row">
+        <label class="ba-switch">
+          <input type="checkbox" id="ba-consent-toggle" checked>
+          <span class="ba-slider"></span>
+        </label>
+        <span class="ba-consent-desc">
+          Activer la reconnaissance faciale et l'analyse d'attention (caméra)<br>
+          <small>Aucune image n'est enregistrée ni envoyée</small>
+        </span>
       </div>
     </div>
 
@@ -326,6 +342,6 @@
 
 <script>window._API = window.API_BASE || "http://localhost:8000";</script>
 <script type="module" src="js/avatar.js"></script>
-<script src="js/quiz-medical.js"></script>
+<script type="module" src="js/quiz-medical.js"></script>
 </body>
 </html>
