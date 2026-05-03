@@ -1007,12 +1007,20 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 // ── CERTIFICAT COMMERCIAL — Même style que le médical mais en ORANGE ───────
-function downloadCertificate() {
+async function downloadCertificate() {
   const total    = state.history.filter(Boolean).length;
   const pct      = total > 0 ? Math.round((state.score / total) * 100) : 0;
   const today    = new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" });
   const mastered = [...new Set(state.history.filter(h => h.ok).map(h => h.product))].join(", ") || "—";
-
+  const logoSrc = await fetch("images/logo.png")
+    .then(r => r.blob())
+    .then(blob => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    }))
+    .catch(() => "");
+ 
   let delegateName = "Délégué VITAL SA";
   try {
     const userJson = localStorage.getItem('user');
@@ -1021,78 +1029,169 @@ function downloadCertificate() {
       if (user.fullName) delegateName = user.fullName;
     }
   } catch(e) {}
-
+ 
+  const mention = pct >= 80 ? "Mention Excellent" : pct >= 60 ? "Mention Bien" : "Mention Passable";
+  const mentionColor = pct >= 80 ? "#70C7C6" : pct >= 60 ? "#7B9DD2" : "#BBB4DA";
+ 
+  
   const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8"/>
 <title>Certificat de Formation Commerciale — VitalAgent</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Jost:wght@300;400;500&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Lato',sans-serif;background:#fffff1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:20px}
-  .cert{background:#fff;width:760px;padding:56px 64px;border:1px solid #f8de7e;position:relative;box-shadow:0 4px 40px rgba(0,0,0,.10)}
-  .cert::before{content:'';position:absolute;inset:8px;border:2px solid #867416;pointer-events:none}
-  .logo{text-align:center;margin-bottom:28px}
-  .logo-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:.12em;text-transform:uppercase}
-  .logo-sub{font-size:11px;color:#888;letter-spacing:.18em;text-transform:uppercase;margin-top:2px}
-  .divider{width:80px;height:2px;background:#867416;margin:16px auto}
-  .heading{text-align:center;font-family:'Playfair Display',serif;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#888;margin-bottom:8px}
-  .title{text-align:center;font-family:'Playfair Display',serif;font-size:34px;font-weight:700;color:#1a1a1a;line-height:1.25;margin-bottom:24px}
-  .body{text-align:center;font-size:14px;color:#444;line-height:1.8;margin-bottom:28px}
-  .delegate{font-size:22px;font-family:'Playfair Display',serif;color:#1a1a1a;border-bottom:1.5px solid #867416;display:inline-block;padding:0 24px 4px;margin:6px 0 10px}
-  .score-box{display:inline-flex;align-items:center;gap:12px;background:#feeeb8;border:1.5px solid #867416;border-radius:10px;padding:12px 28px;margin:0 auto 24px}
-  .score-num{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#5c510f}
-  .score-lbl{font-size:12px;color:#867416;text-align:left;line-height:1.4}
-  .products{background:#fffff1;border:1px solid #f8de7e;border-radius:8px;padding:12px 18px;font-size:12.5px;color:#555;margin-bottom:28px;text-align:left}
-  .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px}
-  .sig{text-align:center}
-  .sig-line{width:160px;height:1px;background:#bea74b;margin:0 auto 6px}
-  .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#333}
-  .sig-role{font-size:10px;color:#888;letter-spacing:.08em}
-  .date{font-size:11px;color:#888;text-align:right}
-  .wm{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:9px;color:#ccc;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap}
+  body{font-family:'Jost',sans-serif;background:#F4F0E3;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:24px}
+  .cert{background:#ffffff;width:780px;padding:0;border-radius:4px;position:relative;box-shadow:0 8px 48px rgba(123,157,210,0.18);overflow:hidden}
+  .cert-top-bar{height:8px;background:linear-gradient(90deg,#DAD4DE,#BBB4DA,#7B9DD2,#70C7C6)}
+  .cert-inner{padding:52px 64px 48px}
+  .cert-border{position:absolute;inset:16px;border:1.5px solid rgba(187,180,218,0.4);border-radius:2px;pointer-events:none}
+  /* Header */
+  .cert-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid #DAD4DE}
+  .cert-logo{display:flex;align-items:center;gap:14px}
+  .cert-logo img{width:64px;height:64px;object-fit:contain}
+  .cert-logo-text .name{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#2a2a3e;letter-spacing:.1em;text-transform:uppercase}
+  .cert-logo-text .sub{font-size:10px;color:#9a96b0;letter-spacing:.2em;text-transform:uppercase;margin-top:2px}
+  .cert-type{text-align:right}
+  .cert-type .label{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#9a96b0}
+  .cert-type .value{font-size:13px;font-weight:500;color:#7B9DD2;margin-top:3px}
+  /* Body */
+  .cert-body{text-align:center;margin-bottom:36px}
+  .cert-title-small{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#BBB4DA;margin-bottom:10px}
+  .cert-title-big{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;color:#2a2a3e;line-height:1.25;margin-bottom:20px}
+  .cert-text{font-size:13.5px;color:#666;line-height:1.8;margin-bottom:6px}
+  .cert-name{font-family:'Playfair Display',serif;font-size:26px;color:#2a2a3e;border-bottom:2px solid #7B9DD2;display:inline-block;padding:0 28px 6px;margin:8px 0 16px}
+  .cert-sub-text{font-size:13px;color:#888;line-height:1.7}
+  /* Score */
+  .cert-score-row{display:flex;align-items:center;justify-content:center;gap:20px;margin:28px 0}
+  .cert-score-box{background:linear-gradient(135deg,#F4F0E3,#DAD4DE);border:2px solid #BBB4DA;border-radius:12px;padding:18px 36px;text-align:center}
+  .cert-score-num{font-family:'Playfair Display',serif;font-size:44px;font-weight:700;color:#7B9DD2;line-height:1}
+  .cert-score-label{font-size:11px;color:#9a96b0;letter-spacing:.12em;text-transform:uppercase;margin-top:4px}
+  .cert-score-detail{font-size:13px;font-weight:500;color:#2a2a3e;margin-top:3px}
+  .cert-mention{background:linear-gradient(135deg,#7B9DD2,#70C7C6);border-radius:20px;padding:8px 22px;color:#fff;font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;align-self:center}
+  /* Products */
+  .cert-products{background:#F4F0E3;border:1px solid #DAD4DE;border-radius:8px;padding:13px 18px;font-size:12.5px;color:#666;margin-bottom:32px;text-align:left;line-height:1.6}
+  .cert-products strong{color:#2a2a3e}
+  /* Footer */
+  .cert-footer{display:flex;justify-content:space-between;align-items:flex-end;padding-top:24px;border-top:1px solid #DAD4DE}
+  .cert-sig{text-align:center}
+  .sig-graphic{margin-bottom:8px;height:52px;display:flex;align-items:flex-end;justify-content:center}
+  .sig-svg{opacity:.85}
+  .sig-line{width:140px;height:1.5px;background:linear-gradient(90deg,transparent,#7B9DD2,transparent);margin:0 auto 6px}
+  .sig-name{font-family:'Playfair Display',serif;font-size:13px;color:#2a2a3e}
+  .sig-role{font-size:10px;color:#9a96b0;letter-spacing:.06em;margin-top:2px}
+  .cert-stamp{display:flex;flex-direction:column;align-items:center;gap:4px}
+  .stamp-circle{width:86px;height:86px;border-radius:50%;border:2.5px solid #BBB4DA;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(244,240,227,0.6);position:relative}
+  .stamp-circle::before{content:'';position:absolute;inset:4px;border-radius:50%;border:1px dashed #DAD4DE}
+  .stamp-inner{text-align:center;z-index:1}
+  .stamp-logo{font-size:18px;line-height:1}
+  .stamp-text{font-size:7px;letter-spacing:.15em;text-transform:uppercase;color:#7B9DD2;margin-top:2px;font-weight:500}
+  .stamp-year{font-size:9px;color:#BBB4DA;margin-top:1px}
+  .cert-date{font-size:11px;color:#9a96b0;text-align:right;line-height:1.8}
+  .cert-date strong{color:#2a2a3e;display:block;font-size:12px}
+  /* Bottom bar */
+  .cert-bottom{height:6px;background:linear-gradient(90deg,#70C7C6,#7B9DD2,#BBB4DA,#DAD4DE)}
+  .wm{text-align:center;font-size:9px;color:#BBB4DA;letter-spacing:.18em;text-transform:uppercase;padding:10px 0 4px}
   @media print{body{background:#fff;padding:0}.cert{box-shadow:none}.no-print{display:none}}
 </style>
 </head>
 <body>
 <div class="cert">
-  <div class="logo"><div class="logo-name">VITAL SA</div><div class="logo-sub">Formation des Délégués Commerciaux</div></div>
-  <div class="divider"></div>
-  <div class="heading">Certificat de réussite</div>
-  <div class="title">Quiz de Formation<br>Commerciale</div>
-  <div class="body">
-    Ce certificat atteste que le délégué<br>
-    <span class="delegate">${delegateName}</span><br>
-    a validé avec succès le quiz de formation commerciale VitalAgent.
-  </div>
-  <div style="text-align:center">
-    <div class="score-box">
-      <div class="score-num">${pct}%</div>
-      <div class="score-lbl">Score obtenu<br><strong>${state.score} / ${total} scénarios</strong></div>
+  <div class="cert-top-bar"></div>
+  <div class="cert-border"></div>
+  <div class="cert-inner">
+ 
+    <!-- Header -->
+    <div class="cert-header">
+      <div class="cert-logo">
+          <img src="${logoSrc}" alt="VITAL Laboratoires" style="width:64px;height:64px;object-fit:contain;filter:invert(1) hue-rotate(180deg) brightness(0.15);"/>        <div class="cert-logo-text">
+          <div class="name">VITAL SA</div>
+          <div class="sub">Formation Commerciale</div>
+        </div>
+      </div>
+      <div class="cert-type">
+        <div class="label">Type de certification</div>
+        <div class="value">Quiz Délégué Commercial</div>
+      </div>
     </div>
-  </div>
-  <div class="products"><strong>Produits maîtrisés :</strong> ${mastered}</div>
-  <div class="footer">
-    <div class="sig"><div class="sig-line"></div><div class="sig-name">Vita</div><div class="sig-role">Coach Vente Pharmaceutique · VitalAgent</div></div>
-    <div class="date">Délivré le ${today}<br><span style="font-size:9px;color:#bbb">VitalAgent — VITAL SA</span></div>
+ 
+    <!-- Body -->
+    <div class="cert-body">
+      <div class="cert-title-small">Certificat de réussite</div>
+      <div class="cert-title-big">Formation Commerciale<br>VitalAgent</div>
+      <div class="cert-text">Ce certificat atteste que le délégué</div>
+      <div class="cert-name">${delegateName}</div>
+      <div class="cert-sub-text">a validé avec succès le quiz de formation commerciale VITAL SA<br>et démontre une maîtrise des compétences de vente pharmaceutique.</div>
+    </div>
+ 
+    <!-- Score -->
+      <div class="cert-score-row">
+        <div class="cert-score-box" style="padding:20px 80px;">
+          <div class="cert-score-num">${pct}%</div>
+          <div class="cert-score-label">Score obtenu</div>
+          <div class="cert-score-detail">${state.score} / ${total} scénarios réussis</div>
+          <div class="cert-mention" style="margin-top:14px;background:linear-gradient(135deg,${mentionColor},#70C7C6);border-radius:20px;padding:8px 22px;color:#fff;font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;display:inline-block">${mention}</div>
+        </div>
+      </div>
+    <!-- Products -->
+    <div class="cert-products">
+      <strong>Produits maîtrisés :</strong> ${mastered}
+    </div>
+ 
+    <!-- Footer -->
+    <div class="cert-footer">
+      <!-- Signature -->
+      <div class="cert-sig">
+        <div class="sig-graphic">
+          <svg class="sig-svg" width="140" height="48" viewBox="0 0 140 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 38 C20 10, 30 42, 45 28 C55 18, 60 36, 75 24 C85 15, 92 38, 110 30 C120 25, 128 32, 135 28" stroke="#7B9DD2" stroke-width="2" stroke-linecap="round" fill="none"/>
+            <path d="M40 40 C50 35, 55 44, 65 40" stroke="#70C7C6" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          </svg>
+        </div>
+        <div class="sig-line"></div>
+        <div class="sig-name">Vita</div>
+        <div class="sig-role">Coach Vente Pharmaceutique · VitalAgent</div>
+      </div>
+ 
+      <!-- Stamp -->
+      <div class="cert-stamp">
+        <div class="stamp-circle">
+          <div class="stamp-inner">
+            <div class="stamp-logo">🍀</div>
+            <div class="stamp-text">VITAL SA</div>
+            <div class="stamp-year">Certifié</div>
+          </div>
+        </div>
+      </div>
+ 
+      <!-- Date -->
+      <div class="cert-date">
+        <strong>Délivré le</strong>
+        ${today}<br>
+        <span style="font-size:9px;color:#BBB4DA">VitalAgent — VITAL SA Formation</span>
+      </div>
+    </div>
+ 
   </div>
   <div class="wm">VITAL SA · Formation Commerciale · Certifié VitalAgent</div>
+  <div class="cert-bottom"></div>
 </div>
+ 
 <div class="no-print">
-  <button onclick="window.print()" style="padding:12px 28px;background:#867416;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
+  <button onclick="window.print()" style="padding:12px 32px;background:linear-gradient(135deg,#7B9DD2,#70C7C6);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;box-shadow:0 4px 16px rgba(123,157,210,0.3)">🖨️ Imprimer / Enregistrer en PDF</button>
 </div>
 </body>
 </html>`;
-
+ 
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
-  a.href = url; 
+  a.href = url;
   a.download = "certificat-formation-commerciale-vitalagent.html";
-  document.body.appendChild(a); 
+  document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a); 
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
