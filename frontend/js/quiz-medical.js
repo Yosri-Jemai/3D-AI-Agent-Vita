@@ -800,11 +800,25 @@ function goToPrev() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function showResults() {
-  // ← EN PREMIER : stoppe tout TTS immédiatement
+  // ── 1. Arrêt immédiat de tout ce qui parle ─────────────────────
   stopSpeaking();
   if (_feedbackTyping) { _feedbackTyping.reset(); _feedbackTyping = null; }
   if (_finalTyping)    { _finalTyping.reset();    _finalTyping    = null; }
 
+  // ── 2. Récupération du rapport AVANT destruction ──
+  let behavioralReport = null;
+  if (_baEnabled && _ba) {
+    behavioralReport = _ba.getFullReport();
+  }
+
+  // ── 3. Fermeture du widget comportemental ───────────────────────
+  if (_baEnabled && _ba) {
+    _ba.destroy();
+    _ba = null;
+  }
+  destroyPanel();
+
+  // ── 4. Passage à l'écran résultats ───────────────────────────────
   moveAvatarToResults();
 
   $("quiz-screen").style.display     = "none";
@@ -831,6 +845,7 @@ function showResults() {
   $("results-title").textContent   = title;
   $("results-message").textContent = message;
 
+  // Breakdown
   const breakdown = $("results-breakdown");
   breakdown.innerHTML = "";
   cleanHistory.forEach((item, i) => {
@@ -857,19 +872,29 @@ function showResults() {
 
   speak(title + " " + message);
 
-  if (_baEnabled && _ba) {
-    const report = _ba.getFullReport();
-    setTimeout(() => {
-      // Tu peux créer une fonction renderBehavioralReport si tu veux
-      console.log("📊 Rapport comportemental :", report);
-    }, 300);
+  // ── 5. Bilan comportemental par Dr. Layla (LLM) ─────────────────────
+  const behavioralSummary = document.getElementById("behavioral-summary");
+  const conclusionText    = document.getElementById("ba-conclusion-text");
+  const farewell          = document.getElementById("farewell-message");
+
+  if (behavioralSummary && conclusionText) {
+    behavioralSummary.style.display = "block";
+    conclusionText.textContent = "Dr. Layla analyse votre comportement...";
+
+    // Appel asynchrone
+    generateBehavioralConclusion(behavioralReport).then(conclusion => {
+      conclusionText.textContent = conclusion;
+    });
   }
 
+  if (farewell) farewell.style.display = "block";
+
+  // ── 6. Feedback final + Certificat + Sauvegarde ─────────────────────
   const certSection = $("certificate-section");
   if (certSection) certSection.style.display = pct >= 60 ? "block" : "none";
 
   if (total > 0) {
-    setTimeout(() => streamFinalFeedback(cleanHistory, score, total), 300);
+    setTimeout(() => streamFinalFeedback(cleanHistory, score, total), 400);
   } else {
     setTimeout(() => saveQuizResult([], 0, 0), 500);
   }
@@ -1224,4 +1249,55 @@ async function saveQuizResult(cleanHistory = [], score = 0, total = 0) {
   } catch (err) {
     console.error("❌ saveQuizResult erreur réseau :", err);
   }
+}
+
+
+/*******/
+// ── Génération du bilan comportemental par LLM ─────────────────────────────
+async function generateBehavioralConclusion(report) {
+  if (!report) {
+    return "Aucune donnée comportementale disponible pour cette session.";
+  }
+
+  const payload = {
+    avg_confidence: Math.round((report.avgConf || 0) * 100),
+    avg_stress:     Math.round((report.avgStress || 0) * 100),
+    avg_fidget:     Math.round((report.avgFidget || 0) * 100),
+    gaze_away_rate: Math.round((report.gazeAwayRate || 0) * 100),
+    hesitation_rate: Math.round((report.hesitationRate || 0) * 100),
+    dominant_expression: report.dominantExpression || "neutral",
+    dominant_posture: report.dominantPosture || "normal",
+    top_signals: report.topStressSignals ? report.topStressSignals.map(s => s.label) : []
+  };
+
+  console.log("📤 Envoi au LLM →", payload);
+
+  try {
+    const res = await fetch(`${API_BASE}/quiz/behavioral-conclusion`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      console.error(`❌ HTTP ${res.status} sur behavioral-conclusion`);
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    console.log("✅ Réponse LLM :", data.conclusion);
+    return data.conclusion;
+  } catch (e) {
+    console.error("❌ Échec appel LLM comportemental :", e);
+    return getLocalBehavioralConclusion(payload);
+  }
+}
+
+// Fallback local (au cas où)
+function getLocalBehavioralConclusion(data) {
+  if (data.avg_stress > 55) return "Vous sembliez légèrement tendu. Essayez de respirer calmement avant de répondre.";
+  if (data.gaze_away_rate > 40) return "Vous avez parfois détourné le regard. Restez concentré sur l'écran pendant les questions.";
+  if (data.avg_confidence > 75) return "Excellente concentration et confiance tout au long du quiz !";
+  if (data.hesitation_rate > 50) return "Vous avez bien pris le temps de réfléchir, ce qui montre une bonne démarche de raisonnement.";
+  return "Votre attention et votre posture étaient bonnes durant cette session de formation.";
 }

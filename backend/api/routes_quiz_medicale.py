@@ -531,3 +531,57 @@ async def stream_final_feedback(req: FinalFeedbackRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+    #############
+# ──────────────────────────────────────────────────────────────
+# BILAN COMPORTEMENTAL LLM
+# ──────────────────────────────────────────────────────────────
+# =============================================
+# BILAN COMPORTEMENTAL PAR LLM
+# =============================================
+
+class BehavioralConclusionRequest(BaseModel):
+    avg_confidence: int = 50
+    avg_stress: int = 0
+    avg_fidget: int = 0
+    gaze_away_rate: int = 0
+    hesitation_rate: int = 0
+    dominant_expression: str = "neutral"
+    dominant_posture: str = "normal"
+    top_signals: List[str] = []
+
+
+@router.post("/behavioral-conclusion")
+async def behavioral_conclusion(req: BehavioralConclusionRequest):
+    from langchain_core.messages import SystemMessage, HumanMessage
+    from backend.rag.engine import engine
+    
+    engine.initialize()
+
+    system_prompt = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Tu rédiges **une seule phrase courte** (15 à 28 mots), encourageante, précise et professionnelle sur le comportement du délégué pendant le quiz.
+Sois constructif. Jamais de "Docteur,"."""
+
+    user_prompt = f"""
+Données comportementales du quiz :
+- Confiance moyenne : {req.avg_confidence}%
+- Stress moyen : {req.avg_stress}%
+- Agitation : {req.avg_fidget}%
+- Regard détourné : {req.gaze_away_rate}%
+- Taux d'hésitation : {req.hesitation_rate}%
+- Expression dominante : {req.dominant_expression}
+- Posture dominante : {req.dominant_posture}
+- Signaux détectés : {req.top_signals}
+"""
+
+    try:
+        response = engine.llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        conclusion = response.content.strip()
+        return {"conclusion": conclusion}
+    except Exception as e:
+        print(f"[Behavioral Conclusion] Erreur LLM : {e}")
+        return {"conclusion": "Votre attention était globalement bonne durant le quiz."}
