@@ -8,28 +8,21 @@
 <!-- VÉRIFICATION D'AUTHENTIFICATION -->
 <script>
 (function() {
-    const SPRING_BOOT_URL = 'http://localhost:8080';
-    
-    // Vérifier le token dans localStorage
     const token = localStorage.getItem('auth_token');
     const userJson = localStorage.getItem('user');
     
     if (!token || !userJson) {
-        console.log('Non authentifié, redirection vers auth.html');
         window.location.href = 'auth.html';
         return;
     }
     
     try {
         const user = JSON.parse(userJson);
-        // Vérifier le rôle (PROFESSIONAL ou ADMIN)
         if (user.role !== 'PROFESSIONAL' && user.role !== 'ADMIN') {
-            console.log('Rôle incorrect, redirection vers index.html');
             window.location.href = 'index.html';
             return;
         }
         
-        // Stocker les infos utilisateur pour la session
         window._currentUser = {
             id: user.id,
             fullName: user.fullName,
@@ -39,7 +32,6 @@
             profileImageUrl: user.profileImageUrl
         };
         
-        // Stocker aussi dans sessionStorage pour compatibilité avec le code existant
         sessionStorage.setItem('vita_user', JSON.stringify({
             id: user.id,
             firstname: user.fullName?.split(' ')[0] || '',
@@ -50,10 +42,7 @@
             numTelephone: user.numTelephone
         }));
         
-        console.log('✅ Connecté en tant que:', user.fullName, `(${user.role})`);
-        
     } catch(e) {
-        console.error('Erreur de vérification:', e);
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
         sessionStorage.removeItem('vita_user');
@@ -66,51 +55,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/style.css"/>
 <style>
-:root {
-  --accent: #1e7a2e;
-}
-.avatar-sm.ai {
-  background: linear-gradient(135deg, #1e7a2e, #268a37ce);
-}
-.send-btn {
-  background: var(--accent);
-}
-.send-btn:hover:not(:disabled) {
-  background: #1e7a2e;
-}
-.product-badge, .product-context-bar, .quick-chips, .mode-badge {
-  display: none !important;
-}
-.logout-btn {
-  padding: 5px 12px;
-  border-radius: 8px;
-  background: #1e7a2e;
-  border: 1px solid #1e7a2e;
-  color: #1e7a2e;
-  font-size: 11px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  transition: all 0.2s;
-}
-.logout-btn:hover {
-  background: #1e7a2e ; 
-  border-color: #1e7a2e ; 
-}
-.user-badge {
-  padding: 5px 12px;
-  border-radius: 8px;
-  background: #1e7a2e ; 
-  border: 1px solid #1e7a2e;
-  color: var(--accent);
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-
+/* Surcharges spécifiques commercial */
+.send-btn { background: var(--accent); }
+.send-btn:hover:not(:disabled) { background: #166b24; }
+.product-badge, .product-context-bar, .quick-chips, .mode-badge { display: none !important; }
+.avatar-sm.ai { background: linear-gradient(135deg, #1e7a2e, #268a37ce); }
 </style>
 </head>
 <body>
@@ -118,7 +67,8 @@
   <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
 </div>
 
-<div class="app">
+<div class="app" id="app-grid" style="grid-template-columns: 550px 1fr 300px;">
+  <!-- ═══════════════ AVATAR PANEL ═══════════════ -->
   <aside class="avatar-panel">
     <div class="avatar-scene">
       <div class="speak-ring r1"></div>
@@ -141,7 +91,9 @@
     </div>
     <div class="voice-controls">
       <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V20h3v2H8v-2h3v-2.08A7 7 0 0 1 5 11z"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 8h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V20h3v2H8v-2h3v-2.08A7 7 0 0 1 5 11z"/>
+        </svg>
         <span id="mic-label">Hold to speak</span>
       </button>
       <button class="stop-btn" id="stop-btn" onclick="stopAvatar()" title="Stop speaking">
@@ -158,6 +110,7 @@
     </div>
   </aside>
 
+  <!-- ═══════════════ CHAT PANEL ═══════════════ -->
   <main class="chat-panel">
     <div class="chat-header">
       <div class="header-left">
@@ -165,9 +118,8 @@
         <p>You are the doctor. Vita is your delegate.</p>
       </div>
       <div class="header-right" style="display:flex;align-items:center;gap:8px;">
-        <!-- Bouton menu hamburger -->
-        <button class="menu-hamburger" id="menu-hamburger" onclick="toggleSlideMenu()" style="background:none;border:1px solid rgba(15, 61, 2, 0.3);border-radius:8px;padding:8px 10px;cursor:pointer;">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button id="header-menu-btn" onclick="toggleSidebar()" style="background:none;border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:8px 10px;cursor:pointer;display:none;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="3" y1="12" x2="21" y2="12"/>
             <line x1="3" y1="6" x2="21" y2="6"/>
             <line x1="3" y1="18" x2="21" y2="18"/>
@@ -175,65 +127,6 @@
         </button>
       </div>
     </div>
-    <!-- Slide Menu -->
-<div class="slide-menu" id="slide-menu">
-  <div class="slide-menu-header">
-    <h3>Menu</h3>
-    <button class="slide-menu-close" onclick="closeSlideMenu()">✕</button>
-  </div>
-  
-  <div class="slide-menu-content">
-    <!-- User badge -->
-    <div class="user-badge slide-item">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-        <circle cx="12" cy="7" r="4"/>
-      </svg>
-      <span id="user-name">Loading...</span>
-    </div>
-    
-    <!-- Mindmap button -->
-    <button class="slide-item slide-btn" id="mindmap-btn" onclick="openMindmap(); closeSlideMenu();" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="3"/>
-        <line x1="12" y1="2" x2="12" y2="5"/>
-        <line x1="12" y1="19" x2="12" y2="22"/>
-        <line x1="2" y1="12" x2="5" y2="12"/>
-        <line x1="19" y1="12" x2="22" y2="12"/>
-        <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"/>
-        <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"/>
-        <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"/>
-        <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
-      </svg>
-      Mindmap
-    </button>
-    
-    <!-- Report button -->
-    <button class="slide-item slide-btn" id="report-btn" onclick="openReport(); closeSlideMenu();" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/>
-        <polyline points="10 9 9 9 8 9"/>
-      </svg>
-      Report
-    </button>
-    
-    <!-- Logout button -->
-    <button class="slide-item slide-btn logout-slide" onclick="logout()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-        <polyline points="16 17 21 12 16 7"/>
-        <line x1="21" y1="12" x2="9" y2="12"/>
-      </svg>
-      Logout
-    </button>
-  </div>
-</div>
-
-<!-- Overlay pour fermer le menu -->
-<div class="slide-menu-overlay" id="slide-menu-overlay" onclick="closeSlideMenu()"></div>
 
     <div class="messages" id="messages">
       <div class="empty-state" id="empty-state">
@@ -253,7 +146,7 @@
           placeholder="Type your question or objection as the doctor..."
           onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="send-btn" id="send-btn" onclick="sendQuestion()">
-          <svg viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.5">
+          <svg viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="10" y1="16" x2="10" y2="4"/><polyline points="5,9 10,4 15,9"/>
           </svg>
         </button>
@@ -261,17 +154,80 @@
       <div class="input-hint"><kbd>Enter</kbd> send &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> new line</div>
     </div>
   </main>
+
+  <!-- ═══════════════ SLIDE MENU — 3ème colonne de grille ═══════════════ -->
+  <div class="slide-menu" id="slide-menu" style="display:flex;">
+    <div class="slide-menu-header">
+      <h3>Menu</h3>
+      <button onclick="toggleSidebar()" style="background:none;border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:8px 10px;cursor:pointer;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="slide-menu-content">
+
+      <!-- User badge -->
+      <div class="user-badge slide-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span id="user-name">Loading...</span>
+      </div>
+
+      <!-- Mindmap -->
+      <button class="slide-item slide-btn" id="mindmap-btn" onclick="openMindmap()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <line x1="12" y1="2" x2="12" y2="5"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+          <line x1="2" y1="12" x2="5" y2="12"/>
+          <line x1="19" y1="12" x2="22" y2="12"/>
+        </svg>
+        Mindmap
+      </button>
+
+      <!-- Report -->
+      <button class="slide-item slide-btn" id="report-btn" onclick="openReport()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        Report
+      </button>
+
+      <!-- Logout -->
+      <button class="slide-item slide-btn logout-slide" onclick="logout()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/>
+          <line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        Logout
+      </button>
+
+    </div>
+  </div>
+  <!-- fin .app -->
 </div>
 
+<!-- ═══════════════ MODALS ═══════════════ -->
 <div id="report-overlay" class="report-overlay" onclick="closeReportOnBg(event)">
   <div class="report-modal">
     <div class="report-modal-header">
       <h2>Session Report</h2>
-      <button class="close-report" onclick="closeReport()">&times;</button>
+      <div class="report-modal-actions">
+        <button class="report-download-btn" onclick="downloadReport()">⬇ Download PDF</button>
+        <button class="report-close-btn" onclick="closeReport()">Close</button>
+      </div>
     </div>
-    <div id="report-content" class="report-content"></div>
-    <div class="report-modal-footer">
-      <button class="close-btn" onclick="closeReport()">Close</button>
+    <div class="report-body">
+      <div id="report-content"></div>
     </div>
   </div>
 </div>
@@ -313,6 +269,7 @@
   </div>
 </div>
 
+<!-- ═══════════════ SCRIPTS ═══════════════ -->
 <script type="importmap">
 {
   "imports": {
@@ -334,26 +291,20 @@ function logout() {
     window.location.href = 'auth.html';
 }
 
-// Afficher le nom de l'utilisateur
+// Afficher le nom utilisateur
 if (window._currentUser) {
-    const userNameSpan = document.getElementById('user-name');
-    if (userNameSpan) {
-        userNameSpan.textContent = window._currentUser.fullName;
-    }
+    const el = document.getElementById('user-name');
+    if (el) el.textContent = window._currentUser.fullName;
 }
 
-// Fonction startVisit pour l'empty state
+// startVisit pour l'empty state
 function startVisit() {
-    // Cette fonction sera définie dans commercial.js
-    // On la redéfinit ici pour éviter l'erreur
     if (typeof window.startVisitCallback === 'function') {
         window.startVisitCallback();
     } else {
-        // Simuler un message de bienvenue
         const messagesContainer = document.getElementById('messages');
         const emptyState = document.getElementById('empty-state');
         if (emptyState) emptyState.style.display = 'none';
-        
         const welcomeMessage = document.createElement('div');
         welcomeMessage.className = 'message bot';
         welcomeMessage.innerHTML = `
@@ -368,36 +319,34 @@ function startVisit() {
     }
 }
 
-
-
-// Slide menu functions
-function toggleSlideMenu() {
+// ── Menu latéral — même comportement que index.html ──────────────────────
+function toggleSidebar() {
   const menu = document.getElementById('slide-menu');
-  const overlay = document.getElementById('slide-menu-overlay');
-  
-  menu.classList.toggle('open');
-  overlay.classList.toggle('open');
-  
-  if (menu.classList.contains('open')) {
-    document.body.style.overflow = 'hidden';
+  const app  = document.getElementById('app-grid');
+  const btn  = document.getElementById('header-menu-btn');
+
+  if (menu.style.display === 'none' || menu.style.display === '') {
+    menu.style.display = 'flex';
+    app.style.gridTemplateColumns = '550px 1fr 300px';
+    if (btn) btn.style.display = 'none';
   } else {
-    document.body.style.overflow = '';
+    menu.style.display = 'none';
+    app.style.gridTemplateColumns = '550px 1fr';
+    if (btn) btn.style.display = 'flex';
   }
 }
 
-function closeSlideMenu() {
-  const menu = document.getElementById('slide-menu');
-  const overlay = document.getElementById('slide-menu-overlay');
-  
-  menu.classList.remove('open');
-  overlay.classList.remove('open');
-  document.body.style.overflow = '';
-}
-
-// Fermer avec Echap
+// Fermer avec Échap
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
-    closeSlideMenu();
+    const menu = document.getElementById('slide-menu');
+    const app  = document.getElementById('app-grid');
+    const btn  = document.getElementById('header-menu-btn');
+    if (menu && menu.style.display !== 'none') {
+      menu.style.display = 'none';
+      app.style.gridTemplateColumns = '550px 1fr';
+      if (btn) btn.style.display = 'flex';
+    }
   }
 });
 </script>
