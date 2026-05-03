@@ -309,7 +309,42 @@
       </button>
     </div>
   </div>
-
+<div id="mindmap-overlay" class="mindmap-overlay" onclick="closeMindmapOnBg(event)">
+  <div class="mindmap-modal">
+    <div class="mindmap-modal-header">
+      <div class="mindmap-modal-title">
+        <span class="mindmap-icon-badge">◈</span>
+        <h2>Session Mindmap</h2>
+        <span class="mindmap-subtitle" id="mindmap-subtitle">Powered by Mistral AI</span>
+      </div>
+      <div class="mindmap-modal-actions">
+        <button class="mindmap-download-btn" onclick="downloadMindmapSVG()" id="mindmap-dl-btn" disabled>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download SVG
+        </button>
+        <button class="mindmap-close-btn" onclick="closeMindmap()">✕</button>
+      </div>
+    </div>
+    <div class="mindmap-body">
+      <div id="mindmap-loading" class="mindmap-loading">
+        <div class="mindmap-spinner"></div>
+        <div class="mindmap-loading-text">
+          <p>Analyse de la session…</p>
+          <p class="mindmap-loading-sub">Mistral AI extrait les concepts clés</p>
+        </div>
+      </div>
+      <div id="mindmap-svg-container" class="mindmap-svg-container" style="display:none"></div>
+      <div id="mindmap-error" class="mindmap-error" style="display:none">
+        <p>⚠ Impossible de générer la mindmap</p>
+        <span id="mindmap-error-detail"></span>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- importmap : résout "three" pour TalkingHead -->
 <script type="importmap">
 {
@@ -393,6 +428,7 @@ document.addEventListener('keydown', function(e) {
   }
 });
 </script>
+
 
 </body>
 </html>
