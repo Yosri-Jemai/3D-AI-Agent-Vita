@@ -21,6 +21,7 @@
     --warning: #f59e0b;
 }
 
+/* ✅ CENTRAGE VERTICAL & HORIZONTAL AJOUTÉ ICI */
 body {
     margin: 0;
     font-family: "Inter", Arial, sans-serif;
@@ -28,6 +29,9 @@ body {
     min-height: 100vh;
     background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-main) 45%, var(--bg-accent) 100%);
     line-height: 1.6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .page-bg {
@@ -40,12 +44,14 @@ body {
     pointer-events: none;
 }
 
+/* ✅ MARGIN AJUSTÉ POUR LAISSER FLEXBOX CENTRER SANS DÉCALAGE */
 .admin-shell {
     position: relative;
     z-index: 1;
-    max-width: 1360px; /* Élargi légèrement pour plus d'air */
-    margin: 32px auto;
-    padding: 0 28px 32px;
+    max-width: 1360px;
+    width: 100%;
+    margin: 20px auto;
+    padding: 0 20px;
 }
 
 .glass-card {
@@ -57,17 +63,17 @@ body {
 
 .auth-card {
     border-radius: 24px;
-    padding: 32px; /* +4px */
+    padding: 32px;
     display: grid;
     grid-template-columns: 1.1fr 1fr;
-    gap: 28px; /* +6px */
+    gap: 28px;
 }
 
 .auth-brand {
     border-radius: 18px;
     background: linear-gradient(155deg, var(--primary), var(--accent-2));
     color: #f8fbff;
-    padding: 32px; /* +4px */
+    padding: 32px;
 }
 
 .badge {
@@ -106,15 +112,15 @@ body {
 
 .auth-panel {
     border-radius: 18px;
-    padding: 28px; /* +4px */
+    padding: 28px;
     background: var(--bg-main);
     border: 1px solid var(--border);
 }
 
 .tabs {
     display: flex;
-    gap: 12px; /* +2px */
-    margin-bottom: 20px; /* +4px */
+    gap: 12px;
+    margin-bottom: 20px;
 }
 
 .tab,
@@ -122,7 +128,7 @@ body {
     border: 1px solid var(--primary);
     background: var(--bg-main);
     border-radius: 12px;
-    padding: 12px 16px; /* +1px */
+    padding: 12px 16px;
     cursor: pointer;
     font-weight: 700;
     color: var(--text);
@@ -150,11 +156,23 @@ body {
 
 .panel.active {
     display: block;
+    animation: panelSlideIn 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes panelSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 form {
     display: grid;
-    gap: 14px; /* +4px */
+    gap: 14px;
 }
 
 label {
@@ -172,7 +190,7 @@ button {
 }
 
 input {
-    padding: 12px 14px; /* +1px */
+    padding: 12px 14px;
     background: rgba(255, 255, 255, 0.85);
 }
 
@@ -218,7 +236,7 @@ input:focus {
     color: white;
     cursor: pointer;
     font-weight: 700;
-    padding: 12px 16px; /* +1px */
+    padding: 12px 16px;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -242,8 +260,8 @@ input:focus {
 }
 
 .message {
-    margin-top: 16px; /* +2px */
-    padding: 12px 14px; /* +2px */
+    margin-top: 16px;
+    padding: 12px 14px;
     border-radius: 10px;
     display: none;
     font-size: 14px;
@@ -270,18 +288,18 @@ input:focus {
 
 .dashboard {
     border-radius: 20px;
-    padding: 24px; /* +6px */
+    padding: 24px;
     background: rgba(244, 240, 227, 0.6);
 }
 
 .dashboard-header {
     border-radius: 16px;
-    padding: 24px; /* +6px */
+    padding: 24px;
     display: flex;
     justify-content: space-between;
-    align-items: flex-start; /* Alignement vertical propre */
-    gap: 24px; /* +8px */
-    margin-bottom: 24px; /* +8px */
+    align-items: flex-start;
+    gap: 24px;
+    margin-bottom: 24px;
     background: var(--bg-main);
     border: 1px solid var(--border);
 }
@@ -303,12 +321,12 @@ input:focus {
     align-items: center;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 12px; /* +2px */
+    gap: 12px;
 }
 
 .quick-links {
     display: flex;
-    gap: 10px; /* +2px */
+    gap: 10px;
 }
 
 .quick-link {
@@ -317,7 +335,7 @@ input:focus {
     border-radius: 10px;
     background: var(--bg-main);
     color: var(--text);
-    padding: 10px 12px; /* +1px */
+    padding: 10px 12px;
     font-size: 12px;
     font-weight: 700;
     transition: all 0.2s ease;
@@ -333,7 +351,7 @@ input:focus {
     border-radius: 10px;
     background: var(--bg-soft);
     color: var(--text);
-    padding: 9px 12px; /* +1px */
+    padding: 9px 12px;
     font-size: 12px;
     font-weight: 700;
     border: 1px solid var(--border);
@@ -342,15 +360,15 @@ input:focus {
 .kpi-strip {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 16px; /* +4px */
-    margin-bottom: 20px; /* +6px */
+    gap: 16px;
+    margin-bottom: 20px;
 }
 
 .kpi-item {
     border-radius: 14px;
     border: 1px solid var(--border);
     background: linear-gradient(160deg, var(--bg-main), var(--bg-soft));
-    padding: 20px; /* +6px */
+    padding: 20px;
     transition: transform 0.2s ease;
 }
 
@@ -366,7 +384,7 @@ input:focus {
 }
 
 .kpi-item .value {
-    margin-top: 10px; /* +3px */
+    margin-top: 10px;
     font-size: 24px;
     font-weight: 800;
     color: var(--text);
@@ -374,8 +392,8 @@ input:focus {
 
 .dashboard-nav {
     display: flex;
-    gap: 16px; /* +4px */
-    margin: 16px 0 24px; /* +4px */
+    gap: 16px;
+    margin: 16px 0 24px;
     flex-wrap: wrap;
 }
 
@@ -390,15 +408,15 @@ input:focus {
 .grid-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 16px; /* +4px */
-    margin-bottom: 24px; /* +8px */
+    gap: 16px;
+    margin-bottom: 24px;
 }
 
 .stat-card {
     border: 1px solid var(--border);
     border-radius: 14px;
     background: var(--bg-main);
-    padding: 20px; /* +6px */
+    padding: 20px;
     transition: all 0.2s ease;
 }
 
@@ -414,7 +432,7 @@ input:focus {
 }
 
 .stat-card .value {
-    margin-top: 10px; /* +3px */
+    margin-top: 10px;
     font-size: 25px;
     font-weight: 800;
     color: var(--text);
@@ -423,8 +441,8 @@ input:focus {
 .charts-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 16px; /* +4px */
-    margin-bottom: 20px; /* +6px */
+    gap: 16px;
+    margin-bottom: 20px;
 }
 
 .single-chart {
@@ -434,7 +452,7 @@ input:focus {
 .chart-card,
 .table-card {
     border-radius: 14px;
-    padding: 20px; /* +6px */
+    padding: 20px;
     background: var(--bg-main);
     border: 1px solid var(--border);
 }
@@ -443,8 +461,8 @@ input:focus {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px; /* +2px */
-    margin-bottom: 12px; /* +4px */
+    gap: 12px;
+    margin-bottom: 12px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--border);
 }
@@ -458,7 +476,7 @@ input:focus {
 
 .card-tag {
     border-radius: 999px;
-    padding: 6px 12px; /* +1px */
+    padding: 6px 12px;
     background: rgba(123, 157, 210, 0.15);
     border: 1px solid var(--primary);
     color: var(--primary-dark);
@@ -470,8 +488,8 @@ input:focus {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px; /* +6px */
-    margin-bottom: 16px; /* +6px */
+    gap: 16px;
+    margin-bottom: 16px;
 }
 
 .table-toolbar h3 {
@@ -493,14 +511,14 @@ input:focus {
 .insights-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px; /* +6px */
+    gap: 16px;
 }
 
 .insight-card {
     border: 1px solid var(--border);
     background: linear-gradient(180deg, var(--bg-main), var(--bg-soft));
     border-radius: 12px;
-    padding: 16px; /* +4px */
+    padding: 16px;
     transition: all 0.2s ease;
 }
 
@@ -513,7 +531,7 @@ input:focus {
     font-size: 12px;
     font-weight: 700;
     color: var(--muted);
-    margin-bottom: 8px; /* +2px */
+    margin-bottom: 8px;
 }
 
 .insight-value {
@@ -536,10 +554,10 @@ table {
 th,
 td {
     text-align: left;
-    padding: 14px 16px; /* +4px */
+    padding: 14px 16px;
     border-bottom: 1px solid var(--border);
     font-size: 13px;
-    vertical-align: middle; /* Alignement vertical propre */
+    vertical-align: middle;
 }
 
 th {
@@ -554,7 +572,7 @@ tr:hover td {
 
 .level-badge {
     border-radius: 999px;
-    padding: 5px 10px; /* +1px */
+    padding: 5px 10px;
     font-size: 11px;
     font-weight: 700;
     display: inline-block;
@@ -590,9 +608,9 @@ tr:hover td {
 .trending-legend {
     display: flex;
     flex-direction: column;
-    gap: 12px; /* +2px */
-    margin-bottom: 20px; /* +4px */
-    padding: 16px; /* +4px */
+    gap: 12px;
+    margin-bottom: 20px;
+    padding: 16px;
     background: rgba(255, 255, 255, 0.6);
     border-radius: 10px;
     border: 1px solid var(--border);
@@ -601,7 +619,7 @@ tr:hover td {
 .trend-item {
     display: flex;
     align-items: center;
-    gap: 12px; /* +2px */
+    gap: 12px;
 }
 
 .trend-dot {
@@ -640,7 +658,6 @@ tr:hover td {
     max-height: 280px;
 }
 
-/* Spinner pour le chargement */
 .spinner {
     width: 24px;
     height: 24px;
@@ -655,7 +672,6 @@ tr:hover td {
     to { transform: rotate(360deg); }
 }
 
-/* Responsive */
 @media (max-width: 1080px) {
     .auth-card {
         grid-template-columns: 1fr;
