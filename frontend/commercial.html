@@ -55,12 +55,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/style.css"/>
 <style>
-/* Surcharges spécifiques commercial */
-.send-btn { background: var(--accent); }
-.send-btn:hover:not(:disabled) { background: #166b24; }
-.product-badge, .product-context-bar, .quick-chips, .mode-badge { display: none !important; }
-.avatar-sm.ai { background: linear-gradient(135deg, #1e7a2e, #268a37ce); }
-</style>
+  .send-btn { background: var(--accent); }
+  .send-btn:hover:not(:disabled) { background: var(--accent-mid); }
+  .product-badge, .product-context-bar, .quick-chips, .mode-badge { display: none !important; }
+  .avatar-sm.ai { background: linear-gradient(135deg, var(--accent), var(--accent-mid)); }
+  </style>
 </head>
 <body>
 <div class="bg-orbs">
@@ -118,8 +117,7 @@
         <p>You are the doctor. Vita is your delegate.</p>
       </div>
       <div class="header-right" style="display:flex;align-items:center;gap:8px;">
-        <button id="header-menu-btn" onclick="toggleSidebar()" style="background:none;border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:8px 10px;cursor:pointer;display:none;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button id="header-menu-btn" onclick="toggleSidebar()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;cursor:pointer;display:none;">          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="3" y1="12" x2="21" y2="12"/>
             <line x1="3" y1="6" x2="21" y2="6"/>
             <line x1="3" y1="18" x2="21" y2="18"/>
@@ -131,8 +129,8 @@
     <div class="messages" id="messages">
       <div class="empty-state" id="empty-state">
         <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-          <rect width="44" height="44" rx="12" fill="rgba(30,122,46,0.12)" stroke="rgba(30,122,46,0.3)" stroke-width="1"/>
-          <path d="M22 12a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 10c4.42 0 8 1.79 8 4v2H14v-2c0-2.21 3.58-4 8-4z" fill="#166b24" opacity="0.85"/>
+          <rect width="44" height="44" rx="12" fill="rgba(123, 157, 210, 0.12)" stroke="rgba(123, 157, 210, 0.30)" stroke-width="1"/>
+          <path d="M22 12a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 10c4.42 0 8 1.79 8 4v2H14v-2c0-2.21 3.58-4 8-4z" fill="var(--accent-mid)" opacity="0.85"/>
         </svg>
         <h2>Bonjour Docteur</h2>
         <p>Cliquez pour commencer la visite avec Vita.</p>
