@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/quiz-medical.css"/>
+<link rel="stylesheet" href="css/behavioral.css">
 </head>
 <script>
   // Lance l'avatar dès que le module avatar.js est prêt
@@ -136,6 +137,21 @@
           <button class="qc-pill active" data-count="10">10</button>
           <button class="qc-pill" data-count="15">15</button>
         </div>
+      </div>
+    </div>
+
+        <!-- Analyse comportementale - Consentement -->
+    <div class="option-group">
+      <label class="option-label">Analyse comportementale</label>
+      <div class="ba-consent-row">
+        <label class="ba-switch">
+          <input type="checkbox" id="ba-consent-toggle" checked>
+          <span class="ba-slider"></span>
+        </label>
+        <span class="ba-consent-desc">
+          Activer la reconnaissance faciale et l'analyse d'attention (caméra)<br>
+          <small>Aucune image n'est enregistrée ni envoyée</small>
+        </span>
       </div>
     </div>
 
@@ -289,6 +305,25 @@
       </div>
     </div>
 
+      <!-- BILAN COMPORTEMENTAL -->
+      <div class="behavioral-summary" id="behavioral-summary" style="display:none">
+        <div class="ba-summary-header">
+          <span class="ba-icon">📊</span>
+          <div>
+            <div class="ba-summary-title">Bilan Comportemental</div>
+            <div class="ba-summary-subtitle">Dr. Layla • Analyse d’attention</div>
+          </div>
+        </div>
+        <p id="ba-conclusion-text" class="ba-conclusion-text">
+          <!-- Rempli dynamiquement -->
+        </p>
+      </div>
+
+      <!-- Message de fin -->
+      <div class="farewell-message" id="farewell-message" style="display:none; margin-top:20px; text-align:center; font-style:italic; color:var(--accent);">
+        Merci pour votre participation ! À bientôt chez VITAL SA.
+      </div>
+
     <!-- AJOUT : certificat si score >= 60% -->
     <div class="certificate-section" id="certificate-section" style="display:none">
       <div class="certificate-trophy">🏆</div>
@@ -326,6 +361,6 @@
 
 <script>window._API = window.API_BASE || "http://localhost:8000";</script>
 <script type="module" src="js/avatar.js"></script>
-<script src="js/quiz-medical.js"></script>
+<script type="module" src="js/quiz-medical.js"></script>
 </body>
 </html>

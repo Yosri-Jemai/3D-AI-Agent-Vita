@@ -1,7 +1,7 @@
 """
 backend/api/routes_quiz_medicale.py
 ====================================
-Quiz endpoints — VERSION REFONTE COMPLÈTE
+Quiz endpoints — FIX DÉFINITIF BIAIS LONGUEUR
 
 """
 
@@ -84,8 +84,8 @@ QUESTION_ANGLES = [
 
 def build_question_prompt(product_name: str, context: str, difficulty: str, angle: str = None) -> str:
     difficulty_guide = {
-        "facile": "Teste les indications principales, la forme galénique et la population cible.",
-        "moyen": "Teste la posologie, le mécanisme d'action, les conseils pratiques et la composition.",
+        "facile":    "Teste les indications principales, la forme galénique et la population cible.",
+        "moyen":     "Teste la posologie, le mécanisme d'action, les conseils pratiques et la composition.",
         "difficile": "Teste les contre-indications, les interactions médicamenteuses et les cas cliniques complexes.",
     }
     guide = difficulty_guide.get(difficulty, difficulty_guide["moyen"])
@@ -123,6 +123,55 @@ INTERDICTIONS STRICTES :
 Génère la question maintenant :"""
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX DÉFINITIF BIAIS DE LONGUEUR
+# Ne dépend PAS du LLM — appliqué systématiquement après génération.
+#
+# Règle : si la bonne réponse dépasse le MAX des distracteurs de plus de 5 mots,
+# on la tronque proprement (virgule > parenthèse > coupure au mot).
+# Seuil généreux → on ne touche que les cas vraiment problématiques.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _normalize_choice_lengths(choices: list) -> list:
+    if not choices or len(choices) != 4:
+        return choices
+
+    word_counts    = [len(c.split()) for c in choices]
+    correct_wc     = word_counts[0]          # correct_index vaut toujours 0 avant _shuffle
+    distractor_wcs = word_counts[1:]
+    max_distractor = max(distractor_wcs)
+
+    # Déclenchement uniquement si l'écart est vraiment criant (> 5 mots)
+    if correct_wc <= max_distractor + 5:
+        return choices
+
+    ceiling = max_distractor + 4            # plafond souple
+    ceiling = max(ceiling, 6)               # plancher absolu : 6 mots
+
+    correct = choices[0]
+    words   = correct.split()
+
+    # Tentative 1 : couper à la première virgule/point-virgule/parenthèse
+    #               dans la plage [5, ceiling]
+    truncated = None
+    for sep in [",", ";", "("]:
+        idx = correct.find(sep)
+        if idx != -1:
+            candidate = correct[:idx].strip()
+            cw = len(candidate.split())
+            if 5 <= cw <= ceiling:
+                truncated = candidate
+                break
+
+    # Tentative 2 : coupure dure au mot plafond
+    if truncated is None:
+        truncated = " ".join(words[:ceiling])
+
+    result    = list(choices)
+    result[0] = truncated
+    return result
+
+
 async def generate_one_question(engine, product_name: str, context: str, difficulty: str, angle: str = None) -> Optional[dict]:
     from langchain_core.messages import SystemMessage, HumanMessage
     clean_ctx = clean_context(context, product_name)
@@ -143,6 +192,8 @@ async def generate_one_question(engine, product_name: str, context: str, difficu
         if not _is_valid_question(q, product_name):
             return None
         q = _sanitize_question(q)
+        # ── FIX LONGUEUR : appliqué AVANT le shuffle, sur correct_index=0 ──
+        q["choices"] = _normalize_choice_lengths(q.get("choices", []))
         q = _shuffle_correct_position(q)
         return q
     except Exception as e:
@@ -151,13 +202,6 @@ async def generate_one_question(engine, product_name: str, context: str, difficu
 
 
 def _build_task_list(hits: dict, count: int) -> list:
-    """
-    hits  = {product_name: context}  — ONLY the allowed products
-    count = total questions to generate
-
-    1 product  → count questions on THAT product with varied angles
-    N products → questions distributed cyclically among the N products
-    """
     products = list(hits.keys())
     if not products:
         return []
@@ -186,7 +230,6 @@ def _build_task_list(hits: dict, count: int) -> list:
 
 
 def _resolve_hits(engine, req: QuizRequest) -> dict:
-    """Return {product_name: context} strictly matching the selection."""
     selected = []
     if req.products and len(req.products) > 0:
         selected = req.products
@@ -251,11 +294,6 @@ async def generate_quiz_full(req: QuizRequest):
 # ── FETCH ────────────────────────────────────────────────────────────────────
 
 def _fetch_selected_products(engine, product_names: List[str]) -> dict:
-    """
-    Pull from ChromaDB only the chunks whose product_name matches
-    one of the requested names — EXACT match, case-insensitive.
-    No fuzzy / semantic search that could smuggle in other products.
-    """
     wanted = {name.strip().lower(): name.strip() for name in product_names}
     result = {original: "" for original in wanted.values()}
 
@@ -269,17 +307,15 @@ def _fetch_selected_products(engine, product_names: List[str]) -> dict:
             if not pname:
                 continue
             if pname.lower() not in wanted:
-                continue                          # ← strict: skip anything else
+                continue
             if meta.get("source_table", "") in ("doc", "annimation_fiches"):
                 continue
-
             canonical = wanted[pname.lower()]
             result[canonical] += "\n" + doc
 
     except Exception as e:
         print(f"[Quiz] ChromaDB error in _fetch_selected_products: {e}")
 
-    # Remove products with no data found
     for pname in list(result.keys()):
         text = result[pname].strip()
         if not text:
@@ -379,8 +415,9 @@ def _is_valid_question(q: Optional[dict], expected_product: str) -> bool:
         return False
     return True
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# NOUVEAUX ENDPOINTS — AJOUT UNIQUEMENT, rien au-dessus n'a été touché
+# FEEDBACK ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
 class FeedbackRequest(BaseModel):
@@ -405,24 +442,18 @@ Le délégué vient de répondre incorrectement à une question. Rédige EXACTEM
 
 
 _FINAL_FEEDBACK_SYSTEM = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
-Génère un bilan global de la performance du délégué.
+Tu rédiges un bilan de performance court et professionnel.
 
-STRUCTURE OBLIGATOIRE — commence TOUJOURS par le score :
+RÈGLES ABSOLUES (à respecter scrupuleusement) :
+- La réponse doit COMMENCER EXACTEMENT par : "Score X/Y (Z%)." — RIEN avant ce mot
+- Ensuite maximum 2 ou 3 phrases fluides en prose, jamais de liste ni de tiret
+- Ton encourageant et professionnel
+- Si score < 100%, mentionne les produits ou notions précises à retravailler
+- JAMAIS de liste, puce, tiret ou "Docteur,"
+- JAMAIS commencer par autre chose que "Score"
+- Toujours terminer par une phrase complète — JAMAIS de phrase coupée
+"""
 
-CAS 1 — Score parfait (100%) :
-"Score [X]/[X] (100%). Parfait ! Vous maîtrisez parfaitement [liste tous les produits]. Continuez sur cette lancée, c'est exactement le niveau attendu d'un délégué VITAL SA !"
-
-CAS 2 — Score inférieur à 100% (même 99%) :
-"Score [X]/[Y] ([Z]%). Des lacunes persistent sur [notion précise : posologie / mécanisme / indication / conservation / contre-indication] de [produit raté]. Reprenez les fiches de [liste produits ratés]. [1 phrase d'encouragement court.]"
-
-RÈGLES ABSOLUES :
-- La PREMIÈRE PHRASE commence TOUJOURS par "Score [X]/[Y] ([Z]%)."
-- Si score < 100% → citer obligatoirement les lacunes précises, même si le score est 90% ou 95%
-- Si score = 100% → féliciter sans mentionner de lacunes
-- EXACTEMENT 2 à 3 phrases, jamais plus
-- ZÉRO titre, ZÉRO liste, ZÉRO puce, ZÉRO numéro
-- JAMAIS "Docteur," au début
-- Prose fluide uniquement, en français"""
 
 @router.post("/feedback/stream")
 async def stream_question_feedback(req: FeedbackRequest):
@@ -449,8 +480,11 @@ async def stream_question_feedback(req: FeedbackRequest):
         except Exception as e:
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @router.post("/feedback/final/stream")
@@ -459,33 +493,25 @@ async def stream_final_feedback(req: FinalFeedbackRequest):
     from langchain_core.messages import SystemMessage, HumanMessage
     engine.initialize()
 
-    pct = round((req.score / req.total) * 100) if req.total > 0 else 0
+    score = req.score
+    total = req.total
+    pct   = round((score / total) * 100) if total > 0 else 0
 
-    good_products = list({h.get("product", "?") for h in req.history if h.get("ok")})
-
-    # Une ligne par produit raté — notion précise manquante uniquement
     bad_summary = []
-    seen = set()
     for h in req.history:
         if not h.get("ok"):
-            p = h.get("product", "?")
-            if p not in seen:
-                seen.add(p)
-                bad_summary.append(f"- {p} : la bonne réponse était « {h.get('correct', '')} »")
+            bad_summary.append({
+                "product":        h.get("product", "?"),
+                "correct_answer": h.get("correct", "")
+            })
 
-    if bad_summary:
-        prompt = (
-            f"Score : {req.score}/{req.total} ({pct}%)\n"
-            f"Produits maîtrisés : {', '.join(good_products) if good_products else 'aucun'}\n"
-            f"Produits ratés :\n" + "\n".join(bad_summary) +
-            "\n\nGénère le bilan final en suivant exactement le squelette."
-        )
-    else:
-        prompt = (
-            f"Score : {req.score}/{req.total} ({pct}%)\n"
-            f"Tous les produits maîtrisés : {', '.join(good_products)}\n\n"
-            f"Génère le bilan final en suivant exactement le squelette."
-        )
+    prompt = (
+        f"Score obtenu : {score}/{total} ({pct}%)\n"
+        f"Historique des erreurs :\n"
+        f"{json.dumps(bad_summary, ensure_ascii=False, indent=2)}\n\n"
+        f"Commence OBLIGATOIREMENT par : \"Score {score}/{total} ({pct}%).\"\n"
+        f"Génère maintenant le bilan final de Dr. Layla."
+    )
 
     async def gen():
         try:
@@ -497,7 +523,65 @@ async def stream_final_feedback(req: FinalFeedbackRequest):
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content}, ensure_ascii=False)}\n\n"
             yield f'data: {json.dumps({"type": "done"})}\n\n'
         except Exception as e:
+            print(f"[Final Feedback] Erreur: {e}")
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+    #############
+# ──────────────────────────────────────────────────────────────
+# BILAN COMPORTEMENTAL LLM
+# ──────────────────────────────────────────────────────────────
+# =============================================
+# BILAN COMPORTEMENTAL PAR LLM
+# =============================================
+
+class BehavioralConclusionRequest(BaseModel):
+    avg_confidence: int = 50
+    avg_stress: int = 0
+    avg_fidget: int = 0
+    gaze_away_rate: int = 0
+    hesitation_rate: int = 0
+    dominant_expression: str = "neutral"
+    dominant_posture: str = "normal"
+    top_signals: List[str] = []
+
+
+@router.post("/behavioral-conclusion")
+async def behavioral_conclusion(req: BehavioralConclusionRequest):
+    from langchain_core.messages import SystemMessage, HumanMessage
+    from backend.rag.engine import engine
+    
+    engine.initialize()
+
+    system_prompt = """Tu es Dr. Layla, formatrice experte chez VITAL SA.
+Tu rédiges **une seule phrase courte** (15 à 28 mots), encourageante, précise et professionnelle sur le comportement du délégué pendant le quiz.
+Sois constructif. Jamais de "Docteur,"."""
+
+    user_prompt = f"""
+Données comportementales du quiz :
+- Confiance moyenne : {req.avg_confidence}%
+- Stress moyen : {req.avg_stress}%
+- Agitation : {req.avg_fidget}%
+- Regard détourné : {req.gaze_away_rate}%
+- Taux d'hésitation : {req.hesitation_rate}%
+- Expression dominante : {req.dominant_expression}
+- Posture dominante : {req.dominant_posture}
+- Signaux détectés : {req.top_signals}
+"""
+
+    try:
+        response = engine.llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        conclusion = response.content.strip()
+        return {"conclusion": conclusion}
+    except Exception as e:
+        print(f"[Behavioral Conclusion] Erreur LLM : {e}")
+        return {"conclusion": "Votre attention était globalement bonne durant le quiz."}
