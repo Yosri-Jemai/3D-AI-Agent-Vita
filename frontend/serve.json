@@ -1,15 +1,4 @@
 {
-  "public": ".",
-  "rewrites": [
-    {
-      "source": "/",
-      "destination": "/home.html"
-    },
-    {
-      "source": "/home",
-      "destination": "/home.html"
-    }
-  ],
   "headers": [
     {
       "source": "**/*.mjs",
