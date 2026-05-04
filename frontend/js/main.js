@@ -693,8 +693,9 @@ window.applySuggestion = function(btn) {
       c.disabled = true; c.style.opacity = '0.4'; c.style.cursor = 'default';
     });
     btn.style.opacity = '1';
-    btn.style.background = 'rgb(183 252 132 / 18%)'
-    btn.style.borderColor = 'rgb(75 95 70 / 60%)';
+    btn.style.background = 'rgba(123, 157, 210, 0.18)';  // var(--accent-soft)
+    btn.style.borderColor = 'rgba(123, 157, 210, 0.60)'; // var(--border2)
+    btn.style.color = '#7B9DD2';    
   }
 
   sendQuestion();
