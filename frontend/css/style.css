@@ -264,7 +264,7 @@
    
    /* Stop button */
 /* ══════════════════════════════════════════════════════════════════════════
-   Stop Button — Palette Convertie (PAS DE ROUGE)
+   Stop Button — ROUGE
    ══════════════════════════════════════════════════════════════════════════ */
 
    .stop-btn{
@@ -272,9 +272,8 @@
     padding:11px;
     border-radius:10px;
     
-    /* 🎨 Palette convertie : gradient cyan/bleu au lieu de rouge */
-    background:linear-gradient(135deg, var(--gold), var(--accent-mid));
-    /* Alternative solide : background: var(--gold); */
+    /* 🎨 Bouton rouge */
+    background:linear-gradient(135deg, #ef4444, #dc2626);
     
     border:none;
     color:#fff;  /* Texte blanc pour contraste */
@@ -288,14 +287,14 @@
     justify-content:center;
     gap:8px;
     margin-top:8px;
-    box-shadow:0 2px 4px rgba(112, 199, 198, 0.2);
+    box-shadow:0 2px 4px rgba(239, 68, 68, 0.2);
   }
   
   .stop-btn:hover:not(:disabled){
-    /* Hover plus foncé avec la palette */
-    background:linear-gradient(135deg, var(--accent-mid), var(--gold));
+    /* Hover plus foncé rouge */
+    background:linear-gradient(135deg, #dc2626, #b91c1c);
     transform:translateY(-1px);
-    box-shadow:0 4px 8px rgba(112, 199, 198, 0.3);
+    box-shadow:0 4px 8px rgba(239, 68, 68, 0.3);
   }
   
   .stop-btn:disabled{
