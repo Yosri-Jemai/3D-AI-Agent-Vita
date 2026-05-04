@@ -271,7 +271,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadProducts();
   setupProductSearch();
   waitForAvatar(() => {
-    speak("Bonjour ! Je suis Dr. Layla. Configurez votre quiz et commencez quand vous êtes prêt.");
+    speak("Bonjour ! Je suis VITA. Configurez votre quiz et commencez quand vous êtes prêt.");
     const loadEl = $("avatar-loading");
     if (loadEl) loadEl.style.display = "none";
   });
@@ -489,7 +489,7 @@ function handleSSEEvent(event) {
     state.totalExpected = event.total || state.questionCount;
     updateLoadBar(0, state.totalExpected);
     $("waiting-state").querySelector(".waiting-text").textContent =
-      `Dr. Layla génère ${state.totalExpected} questions…`;
+      `VITA génère ${state.totalExpected} questions…`;
   }
 
   if (event.type === "question") {
@@ -872,14 +872,14 @@ function showResults() {
 
   speak(title + " " + message);
 
-  // ── 5. Bilan comportemental par Dr. Layla (LLM) ─────────────────────
+  // ── 5. Bilan comportemental par VITA (LLM) ─────────────────────
   const behavioralSummary = document.getElementById("behavioral-summary");
   const conclusionText    = document.getElementById("ba-conclusion-text");
   const farewell          = document.getElementById("farewell-message");
 
   if (behavioralSummary && conclusionText) {
     behavioralSummary.style.display = "block";
-    conclusionText.textContent = "Dr. Layla analyse votre comportement...";
+    conclusionText.textContent = "VITA analyse votre comportement...";
 
     // Appel asynchrone
     generateBehavioralConclusion(behavioralReport).then(conclusion => {
@@ -1253,7 +1253,7 @@ async function downloadCertificate() {
           </svg>
         </div>
         <div class="sig-line"></div>
-        <div class="sig-name">Dr. Layla</div>
+        <div class="sig-name">VITA</div>
         <div class="sig-role">Experte Formation Médicale · VitalAgent</div>
       </div>
       <div class="cert-stamp">
