@@ -279,7 +279,7 @@
     <section class="hero">
         <div class="hero-content">
             <div class="hero-text">
-                <h1>Rencontrez <span style="color:#70C7C6;">Dr. Layla</span><br>Votre Formatrice IA</h1>
+                <h1>Rencontrez <span style="color:#70C7C6;">VITA</span><br>Votre Formatrice IA</h1>
                 <p>Formez-vous en phytothérapie avec un avatar réaliste qui parle et vous guide comme une vraie experte.</p>
                 
                 <div class="btn-group">
@@ -302,7 +302,7 @@
                 <button onclick="speakWelcome()" class="demo-btn" id="demoButton">
                     <div class="demo-btn-progress" id="progressBar"></div>
                     <div class="demo-btn-content" id="buttonContent">
-                        <i class="fas fa-play-circle"></i> Faire parler Dr. Layla (Démo)
+                        <i class="fas fa-play-circle"></i> Faire parler VITA (Démo)
                     </div>
                 </button>
             </div>
@@ -330,7 +330,7 @@
         <div class="cards-grid">
             <div class="info-card"><i class="fas fa-brain"></i><h3>Quiz adaptatif</h3><p>Testez vos connaissances en phytothérapie avec feedback IA.</p></div>
             <div class="info-card"><i class="fas fa-certificate"></i><h3>Certification finale</h3><p>Obtenez un diplôme reconnu par le secteur pharmaceutique.</p></div>
-            <div class="info-card"><i class="fas fa-chalkboard"></i><h3>Simulation d'entretien</h3><p>Entraînez-vous avec Dr. Layla en situation réelle.</p></div>
+            <div class="info-card"><i class="fas fa-chalkboard"></i><h3>Simulation d'entretien</h3><p>Entraînez-vous avec VITA en situation réelle.</p></div>
         </div>
     </div>
     
@@ -342,7 +342,7 @@
         <div class="cards-grid">
             <div class="info-card"><i class="fas fa-phone-alt"></i><h3>Support prioritaire</h3><p>+33 (0)1 23 45 67 89</p><p>Lun-Ven 9h-18h</p></div>
             <div class="info-card"><i class="fas fa-envelope-open-text"></i><h3>Email professionnel</h3><p>contact@laboratoiresvital.fr</p><p>Réponse sous 24h</p></div>
-            <div class="info-card"><i class="fas fa-calendar-check"></i><h3>Planifier une démo</h3><p>Rencontrez Dr. Layla en privé.</p><a href="auth.html" style="color:var(--primary);">Réserver →</a></div>
+            <div class="info-card"><i class="fas fa-calendar-check"></i><h3>Planifier une démo</h3><p>Rencontrez VITA en privé.</p><a href="auth.html" style="color:var(--primary);">Réserver →</a></div>
         </div>
     </div>
     
@@ -357,7 +357,7 @@
     let isSpeaking = false;
     let progressInterval = null;
 
-    const welcomeText = "Bonjour ! Je suis Dr. Layla, votre formatrice chez Laboratoires Vital. Inscrivez-vous maintenant pour améliorer vos compétences en phytothérapie et exceller en tant que délégué médical ou commercial.";
+    const welcomeText = "Bonjour ! Je suis VITA, votre formatrice chez Laboratoires Vital. Inscrivez-vous maintenant pour améliorer vos compétences en phytothérapie et exceller en tant que délégué médical ou commercial.";
 
     function startProgressBar(duration) {
         const progressBar = document.getElementById('progressBar');
@@ -383,10 +383,10 @@
         const buttonContent = document.getElementById('buttonContent');
         if (speaking) {
             demoButton.classList.add('speaking');
-            buttonContent.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Dr. Layla parle...';
+            buttonContent.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> VITA parle...';
         } else {
             demoButton.classList.remove('speaking');
-            buttonContent.innerHTML = '<i class="fas fa-play-circle"></i> Faire parler Dr. Layla (Démo)';
+            buttonContent.innerHTML = '<i class="fas fa-play-circle"></i> Faire parler VITA (Démo)';
             stopProgressBar();
         }
     }
