@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="css/quiz-commercial.css"/>
-
 </head>
 
 <script>
@@ -35,7 +34,7 @@
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      Retour
+      <span id="back-label">Retour</span>
     </a>
     <div class="header-brand">
       <span class="brand-dot"></span>
@@ -79,6 +78,23 @@
 
     <div class="setup-options">
 
+      <!-- ── Langue ── -->
+      <div class="option-group">
+        <label class="option-label" id="lang-label">Langue</label>
+        <div class="lang-pills">
+          <button class="lang-pill active" data-lang="fr" type="button">
+            <span class="lang-flag">🇫🇷</span> Français
+          </button>
+          <button class="lang-pill" data-lang="en" type="button">
+            <span class="lang-flag">🇬🇧</span> English
+          </button>
+          <button class="lang-pill" data-lang="ar" type="button">
+            <span class="lang-flag">🇲🇦</span> العربية
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Produit ── -->
       <div class="option-group">
         <label class="option-label">Produit(s)</label>
         <div class="product-selector" id="product-dropdown">
@@ -106,15 +122,38 @@
         </div>
       </div>
 
+      <!-- ── Niveau ── -->
       <div class="option-group">
         <label class="option-label">Niveau commercial</label>
         <div class="difficulty-pills">
-          <button class="diff-pill active" data-level="facile">Débutant</button>
-          <button class="diff-pill" data-level="moyen">Confirmé</button>
-          <button class="diff-pill" data-level="difficile">Expert</button>
+
+          <button class="diff-pill active" data-level="facile" type="button">
+            <span class="diff-icon">🌱</span>
+            <span class="diff-name">Débutant</span>
+            <span class="diff-desc">Connaissances de base · Pharmacien réceptif</span>
+          </button>
+
+          <button class="diff-pill" data-level="moyen" type="button">
+            <span class="diff-icon">⚡</span>
+            <span class="diff-name">Confirmé</span>
+            <span class="diff-desc">Objections terrain · 4 réponses plausibles</span>
+          </button>
+
+          <button class="diff-pill" data-level="difficile" type="button">
+            <span class="diff-icon">🔥</span>
+            <span class="diff-name">Expert</span>
+            <span class="diff-desc">Mode hostile · Toutes les réponses piègent</span>
+          </button>
+
+        </div>
+
+        <!-- Contextual banner that appears below -->
+        <div class="diff-context-banner facile visible" id="diff-banner">
+          🌱 <strong>Débutant</strong> — Le pharmacien est réceptif. Testez vos arguments de base sur les produits VITAL SA.
         </div>
       </div>
 
+      <!-- ── Nombre de questions ── -->
       <div class="option-group">
         <label class="option-label">Nombre de questions</label>
         <div class="q-count-pills">
@@ -125,11 +164,26 @@
       </div>
     </div>
 
+    <!-- ── Analyse comportementale - Consentement ── -->
+    <div class="option-group">
+      <label class="option-label">Analyse comportementale</label>
+      <div class="ba-consent-row">
+        <label class="ba-switch">
+          <input type="checkbox" id="ba-consent-toggle" checked>
+          <span class="ba-slider"></span>
+        </label>
+        <span class="ba-consent-desc" style="color: #BBB4DA;">
+          Activer la reconnaissance faciale et l'analyse d'attention (caméra)<br>
+          <small>Aucune image n'est enregistrée ni envoyée</small>
+        </span>
+      </div>
+    </div>
+
     <button class="start-btn" id="start-btn">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <path d="M6 4L14 9L6 14V4Z" fill="currentColor"/>
       </svg>
-      Commencer le Quiz
+      <span class="start-label">Commencer le Quiz</span>
     </button>
 
   </div>
@@ -155,6 +209,16 @@
 
     <div class="speech-bubble" id="speech-bubble">
       <p id="bubble-text">Prêt(e) à vendre ?</p>
+      <button class="mute-btn" id="mute-btn" title="Couper la voix de Vita" onclick="toggleMuteAvatar()">
+        <svg id="mute-icon-sound" width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <path d="M9 3L5 6H2v4h3l4 3V3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M12 5.5c.8.8 1.2 1.8 1.2 2.5s-.4 1.7-1.2 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <svg id="mute-icon-muted" width="13" height="13" viewBox="0 0 16 16" fill="none" style="display:none">
+          <path d="M9 3L5 6H2v4h3l4 3V3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M13 6l-3 3m0-3l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
 
     <div class="donut-wrap">
@@ -175,10 +239,12 @@
     </div>
   </aside>
 
-  <main class="question-panel">
+  <main class="question-panel" id="question-panel">
+
+    <!-- Waiting / skeleton state -->
     <div class="waiting-state" id="waiting-state">
       <div class="waiting-spinner"></div>
-      <p class="waiting-text">Vita prépare vos scénarios de vente…</p>
+      <p class="waiting-text">Génération de vos scénarios de vente…</p>
       <div class="skeleton-block">
         <div class="skeleton-line long"></div>
         <div class="skeleton-line medium"></div>
@@ -191,12 +257,13 @@
       </div>
     </div>
 
+    <!-- Question area -->
     <div id="question-area" style="display:none">
       <div class="question-card">
         <div class="question-meta">
           <span class="q-number" id="q-number">Q1</span>
-          <span class="q-topic" id="q-topic">—</span>
-          <span class="q-difficulty-badge" id="q-difficulty-badge">Confirmé</span>
+          <span class="q-topic" id="q-topic"></span>
+          <span class="q-difficulty-badge" id="q-difficulty-badge">Débutant</span>
           <span class="sales-skill-badge" id="sales-skill-badge" style="display:none">
             <span id="sales-skill-text">Pitch</span>
           </span>
@@ -217,7 +284,7 @@
                 <path d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 3v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 <circle cx="8" cy="12" r=".75" fill="currentColor"/>
               </svg>
-              Conseil de Vita
+              <span id="vita-conseil-label">Conseil de Vita</span>
             </div>
             <span id="feedback-typing-text"></span><span class="typing-cursor" id="typing-cursor" style="display:none"></span>
           </div>
@@ -231,10 +298,10 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          Précédent
+          <span id="prev-label">Précédent</span>
         </button>
         <button class="next-btn" id="next-btn">
-          Scénario suivant
+          <span id="next-label">Scénario suivant</span>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -260,16 +327,15 @@
     </div>
 
     <div class="skills-summary" id="skills-summary"></div>
-
     <div class="results-breakdown" id="results-breakdown"></div>
 
-    <!-- 1. Bilan final Vita -->
+    <!-- Bilan final Vita -->
     <div class="final-feedback-section" id="final-feedback-section" style="display:none">
       <div class="final-feedback-header">
         <div class="final-feedback-avatar">V</div>
         <div>
           <div class="final-feedback-name">Vita</div>
-          <div class="final-feedback-role">Bilan de formation commerciale</div>
+          <div class="final-feedback-role" id="vita-bilan-role">Bilan de formation commerciale</div>
         </div>
       </div>
       <div id="final-feedback-text">
@@ -282,34 +348,33 @@
       </div>
     </div>
 
-    <!-- 2. Certificat -->
+    <!-- Certificat -->
     <div class="certificate-section" id="certificate-section" style="display:none">
       <div class="certificate-trophy">🏆</div>
-      <div class="certificate-title">Félicitations !</div>
-      <div class="certificate-subtitle">Vous avez atteint le seuil de validation (≥ 60%)</div>
+      <div class="certificate-title" id="cert-title-txt">Félicitations !</div>
+      <div class="certificate-subtitle" id="cert-subtitle-txt">Vous avez atteint le seuil de validation (≥ 60%)</div>
       <button class="certificate-download-btn" id="download-certificate-btn" onclick="downloadCertificate()">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
           <path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        Télécharger mon certificat
+        <span id="cert-dl-label">Télécharger mon certificat</span>
       </button>
     </div>
 
-    <!-- 3. Boutons Recommencer / Accueil -->
     <div class="results-actions">
       <button class="restart-btn" id="restart-btn">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M2 8A6 6 0 1 0 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           <path d="M2 2V8H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        Recommencer
+        <span id="restart-label">Recommencer</span>
       </button>
-      <a href="index.html" class="home-btn">Accueil</a>
+      <a href="index.html" class="home-btn" id="home-label">Accueil</a>
     </div>
   </div>
 </section>
 
-<!-- ─── MODAL CERTIFICAT (requise par quiz-commercial.js) ────────────────── -->
+<!-- ─── MODAL CERTIFICAT ─────────────────────────────────────────────────── -->
 <div class="cert-overlay" id="cert-overlay" onclick="closeCertOnBg(event)" style="
   position:fixed; inset:0;
   background:rgba(0,0,0,0.75);
@@ -340,22 +405,18 @@
         background:var(--accent); border:none; border-radius:10px;
         padding:10px 24px; font-weight:600; color:#fff; cursor:pointer;
         font-size:14px; display:inline-flex; align-items:center; gap:6px;
-        transition:background .15s;"
-        onmouseover="this.style.background='var(--accent-dark)'"
-        onmouseout="this.style.background='var(--accent)'">
+        transition:background .15s;">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
           <path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        Télécharger PNG
+        <span id="cert-modal-dl-label">Télécharger PNG</span>
       </button>
-      <button onclick="copyCertLink()" style="
+      <button onclick="copyCertLink()" id="cert-copy-btn" style="
         background:var(--bg); border:0.5px solid var(--border);
         border-radius:10px; padding:10px 20px; font-weight:500;
         color:var(--text-muted); cursor:pointer; font-size:14px;
-        transition:background .15s;"
-        onmouseover="this.style.background='var(--border)'"
-        onmouseout="this.style.background='var(--bg)'">
-        🔗 Copier lien
+        transition:background .15s;">
+        <span id="cert-modal-copy-label">🔗 Copier lien</span>
       </button>
     </div>
   </div>
@@ -363,7 +424,6 @@
 
 <style>
 .cert-overlay.open { opacity:1 !important; pointer-events:all !important; }
-.get-cert-btn:hover { background: var(--accent-dark) !important; }
 </style>
 
 <script type="importmap">
@@ -377,6 +437,56 @@
 
 <script>window._API = window.API_BASE || "http://localhost:8000";</script>
 <script type="module" src="js/avatar.js"></script>
-<script src="js/quiz-commercial.js"></script>
+<script type="module" src="js/quiz-commercial.js"></script>
+
+
+
+<!-- Difficulty banner update -->
+<script>
+(function() {
+  const bannerTexts = {
+    fr: {
+      facile:    "🌱 <strong>Débutant</strong> — Le pharmacien est réceptif. Testez vos arguments de base sur les produits VITAL SA.",
+      moyen:     "⚡ <strong>Confirmé</strong> — Objections terrain réelles : prix, concurrent déjà référencé, pas de place. 4 réponses toutes plausibles.",
+      difficile: "🔥 <strong>Expert — MODE HOSTILE</strong> — Pharmacien cynique, pressé, qui coupe la parole. Toutes les réponses semblent correctes. Seule une analyse fine révèle la bonne."
+    },
+    en: {
+      facile:    "🌱 <strong>Beginner</strong> — The pharmacist is open and receptive. Test your basic arguments on VITAL SA products.",
+      moyen:     "⚡ <strong>Intermediate</strong> — Real field objections: price, existing competitor, no space. All 4 answers look plausible.",
+      difficile: "🔥 <strong>Expert — HOSTILE MODE</strong> — Cynical, rushed pharmacist who cuts you off. Every answer looks correct. Only sharp analysis reveals the right one."
+    },
+    ar: {
+      facile:    "🌱 <strong>مبتدئ</strong> — الصيدلاني متقبّل ومنفتح. اختبر حججك الأساسية حول منتجات VITAL SA.",
+      moyen:     "⚡ <strong>متوسط</strong> — اعتراضات ميدانية حقيقية: السعر، منافس موجود، لا مكان. الإجابات الأربعة تبدو محتملة.",
+      difficile: "🔥 <strong>خبير — الوضع العدائي</strong> — صيدلاني ساخر، مستعجل، يقطع كلامك. كل الإجابات تبدو صحيحة. فقط التحليل الدقيق يكشف الصحيحة."
+    }
+  };
+
+  document.querySelectorAll(".diff-pill").forEach(btn => {
+    btn.addEventListener("click", function() {
+      const level  = this.dataset.level;
+      const banner = document.getElementById("diff-banner");
+      const lang   = (typeof state !== "undefined" ? state.lang : null) || "fr";
+      if (banner) {
+        banner.className = `diff-context-banner ${level} visible`;
+        banner.innerHTML = bannerTexts[lang][level];
+      }
+    });
+  });
+
+  // Also refresh banner on lang change
+  document.querySelectorAll(".lang-pill").forEach(btn => {
+    btn.addEventListener("click", function() {
+      const lang  = this.dataset.lang;
+      const level = document.querySelector(".diff-pill.active")?.dataset.level || "facile";
+      const banner = document.getElementById("diff-banner");
+      if (banner) {
+        banner.innerHTML = bannerTexts[lang][level];
+      }
+    });
+  });
+})();
+</script>
+
 </body>
 </html>
